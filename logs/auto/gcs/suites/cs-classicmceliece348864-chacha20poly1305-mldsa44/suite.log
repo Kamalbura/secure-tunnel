@@ -1,0 +1,14 @@
+[2025-12-20T16:58:27Z] START suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 pass=0 mode=constant duration=10.00s
+[2025-12-20T16:59:50Z] ACTIVATE_FAILURE suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 error=Proxy rekey to cs-classicmceliece348864-chacha20poly1305-mldsa44 reported timeout; previous suite unknown
+[2025-12-20T17:42:00Z] START suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 pass=0 mode=constant duration=10.00s
+[2025-12-20T17:42:00Z] ACTIVATE_FAILURE suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 error=GCS proxy is not running; cannot continue
+[2025-12-20T17:42:24Z] START suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 pass=0 mode=constant duration=10.00s
+[2025-12-20T17:42:24Z] ACTIVATE_FAILURE suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 error=GCS proxy is not running; cannot continue
+[2025-12-20T17:59:46Z] START suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 pass=0 mode=constant duration=10.00s
+[2025-12-20T17:59:46Z] ACTIVATE_FAILURE suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 error=GCS proxy is not running; cannot continue
+[2025-12-20T18:05:46Z] START suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 pass=1 mode=constant duration=10.00s
+[2025-12-20T18:05:46Z] ACTIVATE_FAILURE suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 error=GCS proxy is not running; cannot continue
+[2025-12-20T18:11:47Z] START suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 pass=2 mode=constant duration=10.00s
+[2025-12-20T18:11:47Z] ACTIVATE_FAILURE suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 error=GCS proxy is not running; cannot continue
+[2025-12-20T18:17:47Z] START suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 pass=3 mode=constant duration=10.00s
+[2025-12-20T18:17:47Z] ACTIVATE_FAILURE suite=cs-classicmceliece348864-chacha20poly1305-mldsa44 error=GCS proxy is not running; cannot continue

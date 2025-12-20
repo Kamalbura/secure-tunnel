@@ -1,0 +1,4 @@
+Log file: logs\drone-20251220-223118.log
+Starting drone proxy with suite cs-classicmceliece348864-aesgcm-falcon512
+
+Error: [WinError 10061] No connection could be made because the target machine actively refused it

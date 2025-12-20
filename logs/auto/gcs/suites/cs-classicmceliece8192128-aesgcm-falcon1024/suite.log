@@ -1,0 +1,10 @@
+[2025-12-20T17:42:55Z] START suite=cs-classicmceliece8192128-aesgcm-falcon1024 pass=0 mode=constant duration=10.00s
+[2025-12-20T17:42:55Z] ACTIVATE_FAILURE suite=cs-classicmceliece8192128-aesgcm-falcon1024 error=GCS proxy is not running; cannot continue
+[2025-12-20T17:43:19Z] START suite=cs-classicmceliece8192128-aesgcm-falcon1024 pass=0 mode=constant duration=10.00s
+[2025-12-20T17:43:19Z] ACTIVATE_FAILURE suite=cs-classicmceliece8192128-aesgcm-falcon1024 error=GCS proxy is not running; cannot continue
+[2025-12-20T18:00:41Z] START suite=cs-classicmceliece8192128-aesgcm-falcon1024 pass=0 mode=constant duration=10.00s
+[2025-12-20T18:00:41Z] ACTIVATE_FAILURE suite=cs-classicmceliece8192128-aesgcm-falcon1024 error=GCS proxy is not running; cannot continue
+[2025-12-20T18:06:41Z] START suite=cs-classicmceliece8192128-aesgcm-falcon1024 pass=1 mode=constant duration=10.00s
+[2025-12-20T18:06:41Z] ACTIVATE_FAILURE suite=cs-classicmceliece8192128-aesgcm-falcon1024 error=GCS proxy is not running; cannot continue
+[2025-12-20T18:12:42Z] START suite=cs-classicmceliece8192128-aesgcm-falcon1024 pass=2 mode=constant duration=10.00s
+[2025-12-20T18:12:42Z] ACTIVATE_FAILURE suite=cs-classicmceliece8192128-aesgcm-falcon1024 error=GCS proxy is not running; cannot continue

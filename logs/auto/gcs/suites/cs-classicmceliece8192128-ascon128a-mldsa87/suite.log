@@ -1,0 +1,10 @@
+[2025-12-20T17:43:21Z] START suite=cs-classicmceliece8192128-ascon128a-mldsa87 pass=0 mode=constant duration=10.00s
+[2025-12-20T17:43:21Z] ACTIVATE_FAILURE suite=cs-classicmceliece8192128-ascon128a-mldsa87 error=GCS proxy is not running; cannot continue
+[2025-12-20T17:43:44Z] START suite=cs-classicmceliece8192128-ascon128a-mldsa87 pass=0 mode=constant duration=10.00s
+[2025-12-20T17:43:44Z] ACTIVATE_FAILURE suite=cs-classicmceliece8192128-ascon128a-mldsa87 error=GCS proxy is not running; cannot continue
+[2025-12-20T18:01:06Z] START suite=cs-classicmceliece8192128-ascon128a-mldsa87 pass=0 mode=constant duration=10.00s
+[2025-12-20T18:01:06Z] ACTIVATE_FAILURE suite=cs-classicmceliece8192128-ascon128a-mldsa87 error=GCS proxy is not running; cannot continue
+[2025-12-20T18:07:06Z] START suite=cs-classicmceliece8192128-ascon128a-mldsa87 pass=1 mode=constant duration=10.00s
+[2025-12-20T18:07:06Z] ACTIVATE_FAILURE suite=cs-classicmceliece8192128-ascon128a-mldsa87 error=GCS proxy is not running; cannot continue
+[2025-12-20T18:13:07Z] START suite=cs-classicmceliece8192128-ascon128a-mldsa87 pass=2 mode=constant duration=10.00s
+[2025-12-20T18:13:07Z] ACTIVATE_FAILURE suite=cs-classicmceliece8192128-ascon128a-mldsa87 error=GCS proxy is not running; cannot continue

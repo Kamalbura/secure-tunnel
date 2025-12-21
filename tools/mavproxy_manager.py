@@ -9,6 +9,7 @@ import time
 import subprocess
 from typing import Optional
 import sys
+import os
 from pathlib import Path as _Path
 
 from core.config import CONFIG
@@ -58,18 +59,34 @@ class MavProxyManager:
         if extra_args is None:
             extra_args = []
 
-        binary = str(CONFIG.get("MAVPROXY_BINARY") or "mavproxy.py")
-
+        # [MODIFIED BY AGENT] Robust cross-platform command builder
+        # Determine configured binary or fallback name
+        configured = CONFIG.get("MAVPROXY_BINARY")
         # Build base out argument
         out_arg = f"udp:{out_ip}:{int(out_port)}"
 
-        # If the configured binary is an explicit Python script path, run it
-        # via the current Python interpreter to ensure correct venv.
-        bin_path = _Path(binary)
-        if bin_path.exists() and bin_path.suffix.lower() == ".py":
-            cmd = [sys.executable, str(bin_path), "--master", master_str, "--out", out_arg, "--heartbeat", "--console", "none"]
+        # 1. Determine the path to the python interpreter currently running
+        python_exe = sys.executable
+
+        # 2. Find mavproxy.py relative to the python executable
+        bin_dir = os.path.dirname(python_exe)
+        mavproxy_script = os.path.join(bin_dir, "mavproxy.py")
+
+        # 3. Fallbacks
+        if os.path.exists(mavproxy_script):
+            base_cmd = [python_exe, mavproxy_script]
+        elif configured and _Path(str(configured)).exists() and str(configured).lower().endswith(".py"):
+            # If CONFIG points to an explicit .py file, use it via sys.executable
+            base_cmd = [python_exe, str(configured)]
+        elif sys.platform.startswith("win"):
+            # Windows fallback: run as module
+            base_cmd = [python_exe, "-m", "MAVProxy.mavproxy"]
         else:
-            cmd = [binary, "--master", master_str, "--out", out_arg, "--heartbeat", "--console", "none"]
+            # Linux / general fallback: rely on executable in PATH
+            base_cmd = ["mavproxy.py"]
+
+        # 4. Construct full command with master/out and recommended flags
+        cmd = base_cmd + [f"--master={master_str}", f"--out={out_arg}", "--dialect=ardupilotmega", "--nowait"]
 
         # append any extra args verbatim
         if extra_args:

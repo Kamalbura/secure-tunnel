@@ -10,6 +10,18 @@ This scheduler:
 No benchmarking, no power monitoring - just robust PQC tunnel operation.
 """
 
+# --------------------
+# Local editable configuration (edit here, no CLI args needed)
+# Keep this block within the first ~10 lines of the file for easy editing.
+# --------------------
+# Set to None to use defaults or auto-detection.
+LOCAL_BANDWIDTH_MBPS = 110.0
+LOCAL_DURATION_S = 10.0
+LOCAL_PAYLOAD_BYTES = 1200
+LOCAL_SUITES = None  # e.g. ['cs-mlkem768-aesgcm-mldsa65'] or None to run all
+LOCAL_MAX_SUITES = None  # e.g. 2 to limit number of suites
+
+
 from __future__ import annotations
 
 import sys
@@ -664,37 +676,41 @@ def main() -> int:
     if not available_suites:
         log("ERROR: No suites with keys found in secrets/matrix/")
         return 1
-    
-    log(f"Available suites: {len(available_suites)}")
-    
-    # Filter suites
-    if args.suite:
-        if args.suite not in available_suites:
-            log(f"ERROR: Suite {args.suite} not available")
-            return 1
-        suites_to_run = [args.suite]
-    elif args.suites:
-        specified = [s.strip() for s in args.suites.split(",")]
-        suites_to_run = [s for s in specified if s in available_suites]
+
+    # Apply local in-file configuration overrides (if set)
+    if LOCAL_BANDWIDTH_MBPS is not None:
+        args.bandwidth = float(LOCAL_BANDWIDTH_MBPS)
+    if LOCAL_DURATION_S is not None:
+        args.duration = float(LOCAL_DURATION_S)
+    if LOCAL_PAYLOAD_BYTES is not None:
+        args.payload = int(LOCAL_PAYLOAD_BYTES)
+
+    # If LOCAL_SUITES provided, use it. Otherwise, optionally cap with LOCAL_MAX_SUITES
+    if LOCAL_SUITES:
+        suites_to_run = [s for s in LOCAL_SUITES if s in available_suites]
         if not suites_to_run:
-            log("ERROR: None of the specified suites are available")
+            log("ERROR: None of the LOCAL_SUITES are available")
             return 1
     else:
         suites_to_run = available_suites
+        if LOCAL_MAX_SUITES:
+            suites_to_run = suites_to_run[: int(LOCAL_MAX_SUITES)]
     
-    # Filter by NIST level
+    log(f"Available suites: {len(available_suites)}")
+    
+    # NIST-level filtering (CLI still supported)
     if args.nist_level:
         level = args.nist_level.upper()
         if not level.startswith("L"):
             level = f"L{level}"
-        
+
         filtered = []
         all_suites_info = list_suites()
         for suite_id in suites_to_run:
             suite_info = all_suites_info.get(suite_id, {})
             if suite_info.get("nist_level") == level:
                 filtered.append(suite_id)
-        
+
         if not filtered:
             log(f"ERROR: No suites match NIST level {level}")
             return 1

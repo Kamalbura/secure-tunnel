@@ -10,6 +10,14 @@ This scheduler:
 No benchmarking, no power monitoring - just robust PQC tunnel operation.
 """
 
+# --------------------
+# Local editable configuration (edit here, no CLI args needed)
+# Keep this block near the top for quick edits.
+# --------------------
+LOCAL_CONTROL_HOST = None  # e.g. "127.0.0.1" or None to use config/env
+LOCAL_CONTROL_PORT = None  # e.g. 48080 or None to use config
+
+
 from __future__ import annotations
 
 import sys
@@ -605,6 +613,12 @@ def main() -> int:
         "echo": echo,
         "stop_event": stop_event,
     }
+
+    # If LOCAL control overrides are set, update the control server bind values
+    if LOCAL_CONTROL_HOST:
+        args.control_host = LOCAL_CONTROL_HOST
+    if LOCAL_CONTROL_PORT:
+        args.control_port = int(LOCAL_CONTROL_PORT)
     
     # Start control server
     control = ControlServer(

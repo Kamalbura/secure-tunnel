@@ -56,6 +56,14 @@ DEFAULT_RATE_MBPS = 110.0
 DEFAULT_DURATION = 10.0
 PAYLOAD_SIZE = 1200
 
+# --------------------
+# Local editable configuration (edit here, no CLI args needed)
+# --------------------
+LOCAL_RATE_MBPS = None  # e.g. 110.0
+LOCAL_DURATION = None  # e.g. 10.0
+LOCAL_MAX_SUITES = None
+LOCAL_SUITES = None
+
 # Get all suites (list_suites returns dict, convert to list of dicts)
 _suites_dict = list_suites()
 SUITES = [{"name": k, **v} for k, v in _suites_dict.items()]
@@ -451,6 +459,12 @@ def main():
     proxy = GcsProxyManager()
     control = ControlServer(proxy)
     control.start()
+
+    # Apply local in-file overrides for rate/duration if set
+    if LOCAL_RATE_MBPS is not None:
+        control.rate_mbps = float(LOCAL_RATE_MBPS)
+    if LOCAL_DURATION is not None:
+        control.duration = float(LOCAL_DURATION)
     
     # Wait for shutdown
     shutdown = threading.Event()

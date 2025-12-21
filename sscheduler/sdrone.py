@@ -56,9 +56,21 @@ DEFAULT_DURATION = 10.0  # seconds per suite
 DEFAULT_RATE_MBPS = 110.0
 PAYLOAD_SIZE = 1200
 
+# --------------------
+# Local editable configuration (edit here, no CLI args needed)
+# --------------------
+LOCAL_DURATION = None  # override DEFAULT_DURATION if set, e.g. 10.0
+LOCAL_RATE_MBPS = None  # override DEFAULT_RATE_MBPS if set, e.g. 110.0
+LOCAL_MAX_SUITES = None  # limit suites run, e.g. 2
+LOCAL_SUITES = None  # list of suite names to run, or None
+
 # Get all suites (list_suites returns dict, convert to list of dicts)
 _suites_dict = list_suites()
 SUITES = [{"name": k, **v} for k, v in _suites_dict.items()]
+
+ROOT = Path(__file__).resolve().parents[1]
+LOGS_DIR = ROOT / "logs" / "sscheduler" / "drone"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============================================================
 # Logging
@@ -220,20 +232,36 @@ class DroneProxyManager:
             "--peer-pubkey-file", str(peer_pubkey),
             "--quiet"
         ]
-        
-        log(f"Launching: {' '.join(cmd)}")
+
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        log_path = LOGS_DIR / f"drone_{suite_name}_{timestamp}.log"
+        log(f"Launching: {' '.join(cmd)} (log: {log_path})")
+        log_handle = open(log_path, "w", encoding="utf-8")
         self.process = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            universal_newlines=True,
         )
+        self._last_log = log_path
         self.current_suite = suite_name
         
         # Wait for proxy to initialize
-        time.sleep(2.0)
-        
+        time.sleep(3.0)
+
         if self.process.poll() is not None:
             log(f"Proxy exited early with code {self.process.returncode}")
+            # Print tail of log for diagnosis
+            try:
+                with open(self._last_log, "r", encoding="utf-8") as fh:
+                    lines = fh.read().splitlines()[-30:]
+                    log("--- proxy log tail ---")
+                    for l in lines:
+                        log(l)
+                    log("--- end log tail ---")
+            except Exception:
+                pass
             return False
         
         return True
@@ -248,6 +276,11 @@ class DroneProxyManager:
                 self.process.kill()
             self.process = None
             self.current_suite = None
+            try:
+                # close last log handle if exists by leaving file closed (we opened in start)
+                pass
+            except Exception:
+                pass
     
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
@@ -291,18 +324,42 @@ def run_suite(proxy: DroneProxyManager, echo: UdpEchoServer,
     # Tell GCS to start its proxy first (GCS listens, drone connects)
     log(f"Telling GCS to start proxy for {suite_name}...")
     resp = send_gcs_command("start_proxy", suite=suite_name)
+    log(f"GCS start_proxy response: {resp}")
     if resp.get("status") != "ok":
         log(f"GCS start_proxy failed: {resp}")
         result["status"] = "gcs_start_failed"
         return result
-    
-    # Wait for GCS proxy to be ready
-    time.sleep(2.0)
+
+    # Wait for GCS proxy to be ready by polling status
+    log("Waiting for GCS proxy to report ready...")
+    start_wait = time.time()
+    ready = False
+    while time.time() - start_wait < 20.0:
+        time.sleep(0.5)
+        try:
+            st = send_gcs_command("status")
+            if st.get("proxy_running"):
+                ready = True
+                break
+        except Exception:
+            pass
+
+    if not ready:
+        log("GCS proxy did not become ready in time")
+        result["status"] = "gcs_not_ready"
+        return result
     
     # Now start drone proxy (it will connect to GCS)
     log(f"Starting drone proxy for {suite_name}...")
     if not proxy.start(suite_name):
         result["status"] = "proxy_start_failed"
+        # include last log path if available
+        try:
+            tail = getattr(proxy, "_last_log", None)
+            if tail:
+                result["log"] = str(tail)
+        except Exception:
+            pass
         return result
     
     # Wait for handshake
@@ -386,11 +443,21 @@ def main():
     elif args.all:
         suites_to_run = [s["name"] for s in SUITES]
     else:
-        # Default: first 2 suites for testing
-        suites_to_run = [s["name"] for s in SUITES[:2]]
+        # Default: run all available suites
+        suites_to_run = [s["name"] for s in SUITES]
     
     if args.max_suites:
         suites_to_run = suites_to_run[:args.max_suites]
+
+    # Apply local in-file overrides
+    if LOCAL_RATE_MBPS is not None:
+        args.rate = float(LOCAL_RATE_MBPS)
+    if LOCAL_DURATION is not None:
+        args.duration = float(LOCAL_DURATION)
+    if LOCAL_SUITES:
+        suites_to_run = [s for s in LOCAL_SUITES if s in [x["name"] for x in SUITES]]
+    if LOCAL_MAX_SUITES:
+        suites_to_run = suites_to_run[: int(LOCAL_MAX_SUITES)]
     
     log(f"Suites to run: {len(suites_to_run)}")
     

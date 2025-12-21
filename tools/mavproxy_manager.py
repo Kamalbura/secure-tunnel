@@ -28,25 +28,52 @@ class MavProxyManager:
         self.process: Optional[subprocess.Popen] = None
         self._last_log: Optional[Path] = None
 
-    def start(self, listen_host: str, listen_port: int, peer_host: str, peer_port: int) -> bool:
-        """Start a mavproxy subprocess that listens on UDP and forwards to peer.
+    def start(self, master_str_or_listen_host, master_baud_or_listen_port, out_ip=None, out_port=None, extra_args=None) -> bool:
+        """Start mavproxy.
 
-        Returns True if the process started and is running; False on failure.
+        New interface:
+            start(master_str, master_baud, out_ip, out_port, extra_args=None)
+
+        Backwards compatible with old calls:
+            start(listen_host, listen_port, peer_host, peer_port)
+
+        Returns True on success, False on failure.
         """
-        if self.process and self.process.poll() is None:
-            self.stop()
+        # Backwards compatibility: old callers passed (listen_host, listen_port, peer_host, peer_port)
+        if out_ip is None and out_port is None:
+            # interpret as old-style
+            listen_host = str(master_str_or_listen_host)
+            listen_port = int(master_baud_or_listen_port)
+            peer_host = None
+            peer_port = None
+            # We'll require caller to pass peer via extra_args in this case, but try to be helpful
+            master_str = f"udpin:{listen_host}:{listen_port}"
+            out_ip = "127.0.0.1"
+            out_port = listen_port  # fallback
+        else:
+            master_str = str(master_str_or_listen_host)
+
+        master_baud = master_baud_or_listen_port
+
+        if extra_args is None:
+            extra_args = []
 
         binary = str(CONFIG.get("MAVPROXY_BINARY") or "mavproxy.py")
-        listen = f"udp:{listen_host}:{int(listen_port)}"
-        out = f"udp:{peer_host}:{int(peer_port)}"
+
+        # Build base out argument
+        out_arg = f"udp:{out_ip}:{int(out_port)}"
 
         # If the configured binary is an explicit Python script path, run it
         # via the current Python interpreter to ensure correct venv.
         bin_path = _Path(binary)
         if bin_path.exists() and bin_path.suffix.lower() == ".py":
-            cmd = [sys.executable, str(bin_path), "--master", listen, "--out", out, "--heartbeat", "--console", "none"]
+            cmd = [sys.executable, str(bin_path), "--master", master_str, "--out", out_arg, "--heartbeat", "--console", "none"]
         else:
-            cmd = [binary, "--master", listen, "--out", out, "--heartbeat", "--console", "none"]
+            cmd = [binary, "--master", master_str, "--out", out_arg, "--heartbeat", "--console", "none"]
+
+        # append any extra args verbatim
+        if extra_args:
+            cmd.extend(extra_args)
 
         log_dir = _logs_dir_for(self.role)
         ts_now = time.strftime("%Y%m%d-%H%M%S")

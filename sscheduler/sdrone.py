@@ -427,6 +427,7 @@ def run_suite(proxy: DroneProxyManager, mavproxy,
 
 def main():
     parser = argparse.ArgumentParser(description="Drone Scheduler (Controller)")
+    parser.add_argument("--mav-master", default=str(CONFIG.get("MAV_MASTER", "/dev/ttyACM0")), help="Primary MAVLink master (e.g. /dev/ttyACM0 or tcp:host:port)")
     parser.add_argument("--suite", default=None, help="Single suite to run")
     parser.add_argument("--nist-level", choices=["L1", "L3", "L5"], help="Run suites for NIST level")
     parser.add_argument("--all", action="store_true", help="Run all suites")
@@ -516,12 +517,14 @@ def main():
             log("=" * 60)
             
             # Ensure MAVProxy is running on drone side before starting suite
-            bind_host = str(CONFIG.get("DRONE_PLAINTEXT_BIND", "0.0.0.0"))
-            listen_port = int(CONFIG.get("DRONE_PLAINTEXT_RX", DRONE_PLAIN_RX_PORT))
-            peer_host = str(CONFIG.get("GCS_HOST", GCS_HOST))
-            peer_port = int(CONFIG.get("GCS_PLAINTEXT_RX", CONFIG.get("GCS_PLAINTEXT_RX", 47002)))
+            # Primary master is the flight controller; also listen for tunnel RX
+            drone_rx = int(CONFIG.get("DRONE_PLAINTEXT_RX", DRONE_PLAIN_RX_PORT))
+            drone_tx = int(CONFIG.get("DRONE_PLAINTEXT_TX", DRONE_PLAIN_TX_PORT))
+            # master from args (FCU) and extra listens for tunnel RX
+            master = args.mav_master
+            extra = [f"--master=udpin:0.0.0.0:{drone_rx}"]
             if not mavproxy.is_running():
-                ok = mavproxy.start(bind_host, listen_port, peer_host, peer_port)
+                ok = mavproxy.start(master, 115200, "127.0.0.1", drone_tx, extra_args=extra)
                 if not ok:
                     log("Failed to start local mavproxy; aborting suite")
                     result = {"suite": suite_name, "status": "mavproxy_start_failed"}

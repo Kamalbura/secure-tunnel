@@ -371,15 +371,20 @@ class ControlServer:
             # Wait a moment for handshake
             time.sleep(1.0)
             
-            # Start application-layer MAVLink relay (mavproxy) instead of UDP blaster
+            # Start application-layer MAVLink relay (mavproxy)
             if self.mavproxy and self.mavproxy.is_running():
                 self.mavproxy.stop()
 
             bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
             listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-            peer_host = str(CONFIG.get("DRONE_HOST", DRONE_HOST))
-            peer_port = int(CONFIG.get("DRONE_PLAINTEXT_RX", DRONE_PLAIN_RX_PORT))
-            ok = self.mavproxy.start(bind_host, listen_port, peer_host, peer_port)
+            # Tunnel output (to proxy) and also forward to QGroundControl
+            tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
+            QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
+
+            master_str = f"udpin:{bind_host}:{listen_port}"
+            # run mavproxy with main master = udpin (GCS plaintext RX)
+            extra = [f"--out=udp:127.0.0.1:{QGC_PORT}"]
+            ok = self.mavproxy.start(master_str, 115200, "127.0.0.1", tunnel_out_port, extra_args=extra)
             if not ok:
                 return {"status": "error", "message": "mavproxy_start_failed"}
             
@@ -401,9 +406,11 @@ class ControlServer:
             # Also start mavproxy now so application-layer relay is available
             bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
             listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-            peer_host = str(CONFIG.get("DRONE_HOST", DRONE_HOST))
-            peer_port = int(CONFIG.get("DRONE_PLAINTEXT_RX", DRONE_PLAIN_RX_PORT))
-            self.mavproxy.start(bind_host, listen_port, peer_host, peer_port)
+            tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
+            QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
+            master_str = f"udpin:{bind_host}:{listen_port}"
+            extra = [f"--out=udp:127.0.0.1:{QGC_PORT}"]
+            self.mavproxy.start(master_str, 115200, "127.0.0.1", tunnel_out_port, extra_args=extra)
 
             return {"status": "ok", "message": "proxy_started"}
         
@@ -420,9 +427,11 @@ class ControlServer:
             if self.mavproxy and not self.mavproxy.is_running():
                 bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
                 listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-                peer_host = str(CONFIG.get("DRONE_HOST", DRONE_HOST))
-                peer_port = int(CONFIG.get("DRONE_PLAINTEXT_RX", DRONE_PLAIN_RX_PORT))
-                ok = self.mavproxy.start(bind_host, listen_port, peer_host, peer_port)
+                tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
+                QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
+                master_str = f"udpin:{bind_host}:{listen_port}"
+                extra = [f"--out=udp:127.0.0.1:{QGC_PORT}"]
+                ok = self.mavproxy.start(master_str, 115200, "127.0.0.1", tunnel_out_port, extra_args=extra)
                 if not ok:
                     return {"status": "error", "message": "mavproxy_start_failed"}
 

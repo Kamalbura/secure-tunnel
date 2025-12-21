@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
+from tools.mavproxy_manager import MavProxyManager
 
 # Extract config values (use CONFIG as single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
@@ -161,62 +162,7 @@ class UdpEchoServer:
             self.tx_sock.close()
 
 
-class MavProxyManager:
-    """Manage a local mavproxy process that relays MAVLink over UDP.
-
-    This mirrors the GCS-side `MavProxyManager` behaviour: listen on a local
-    UDP port and forward to the peer UDP port on the remote host.
-    """
-
-    def __init__(self, role: str = "drone") -> None:
-        self.role = role
-        self.process = None
-        self._last_log = None
-
-    def start(self, listen_host: str, listen_port: int, peer_host: str, peer_port: int) -> bool:
-        if self.process and self.process.poll() is None:
-            self.stop()
-
-        binary = str(CONFIG.get("MAVPROXY_BINARY") or "mavproxy.py")
-        listen = f"udp:{listen_host}:{int(listen_port)}"
-        out = f"udp:{peer_host}:{int(peer_port)}"
-        cmd = [binary, "--master", listen, "--out", out, "--heartbeat", "--console", "none"]
-
-        log_dir = LOGS_DIR
-        log_dir.mkdir(parents=True, exist_ok=True)
-        ts_now = time.strftime("%Y%m%d-%H%M%S")
-        log_path = LOGS_DIR / f"mavproxy_{self.role}_{ts_now}.log"
-        try:
-            log_fh = open(log_path, "w", encoding="utf-8")
-        except Exception:
-            log_fh = subprocess.DEVNULL  # type: ignore[arg-type]
-
-        try:
-            self.process = subprocess.Popen(cmd, stdout=log_fh, stderr=subprocess.STDOUT, text=True)
-            self._last_log = log_path
-            time.sleep(0.5)
-            if self.process.poll() is not None:
-                return False
-            return True
-        except FileNotFoundError:
-            return False
-        except Exception:
-            return False
-
-    def stop(self) -> None:
-        if self.process:
-            try:
-                self.process.terminate()
-                self.process.wait(timeout=3.0)
-            except Exception:
-                try:
-                    self.process.kill()
-                except Exception:
-                    pass
-            self.process = None
-
-    def is_running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
+# MavProxyManager imported from tools.mavproxy_manager
 
 # ============================================================
 # GCS Control Client (drone sends commands to GCS)

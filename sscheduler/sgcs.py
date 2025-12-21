@@ -35,19 +35,25 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
 
-# Extract config values
-DRONE_HOST = CONFIG["DRONE_HOST"]
-GCS_HOST = CONFIG["GCS_HOST"]
-GCS_PLAIN_TX_PORT = CONFIG["GCS_PLAINTEXT_TX"]
-GCS_PLAIN_RX_PORT = CONFIG["GCS_PLAINTEXT_RX"]
-TCP_CTRL_PORT = CONFIG["TCP_HANDSHAKE_PORT"]
+# Extract config values (single source of truth)
+DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
+GCS_HOST = str(CONFIG.get("GCS_HOST"))
+GCS_PLAIN_TX_PORT = int(CONFIG.get("GCS_PLAINTEXT_TX", 47001))
+GCS_PLAIN_RX_PORT = int(CONFIG.get("GCS_PLAINTEXT_RX", 47002))
+DRONE_PLAIN_RX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_RX", 47004))
+TCP_CTRL_PORT = CONFIG.get("TCP_HANDSHAKE_PORT")
 
 # ============================================================
-# Configuration
+# Configuration (derived from CONFIG)
 # ============================================================
 
-GCS_CONTROL_HOST = os.environ.get("GCS_CONTROL_HOST", GCS_HOST)
-GCS_CONTROL_PORT = int(os.environ.get("GCS_CONTROL_PORT", "48081"))
+# Bind control server to 0.0.0.0 so Drone can connect in diverse networks
+GCS_CONTROL_HOST = str(CONFIG.get("GCS_CONTROL_BIND_HOST", "0.0.0.0"))
+# Use configured GCS control port (default 48080)
+GCS_CONTROL_PORT = int(CONFIG.get("GCS_CONTROL_PORT", 48080))
+
+# Derived internal proxy control port to avoid collision when ports change
+PROXY_INTERNAL_CONTROL_PORT = GCS_CONTROL_PORT + 100
 
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
 
@@ -99,10 +105,11 @@ class TrafficGenerator:
         """Start traffic generation in background thread"""
         self.tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.tx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
-        
+
         self.rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+        # Bind receive socket on the GCS plaintext RX port so echoes return here
         self.rx_sock.bind((GCS_HOST, GCS_PLAIN_RX_PORT))
         self.rx_sock.settimeout(1.0)
         
@@ -139,7 +146,8 @@ class TrafficGenerator:
             
             for _ in range(batch_size):
                 try:
-                    self.tx_sock.sendto(payload, (GCS_HOST, GCS_PLAIN_TX_PORT))
+                    # Send traffic to the Drone's plaintext receive port
+                    self.tx_sock.sendto(payload, (DRONE_HOST, DRONE_PLAIN_RX_PORT))
                     with self.lock:
                         self.tx_count += 1
                         self.tx_bytes += len(payload)
@@ -450,8 +458,19 @@ def main():
     print("=" * 60)
     print("Simplified GCS Scheduler (FOLLOWER) - sscheduler")
     print("=" * 60)
-    log(f"DRONE_HOST={DRONE_HOST}, GCS_HOST={GCS_HOST}")
-    log(f"Control server: {GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}")
+    # Configuration dump for debugging
+    cfg = {
+        "DRONE_HOST": DRONE_HOST,
+        "GCS_HOST": GCS_HOST,
+        "GCS_CONTROL_BIND": f"{GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}",
+        "PROXY_INTERNAL_CONTROL_PORT": PROXY_INTERNAL_CONTROL_PORT,
+        "GCS_PLAINTEXT_RX": GCS_PLAIN_RX_PORT,
+        "GCS_PLAINTEXT_TX": GCS_PLAIN_TX_PORT,
+        "DRONE_PLAINTEXT_RX": DRONE_PLAIN_RX_PORT,
+    }
+    log("Configuration Dump:")
+    for k, v in cfg.items():
+        log(f"  {k}: {v}")
     log("GCS scheduler running. Waiting for commands from drone...")
     log("(Drone will send 'start', 'rekey', 'stop' commands)")
     

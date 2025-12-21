@@ -35,18 +35,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
 
-# Extract config values
-DRONE_HOST = CONFIG["DRONE_HOST"]
-GCS_HOST = CONFIG["GCS_HOST"]
-DRONE_PLAIN_RX_PORT = CONFIG["DRONE_PLAINTEXT_RX"]
-DRONE_PLAIN_TX_PORT = CONFIG["DRONE_PLAINTEXT_TX"]
+# Extract config values (use CONFIG as single source of truth)
+DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
+GCS_HOST = str(CONFIG.get("GCS_HOST"))
+DRONE_PLAIN_RX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_RX", 47004))
+DRONE_PLAIN_TX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_TX", 47003))
 
-# ============================================================
-# Configuration
-# ============================================================
+# Control endpoint for GCS: use configured GCS_HOST and GCS_CONTROL_PORT
+GCS_CONTROL_HOST = str(CONFIG.get("GCS_HOST"))
+GCS_CONTROL_PORT = int(CONFIG.get("GCS_CONTROL_PORT", 48080))
 
-GCS_CONTROL_HOST = os.environ.get("GCS_CONTROL_HOST", GCS_HOST)
-GCS_CONTROL_PORT = int(os.environ.get("GCS_CONTROL_PORT", "48081"))
+# Derived internal proxy control port to avoid collisions
+PROXY_INTERNAL_CONTROL_PORT = GCS_CONTROL_PORT + 100
 
 DEFAULT_SUITE = "cs-mlkem768-aesgcm-mldsa65"
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
@@ -431,8 +431,18 @@ def main():
     print("=" * 60)
     print("Simplified Drone Scheduler (CONTROLLER) - sscheduler")
     print("=" * 60)
-    log(f"DRONE_HOST={DRONE_HOST}, GCS_HOST={GCS_HOST}")
-    log(f"GCS Control: {GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}")
+    # Configuration dump for debugging
+    cfg = {
+        "DRONE_HOST": DRONE_HOST,
+        "GCS_HOST": GCS_HOST,
+        "GCS_CONTROL": f"{GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}",
+        "PROXY_INTERNAL_CONTROL_PORT": PROXY_INTERNAL_CONTROL_PORT,
+        "DRONE_PLAINTEXT_RX": DRONE_PLAIN_RX_PORT,
+        "DRONE_PLAINTEXT_TX": DRONE_PLAIN_TX_PORT,
+    }
+    log("Configuration Dump:")
+    for k, v in cfg.items():
+        log(f"  {k}: {v}")
     log(f"Duration: {args.duration}s per suite, Rate: {args.rate} Mbps")
     
     # Determine suites to run

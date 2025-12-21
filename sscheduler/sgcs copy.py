@@ -266,67 +266,6 @@ class GcsProxyManager:
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
-
-class MavProxyManager:
-    """Manage a local mavproxy process that relays MAVLink over UDP.
-
-    The manager launches a mavproxy instance that listens on a local UDP port
-    and forwards to the peer UDP port on the remote host. The binary path can
-    be configured via `CONFIG['MAVPROXY_BINARY']`.
-    """
-
-    def __init__(self, role: str = "gcs") -> None:
-        self.role = role
-        self.process: Optional[subprocess.Popen] = None
-        self._last_log: Optional[Path] = None
-
-    def start(self, listen_host: str, listen_port: int, peer_host: str, peer_port: int) -> bool:
-        if self.process and self.process.poll() is None:
-            self.stop()
-
-        binary = str(CONFIG.get("MAVPROXY_BINARY") or "mavproxy.py")
-        listen = f"udp:{listen_host}:{int(listen_port)}"
-        out = f"udp:{peer_host}:{int(peer_port)}"
-        cmd = [binary, "--master", listen, "--out", out, "--heartbeat", "--console", "none"]
-
-        # Log path
-        log_dir = OUTDIR
-        log_dir.mkdir(parents=True, exist_ok=True)
-        ts_now = time.strftime("%Y%m%d-%H%M%S")
-        log_path = log_dir / f"mavproxy_{self.role}_{ts_now}.log"
-        try:
-            log_fh = open(log_path, "w", encoding="utf-8")
-        except Exception:
-            log_fh = subprocess.DEVNULL  # type: ignore[arg-type]
-
-        try:
-            self.process = subprocess.Popen(cmd, stdout=log_fh, stderr=subprocess.STDOUT, text=True)
-            self._last_log = log_path
-            time.sleep(0.5)
-            if self.process.poll() is not None:
-                return False
-            return True
-        except FileNotFoundError:
-            return False
-        except Exception:
-            return False
-
-    def stop(self) -> None:
-        if self.process:
-            try:
-                self.process.terminate()
-                self.process.wait(timeout=3.0)
-            except Exception:
-                try:
-                    self.process.kill()
-                except Exception:
-                    pass
-            self.process = None
-
-    def is_running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
-
-
 # ============================================================
 # Control Server (GCS listens for drone commands)
 # ============================================================
@@ -337,7 +276,6 @@ class ControlServer:
     def __init__(self, proxy: GcsProxyManager):
         self.proxy = proxy
         self.traffic = None
-        self.mavproxy = MavProxyManager("gcs")
         self.server_sock = None
         self.running = False
         self.thread = None
@@ -427,17 +365,12 @@ class ControlServer:
             # Wait a moment for handshake
             time.sleep(1.0)
             
-            # Start application-layer MAVLink relay (mavproxy) instead of UDP blaster
-            if self.mavproxy and self.mavproxy.is_running():
-                self.mavproxy.stop()
-
-            bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
-            listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-            peer_host = str(CONFIG.get("DRONE_HOST", DRONE_HOST))
-            peer_port = int(CONFIG.get("DRONE_PLAINTEXT_RX", DRONE_PLAIN_RX_PORT))
-            ok = self.mavproxy.start(bind_host, listen_port, peer_host, peer_port)
-            if not ok:
-                return {"status": "error", "message": "mavproxy_start_failed"}
+            # Start traffic generation
+            if self.traffic:
+                self.traffic.stop()
+            
+            self.traffic = TrafficGenerator(self.rate_mbps)
+            self.traffic.start(duration)
             
             return {"status": "ok", "message": "started"}
         
@@ -453,14 +386,7 @@ class ControlServer:
             # Start GCS proxy
             if not self.proxy.start(suite):
                 return {"status": "error", "message": "proxy_start_failed"}
-
-            # Also start mavproxy now so application-layer relay is available
-            bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
-            listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-            peer_host = str(CONFIG.get("DRONE_HOST", DRONE_HOST))
-            peer_port = int(CONFIG.get("DRONE_PLAINTEXT_RX", DRONE_PLAIN_RX_PORT))
-            self.mavproxy.start(bind_host, listen_port, peer_host, peer_port)
-
+            
             return {"status": "ok", "message": "proxy_started"}
         
         elif cmd == "start_traffic":
@@ -472,17 +398,12 @@ class ControlServer:
             
             log(f"Starting traffic: {self.rate_mbps} Mbps for {duration}s")
             
-            # Start mavproxy if not already running
-            if self.mavproxy and not self.mavproxy.is_running():
-                bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
-                listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-                peer_host = str(CONFIG.get("DRONE_HOST", DRONE_HOST))
-                peer_port = int(CONFIG.get("DRONE_PLAINTEXT_RX", DRONE_PLAIN_RX_PORT))
-                ok = self.mavproxy.start(bind_host, listen_port, peer_host, peer_port)
-                if not ok:
-                    return {"status": "error", "message": "mavproxy_start_failed"}
-
-            return {"status": "ok", "message": "traffic_started"}
+            # Start traffic generation
+            if self.traffic:
+                self.traffic.stop()
+            
+            self.traffic = TrafficGenerator(self.rate_mbps)
+            self.traffic.start(duration)
             
             return {"status": "ok", "message": "traffic_started"}
         
@@ -490,15 +411,9 @@ class ControlServer:
             # Drone tells GCS to prepare for rekey (stop proxy)
             log("Prepare rekey: stopping proxy...")
             self.proxy.stop()
-            # stop mavproxy if running
-            if self.mavproxy:
-                self.mavproxy.stop()
-
+            
             if self.traffic:
-                try:
-                    self.traffic.stop()
-                except Exception:
-                    pass
+                self.traffic.stop()
                 self.traffic = None
             
             return {"status": "ok", "message": "ready_for_rekey"}
@@ -506,15 +421,9 @@ class ControlServer:
         elif cmd == "stop":
             log("Stop command received")
             self.proxy.stop()
-            # Stop mavproxy and any traffic generator wrapper
-            if self.mavproxy:
-                self.mavproxy.stop()
-
+            
             if self.traffic:
-                try:
-                    self.traffic.stop()
-                except Exception:
-                    pass
+                self.traffic.stop()
                 self.traffic = None
             
             return {"status": "ok", "message": "stopped"}
@@ -536,15 +445,7 @@ class ControlServer:
         if self.server_sock:
             self.server_sock.close()
         if self.traffic:
-            try:
-                self.traffic.stop()
-            except Exception:
-                pass
-        if self.mavproxy:
-            try:
-                self.mavproxy.stop()
-            except Exception:
-                pass
+            self.traffic.stop()
 
 # ============================================================
 # Main

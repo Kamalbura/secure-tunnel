@@ -160,64 +160,6 @@ class UdpEchoServer:
         if self.tx_sock:
             self.tx_sock.close()
 
-
-class MavProxyManager:
-    """Manage a local mavproxy process that relays MAVLink over UDP.
-
-    This mirrors the GCS-side `MavProxyManager` behaviour: listen on a local
-    UDP port and forward to the peer UDP port on the remote host.
-    """
-
-    def __init__(self, role: str = "drone") -> None:
-        self.role = role
-        self.process = None
-        self._last_log = None
-
-    def start(self, listen_host: str, listen_port: int, peer_host: str, peer_port: int) -> bool:
-        if self.process and self.process.poll() is None:
-            self.stop()
-
-        binary = str(CONFIG.get("MAVPROXY_BINARY") or "mavproxy.py")
-        listen = f"udp:{listen_host}:{int(listen_port)}"
-        out = f"udp:{peer_host}:{int(peer_port)}"
-        cmd = [binary, "--master", listen, "--out", out, "--heartbeat", "--console", "none"]
-
-        log_dir = LOGS_DIR
-        log_dir.mkdir(parents=True, exist_ok=True)
-        ts_now = time.strftime("%Y%m%d-%H%M%S")
-        log_path = LOGS_DIR / f"mavproxy_{self.role}_{ts_now}.log"
-        try:
-            log_fh = open(log_path, "w", encoding="utf-8")
-        except Exception:
-            log_fh = subprocess.DEVNULL  # type: ignore[arg-type]
-
-        try:
-            self.process = subprocess.Popen(cmd, stdout=log_fh, stderr=subprocess.STDOUT, text=True)
-            self._last_log = log_path
-            time.sleep(0.5)
-            if self.process.poll() is not None:
-                return False
-            return True
-        except FileNotFoundError:
-            return False
-        except Exception:
-            return False
-
-    def stop(self) -> None:
-        if self.process:
-            try:
-                self.process.terminate()
-                self.process.wait(timeout=3.0)
-            except Exception:
-                try:
-                    self.process.kill()
-                except Exception:
-                    pass
-            self.process = None
-
-    def is_running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
-
 # ============================================================
 # GCS Control Client (drone sends commands to GCS)
 # ============================================================
@@ -347,7 +289,7 @@ class DroneProxyManager:
 # Suite Runner
 # ============================================================
 
-def run_suite(proxy: DroneProxyManager, mavproxy, 
+def run_suite(proxy: DroneProxyManager, echo: UdpEchoServer, 
               suite_name: str, duration: float, is_first: bool = False) -> dict:
     """Run a single suite test - drone controls the flow.
     
@@ -363,11 +305,8 @@ def run_suite(proxy: DroneProxyManager, mavproxy,
         "echo_tx": 0,
     }
     
-    # Ensure mavproxy (application-layer relay) is available
-    try:
-        mav_running = bool(mavproxy.is_running())
-    except Exception:
-        mav_running = False
+    # Reset echo stats
+    echo.reset_stats()
     
     if not is_first:
         # Rekey: tell GCS to prepare (stop its proxy)
@@ -434,7 +373,7 @@ def run_suite(proxy: DroneProxyManager, mavproxy,
         result["status"] = "gcs_traffic_failed"
         return result
     
-    log("Traffic started, waiting for completion... (mavproxy relaying MAVLink)")
+    log("Traffic started, waiting for completion...")
     
     # Wait for GCS to finish traffic generation
     # Poll GCS status
@@ -445,11 +384,10 @@ def run_suite(proxy: DroneProxyManager, mavproxy,
     while time.time() - start_time < max_wait:
         time.sleep(2.0)
         
-        # Log mavproxy status periodically
-        try:
-            log(f"mavproxy running: {mavproxy.is_running()}")
-        except Exception:
-            pass
+        # Log echo stats periodically
+        stats = echo.get_stats()
+        log(f"Echo stats: RX={stats['rx_count']}, TX={stats['tx_count']}, "
+            f"RX_bytes={stats['rx_bytes']:,}, TX_bytes={stats['tx_bytes']:,}")
         
         # Check GCS status
         status = send_gcs_command("status")
@@ -468,9 +406,10 @@ def run_suite(proxy: DroneProxyManager, mavproxy,
         result["status"] = "timeout"
         return result
     
-    # Indicate mavproxy and proxy status in result
-    result["mavproxy_running"] = bool(mavproxy.is_running())
-    result["proxy_running"] = bool(proxy.is_running())
+    # Get final stats
+    stats = echo.get_stats()
+    result["echo_rx"] = stats["rx_count"]
+    result["echo_tx"] = stats["tx_count"]
     result["status"] = "pass"
     
     return result
@@ -533,14 +472,16 @@ def main():
     log(f"Suites to run: {len(suites_to_run)}")
     
     # Initialize components
-    # Start mavproxy manager instead of UDP echo
-    mavproxy = MavProxyManager("drone")
+    echo = UdpEchoServer()
+    echo.start()
+    
     proxy = DroneProxyManager()
     
     # Wait for GCS
     log("Waiting for GCS scheduler...")
     if not wait_for_gcs(timeout=60.0):
         log("ERROR: GCS scheduler not responding")
+        echo.stop()
         return 1
     log("GCS scheduler is ready")
     
@@ -553,10 +494,7 @@ def main():
     def signal_handler(sig, frame):
         log("Interrupted, cleaning up...")
         proxy.stop()
-        try:
-            mavproxy.stop()
-        except Exception:
-            pass
+        echo.stop()
         send_gcs_command("stop")
         sys.exit(1)
     
@@ -569,24 +507,11 @@ def main():
             log(f"Running suite {i+1}/{len(suites_to_run)}: {suite_name}")
             log("=" * 60)
             
-            # Ensure MAVProxy is running on drone side before starting suite
-            bind_host = str(CONFIG.get("DRONE_PLAINTEXT_BIND", "0.0.0.0"))
-            listen_port = int(CONFIG.get("DRONE_PLAINTEXT_RX", DRONE_PLAIN_RX_PORT))
-            peer_host = str(CONFIG.get("GCS_HOST", GCS_HOST))
-            peer_port = int(CONFIG.get("GCS_PLAINTEXT_RX", CONFIG.get("GCS_PLAINTEXT_RX", 47002)))
-            if not mavproxy.is_running():
-                ok = mavproxy.start(bind_host, listen_port, peer_host, peer_port)
-                if not ok:
-                    log("Failed to start local mavproxy; aborting suite")
-                    result = {"suite": suite_name, "status": "mavproxy_start_failed"}
-                    results.append(result)
-                    break
-
-            result = run_suite(proxy, mavproxy, suite_name, args.duration, is_first=(i == 0))
+            result = run_suite(proxy, echo, suite_name, args.duration, is_first=(i == 0))
             results.append(result)
             
             if result["status"] == "pass":
-                log(f"Suite PASSED: mavproxy_running={result.get('mavproxy_running')} proxy_running={result.get('proxy_running')}")
+                log(f"Suite PASSED: echo RX={result['echo_rx']}, TX={result['echo_tx']}")
             else:
                 log(f"Suite FAILED: {result['status']}")
             
@@ -597,10 +522,7 @@ def main():
     
     finally:
         proxy.stop()
-        try:
-            mavproxy.stop()
-        except Exception:
-            pass
+        echo.stop()
         send_gcs_command("stop")
     
     # Summary
@@ -614,9 +536,7 @@ def main():
     
     for r in results:
         status = "[PASS]" if r["status"] == "pass" else "[FAIL]"
-        print(
-            f"  {status} {r['suite']}: {r['status']}, mavproxy={r.get('mavproxy_running')} proxy={r.get('proxy_running')}"
-        )
+        print(f"  {status} {r['suite']}: {r['status']}, echo={r['echo_rx']}/{r['echo_tx']}")
     
     print("-" * 60)
     print(f"Total: {len(results)}, Passed: {passed}, Failed: {failed}")

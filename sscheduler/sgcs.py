@@ -531,6 +531,22 @@ def main():
     control = ControlServer(proxy)
     control.start()
 
+    # Try to start mavproxy at scheduler startup so GUI/terminal appears on Windows
+    try:
+        bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
+        listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
+        tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
+        QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
+        master_str = f"udpin:{bind_host}:{listen_port}"
+        extra = [f"--out=udp:127.0.0.1:{QGC_PORT}"]
+        ok = control.mavproxy.start(master_str, 115200, "127.0.0.1", tunnel_out_port, extra_args=extra)
+        if ok:
+            log("mavproxy started at scheduler startup")
+        else:
+            log("mavproxy failed to start at scheduler startup")
+    except Exception as _e:
+        log(f"mavproxy startup exception: {_e}")
+
     # Apply local in-file overrides for rate/duration if set
     if LOCAL_RATE_MBPS is not None:
         control.rate_mbps = float(LOCAL_RATE_MBPS)

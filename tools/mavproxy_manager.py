@@ -96,18 +96,31 @@ class MavProxyManager:
         ts_now = time.strftime("%Y%m%d-%H%M%S")
         log_path = log_dir / f"mavproxy_{self.role}_{ts_now}.log"
         try:
-            log_fh = open(log_path, "w", encoding="utf-8")
-        except Exception:
-            log_fh = subprocess.DEVNULL  # type: ignore[arg-type]
+            # On Windows, open MAVProxy in a new console so the interactive UI appears.
+            is_windows = sys.platform.startswith("win")
+            if is_windows:
+                creationflags = subprocess.CREATE_NEW_CONSOLE
+                # Do not redirect stdout/stderr on Windows so the console UI is interactive.
+                proc = subprocess.Popen(cmd, stdout=None, stderr=None, creationflags=creationflags)
+                self.process = proc
+                self._last_log = log_path
+                time.sleep(0.5)
+                if self.process.poll() is not None:
+                    return False
+                return True
+            else:
+                try:
+                    log_fh = open(log_path, "w", encoding="utf-8")
+                except Exception:
+                    log_fh = subprocess.DEVNULL  # type: ignore[arg-type]
 
-        try:
-            self.process = subprocess.Popen(cmd, stdout=log_fh, stderr=subprocess.STDOUT, text=True)
-            self._last_log = log_path
-            # small pause to let process initialize
-            time.sleep(0.5)
-            if self.process.poll() is not None:
-                return False
-            return True
+                self.process = subprocess.Popen(cmd, stdout=log_fh, stderr=subprocess.STDOUT, text=True)
+                self._last_log = log_path
+                # small pause to let process initialize
+                time.sleep(0.5)
+                if self.process.poll() is not None:
+                    return False
+                return True
         except FileNotFoundError:
             return False
         except Exception:

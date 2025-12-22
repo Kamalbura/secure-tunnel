@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
 from tools.mavproxy_manager import MavProxyManager
+from sscheduler.policy import LinearLoopPolicy, RandomPolicy, ManualOverridePolicy
 
 # Extract config values (use CONFIG as single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
@@ -310,8 +311,14 @@ def run_suite(proxy: DroneProxyManager, mavproxy,
     }
     
     # Ensure mavproxy (application-layer relay) is available
+    mav_running = False
     try:
-        mav_running = bool(mavproxy.is_running())
+        # Support either the manager object with is_running(), or a subprocess.Popen
+        if hasattr(mavproxy, "is_running"):
+            mav_running = bool(mavproxy.is_running())
+        else:
+            # treat mavproxy as subprocess-like
+            mav_running = mavproxy is not None and getattr(mavproxy, "poll", lambda: None)() is None
     except Exception:
         mav_running = False
     
@@ -415,7 +422,13 @@ def run_suite(proxy: DroneProxyManager, mavproxy,
         return result
     
     # Indicate mavproxy and proxy status in result
-    result["mavproxy_running"] = bool(mavproxy.is_running())
+    try:
+        if hasattr(mavproxy, "is_running"):
+            result["mavproxy_running"] = bool(mavproxy.is_running())
+        else:
+            result["mavproxy_running"] = mavproxy is not None and getattr(mavproxy, "poll", lambda: 1)() is None
+    except Exception:
+        result["mavproxy_running"] = False
     result["proxy_running"] = bool(proxy.is_running())
     result["status"] = "pass"
     
@@ -463,7 +476,7 @@ def main():
     else:
         # Default: run all available suites
         suites_to_run = [s["name"] for s in SUITES]
-    
+
     if args.max_suites:
         suites_to_run = suites_to_run[:args.max_suites]
 
@@ -476,102 +489,16 @@ def main():
         suites_to_run = [s for s in LOCAL_SUITES if s in [x["name"] for x in SUITES]]
     if LOCAL_MAX_SUITES:
         suites_to_run = suites_to_run[: int(LOCAL_MAX_SUITES)]
-    
-    log(f"Suites to run: {len(suites_to_run)}")
-    
-    # Initialize components
-    # Start mavproxy manager instead of UDP echo
-    mavproxy = MavProxyManager("drone")
-    proxy = DroneProxyManager()
-    
-    # Wait for GCS
-    log("Waiting for GCS scheduler...")
-    if not wait_for_gcs(timeout=60.0):
-        log("ERROR: GCS scheduler not responding")
-        return 1
-    log("GCS scheduler is ready")
-    
-    # Tell GCS the test parameters
-    send_gcs_command("configure", rate_mbps=args.rate, duration=args.duration)
-    
-    # Run suites
-    results = []
-    
-    def signal_handler(sig, frame):
-        log("Interrupted, cleaning up...")
-        proxy.stop()
-        try:
-            mavproxy.stop()
-        except Exception:
-            pass
-        send_gcs_command("stop")
-        sys.exit(1)
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    try:
-        for i, suite_name in enumerate(suites_to_run):
-            log("=" * 60)
-            log(f"Running suite {i+1}/{len(suites_to_run)}: {suite_name}")
-            log("=" * 60)
-            
-            # Ensure MAVProxy is running on drone side before starting suite
-            # Primary master is the flight controller; also listen for tunnel RX
-            drone_rx = int(CONFIG.get("DRONE_PLAINTEXT_RX", DRONE_PLAIN_RX_PORT))
-            drone_tx = int(CONFIG.get("DRONE_PLAINTEXT_TX", DRONE_PLAIN_TX_PORT))
-            # master from args (FCU) and extra listens for tunnel RX
-            master = args.mav_master
-            extra = [f"--master=udpin:0.0.0.0:{drone_rx}"]
-            if not mavproxy.is_running():
-                ok = mavproxy.start(master, 115200, "127.0.0.1", drone_tx, extra_args=extra)
-                if not ok:
-                    log("Failed to start local mavproxy; aborting suite")
-                    result = {"suite": suite_name, "status": "mavproxy_start_failed"}
-                    results.append(result)
-                    break
 
-            result = run_suite(proxy, mavproxy, suite_name, args.duration, is_first=(i == 0))
-            results.append(result)
-            
-            if result["status"] == "pass":
-                log(f"Suite PASSED: mavproxy_running={result.get('mavproxy_running')} proxy_running={result.get('proxy_running')}")
-            else:
-                log(f"Suite FAILED: {result['status']}")
-            
-            # Wait between suites
-            if i < len(suites_to_run) - 1:
-                log("Waiting 2s before next suite...")
-                time.sleep(2.0)
-    
-    finally:
-        proxy.stop()
-        try:
-            mavproxy.stop()
-        except Exception:
-            pass
-        send_gcs_command("stop")
-    
-    # Summary
-    print()
-    print("=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
-    
-    passed = sum(1 for r in results if r["status"] == "pass")
-    failed = len(results) - passed
-    
-    for r in results:
-        status = "[PASS]" if r["status"] == "pass" else "[FAIL]"
-        print(
-            f"  {status} {r['suite']}: {r['status']}, mavproxy={r.get('mavproxy_running')} proxy={r.get('proxy_running')}"
-        )
-    
-    print("-" * 60)
-    print(f"Total: {len(results)}, Passed: {passed}, Failed: {failed}")
-    print("=" * 60)
-    
-    return 0 if failed == 0 else 1
+    log(f"Suites to run: {len(suites_to_run)}")
+
+    # Initialize components
+    scheduler = DroneScheduler(args, suites_to_run)
+    # configure logging
+    logging.basicConfig(level=logging.INFO)
+    scheduler.run_scheduler()
+
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())

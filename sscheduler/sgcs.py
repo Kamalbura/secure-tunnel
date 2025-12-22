@@ -282,11 +282,62 @@ class ControlServer:
         self.proxy = proxy
         self.traffic = None
         self.mavproxy = MavProxyManager("gcs")
+        # Persistent mavproxy subprocess handle (if started here)
+        self.mavproxy_proc = None
         self.server_sock = None
         self.running = False
         self.thread = None
         self.rate_mbps = DEFAULT_RATE_MBPS
         self.duration = DEFAULT_DURATION
+
+    def start_persistent_mavproxy(self):
+        """Start a persistent mavproxy subprocess for the lifetime of the scheduler.
+
+        Uses `sys.executable -m MAVProxy.mavproxy` where possible so Windows/sudo
+        environments resolve correctly.
+        """
+        try:
+            bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
+            listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
+            tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
+            QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
+
+            master_str = f"udpin:{bind_host}:{listen_port}"
+            out_arg = f"udp:127.0.0.1:{tunnel_out_port}"
+
+            # Prefer module invocation to avoid PATH issues on Windows
+            python_exe = sys.executable
+            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", f"--out={out_arg}", "--dialect=ardupilotmega", "--nowait", f"--out=udp:127.0.0.1:{QGC_PORT}"]
+
+            log(f"Starting persistent mavproxy: {' '.join(cmd)}")
+
+            if sys.platform.startswith("win"):
+                # Open new console on Windows for interactive UI
+                creationflags = subprocess.CREATE_NEW_CONSOLE
+                self.mavproxy_proc = subprocess.Popen(cmd, stdout=None, stderr=None, creationflags=creationflags)
+            else:
+                # On POSIX keep logs
+                log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                ts_now = time.strftime("%Y%m%d-%H%M%S")
+                log_path = log_dir / f"mavproxy_gcs_{ts_now}.log"
+                try:
+                    fh = open(log_path, "w", encoding="utf-8")
+                except Exception:
+                    fh = subprocess.DEVNULL  # type: ignore[arg-type]
+                self.mavproxy_proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, text=True)
+
+            # give it a moment
+            time.sleep(0.5)
+            if self.mavproxy_proc and self.mavproxy_proc.poll() is None:
+                log("Persistent mavproxy started")
+                return True
+            else:
+                log("Persistent mavproxy failed to start")
+                return False
+        except Exception as e:
+            log(f"start_persistent_mavproxy exception: {e}")
+            return False
     
     def start(self):
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -371,23 +422,11 @@ class ControlServer:
             # Wait a moment for handshake
             time.sleep(1.0)
             
-            # Start application-layer MAVLink relay (mavproxy)
-            if self.mavproxy and self.mavproxy.is_running():
-                self.mavproxy.stop()
-
-            bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
-            listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-            # Tunnel output (to proxy) and also forward to QGroundControl
-            tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
-            QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
-
-            master_str = f"udpin:{bind_host}:{listen_port}"
-            # run mavproxy with main master = udpin (GCS plaintext RX)
-            extra = [f"--out=udp:127.0.0.1:{QGC_PORT}"]
-            ok = self.mavproxy.start(master_str, 115200, "127.0.0.1", tunnel_out_port, extra_args=extra)
-            if not ok:
-                return {"status": "error", "message": "mavproxy_start_failed"}
-            
+            # Do NOT spawn a new mavproxy here. MAVProxy should be persistent.
+            log("Traffic start requested (MAVProxy is already running)")
+            # Check persistent mavproxy health
+            if not (self.mavproxy_proc and self.mavproxy_proc.poll() is None):
+                return {"status": "error", "message": "mavproxy_not_running"}
             return {"status": "ok", "message": "started"}
         
         elif cmd == "start_proxy":
@@ -403,15 +442,8 @@ class ControlServer:
             if not self.proxy.start(suite):
                 return {"status": "error", "message": "proxy_start_failed"}
 
-            # Also start mavproxy now so application-layer relay is available
-            bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
-            listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-            tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
-            QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
-            master_str = f"udpin:{bind_host}:{listen_port}"
-            extra = [f"--out=udp:127.0.0.1:{QGC_PORT}"]
-            self.mavproxy.start(master_str, 115200, "127.0.0.1", tunnel_out_port, extra_args=extra)
-
+            # Persistent MAVProxy should already be running; just acknowledge
+            log("Proxy started; persistent MAVProxy assumed running")
             return {"status": "ok", "message": "proxy_started"}
         
         elif cmd == "start_traffic":
@@ -423,18 +455,10 @@ class ControlServer:
             
             log(f"Starting traffic: {self.rate_mbps} Mbps for {duration}s")
             
-            # Start mavproxy if not already running
-            if self.mavproxy and not self.mavproxy.is_running():
-                bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
-                listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-                tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
-                QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
-                master_str = f"udpin:{bind_host}:{listen_port}"
-                extra = [f"--out=udp:127.0.0.1:{QGC_PORT}"]
-                ok = self.mavproxy.start(master_str, 115200, "127.0.0.1", tunnel_out_port, extra_args=extra)
-                if not ok:
-                    return {"status": "error", "message": "mavproxy_start_failed"}
-
+            # With persistent MAVProxy there is nothing to spawn here.
+            log("Traffic start requested (MAVProxy is already running)")
+            if not (self.mavproxy_proc and self.mavproxy_proc.poll() is None):
+                return {"status": "error", "message": "mavproxy_not_running"}
             return {"status": "ok", "message": "traffic_started"}
             
             return {"status": "ok", "message": "traffic_started"}
@@ -444,8 +468,12 @@ class ControlServer:
             log("Prepare rekey: stopping proxy...")
             self.proxy.stop()
             # stop mavproxy if running
-            if self.mavproxy:
-                self.mavproxy.stop()
+            if self.mavproxy_proc:
+                try:
+                    self.mavproxy_proc.terminate()
+                except Exception:
+                    pass
+                self.mavproxy_proc = None
 
             if self.traffic:
                 try:
@@ -460,8 +488,12 @@ class ControlServer:
             log("Stop command received")
             self.proxy.stop()
             # Stop mavproxy and any traffic generator wrapper
-            if self.mavproxy:
-                self.mavproxy.stop()
+            if self.mavproxy_proc:
+                try:
+                    self.mavproxy_proc.terminate()
+                except Exception:
+                    pass
+                self.mavproxy_proc = None
 
             if self.traffic:
                 try:
@@ -493,11 +525,12 @@ class ControlServer:
                 self.traffic.stop()
             except Exception:
                 pass
-        if self.mavproxy:
+        if self.mavproxy_proc:
             try:
-                self.mavproxy.stop()
+                self.mavproxy_proc.terminate()
             except Exception:
                 pass
+            self.mavproxy_proc = None
 
 # ============================================================
 # Main
@@ -531,21 +564,15 @@ def main():
     control = ControlServer(proxy)
     control.start()
 
-    # Try to start mavproxy at scheduler startup so GUI/terminal appears on Windows
+    # Start persistent MAVProxy for the scheduler lifetime
     try:
-        bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
-        listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-        tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
-        QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
-        master_str = f"udpin:{bind_host}:{listen_port}"
-        extra = [f"--out=udp:127.0.0.1:{QGC_PORT}"]
-        ok = control.mavproxy.start(master_str, 115200, "127.0.0.1", tunnel_out_port, extra_args=extra)
+        ok = control.start_persistent_mavproxy()
         if ok:
-            log("mavproxy started at scheduler startup")
+            log("persistent mavproxy started at scheduler startup")
         else:
-            log("mavproxy failed to start at scheduler startup")
+            log("persistent mavproxy failed to start at scheduler startup")
     except Exception as _e:
-        log(f"mavproxy startup exception: {_e}")
+        log(f"persistent mavproxy startup exception: {_e}")
 
     # Apply local in-file overrides for rate/duration if set
     if LOCAL_RATE_MBPS is not None:

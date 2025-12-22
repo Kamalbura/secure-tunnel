@@ -451,6 +451,16 @@ class DroneScheduler:
         self.proxy = DroneProxyManager()
         self.mavproxy_proc = None
         self.current_proxy_proc = None
+        # Simple GCS client wrapper exposing send_command
+        class _GcsClient:
+            def send_command(self, cmd, params=None):
+                params = params or {}
+                try:
+                    return send_gcs_command(cmd, **params)
+                except Exception as e:
+                    return {"status": "error", "message": str(e)}
+
+        self.gcs_client = _GcsClient()
 
     def start_persistent_mavproxy(self) -> bool:
         """Start MAVProxy once for the scheduler and keep handle."""
@@ -458,7 +468,17 @@ class DroneScheduler:
             python_exe = sys.executable
             master = self.args.mav_master
             out_arg = f"udp:127.0.0.1:{DRONE_PLAIN_TX_PORT}"
-            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master}", f"--out={out_arg}", "--nowait"]
+            # [FIX] Add listening port for RX from Proxy so MAVProxy receives uplink from proxy
+            rx_master = f"udpin:127.0.0.1:{DRONE_PLAIN_RX_PORT}"
+            cmd = [
+                python_exe,
+                "-m",
+                "MAVProxy.mavproxy",
+                f"--master={master}",
+                f"--master={rx_master}",
+                f"--out={out_arg}",
+                "--nowait",
+            ]
 
             ts = time.strftime("%Y%m%d-%H%M%S")
             log_dir = LOGS_DIR
@@ -524,8 +544,25 @@ class DroneScheduler:
             while True:
                 suite_name = self.policy.next_suite()
                 duration = self.policy.get_duration()
-
                 log(f"=== Activating Suite: {suite_name} (duration={duration}) ===")
+
+                # Coordinate with GCS: request GCS to start its proxy BEFORE starting local proxy
+                try:
+                    log(f"Telling GCS to start proxy for {suite_name}...")
+                    resp = self.gcs_client.send_command("start_proxy", {"suite": suite_name})
+                    if resp.get("status") != "ok":
+                        logging.error(f"GCS rejected start_proxy: {resp}")
+                        # skip this suite and continue
+                        time.sleep(1.0)
+                        continue
+                    else:
+                        log(f"GCS acknowledged start_proxy for {suite_name}")
+                except Exception as e:
+                    logging.error(f"Failed to command GCS: {e}")
+                    time.sleep(1.0)
+                    continue
+
+                # Now start local crypto tunnel (drone proxy)
                 self.start_tunnel_for_suite(suite_name)
                 time.sleep(duration)
                 self.stop_current_tunnel()

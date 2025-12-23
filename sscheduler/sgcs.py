@@ -26,6 +26,7 @@ import signal
 import argparse
 import threading
 import subprocess
+import logging
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -35,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
 from tools.mavproxy_manager import MavProxyManager
+from sscheduler.telemetry import TelemetryCollector
 
 # Extract config values (single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
@@ -289,6 +291,17 @@ class ControlServer:
         self.thread = None
         self.rate_mbps = DEFAULT_RATE_MBPS
         self.duration = DEFAULT_DURATION
+        self.current_run_id = None
+        # telemetry collector for link-quality
+        try:
+            self.telemetry = TelemetryCollector(role="gcs")
+        except Exception:
+            self.telemetry = None
+        # telemetry collector for link-quality
+        try:
+            self.telemetry = TelemetryCollector(role="gcs")
+        except Exception:
+            self.telemetry = None
 
     def start_persistent_mavproxy(self):
         """Start a persistent mavproxy subprocess for the lifetime of the scheduler.
@@ -432,18 +445,47 @@ class ControlServer:
         elif cmd == "start_proxy":
             # Drone tells GCS to start proxy only (no traffic yet)
             suite = request.get("suite")
-            
+            run_id = request.get("run_id", None)
+
             if not suite:
                 return {"status": "error", "message": "missing suite"}
-            
-            log(f"Start proxy requested for suite: {suite}")
-            
+
+            log(f"Start proxy requested for suite: {suite} (run_id={run_id})")
+
+            # Lazy telemetry configuration for this run
+            try:
+                if run_id and self.current_run_id != run_id:
+                    self.current_run_id = run_id
+                    try:
+                        if getattr(self, 'telemetry', None):
+                            self.telemetry.close()
+                    except Exception:
+                        pass
+                    self.telemetry = TelemetryCollector(role="gcs")
+                    # configure logging and start sniffer on QGC port
+                    qgc_port = int(CONFIG.get("QGC_PORT", 14550))
+                    try:
+                        self.telemetry.configure_logging("logs", run_id)
+                        self.telemetry.start(qgc_port)
+                    except Exception as _e:
+                        log(f"Telemetry configure/start failed: {_e}")
+            except Exception:
+                pass
+
             # Start GCS proxy
             if not self.proxy.start(suite):
                 return {"status": "error", "message": "proxy_start_failed"}
 
             # Persistent MAVProxy should already be running; just acknowledge
             log("Proxy started; persistent MAVProxy assumed running")
+
+            # Immediately write a telemetry snapshot for this suite if configured
+            try:
+                if getattr(self, 'telemetry', None):
+                    self.telemetry.log_snapshot(suite)
+            except Exception:
+                pass
+
             return {"status": "ok", "message": "proxy_started"}
         
         elif cmd == "start_traffic":
@@ -466,6 +508,12 @@ class ControlServer:
         elif cmd == "prepare_rekey":
             # Drone tells GCS to prepare for rekey (stop proxy)
             log("Prepare rekey: stopping proxy...")
+            # mark rekey event for telemetry
+            try:
+                if self.telemetry:
+                    self.telemetry.mark_rekey_event()
+            except Exception:
+                pass
             self.proxy.stop()
             # stop mavproxy if running
             if self.mavproxy_proc:
@@ -486,6 +534,12 @@ class ControlServer:
         
         elif cmd == "stop":
             log("Stop command received")
+            # mark rekey/stop event
+            try:
+                if self.telemetry:
+                    self.telemetry.mark_rekey_event()
+            except Exception:
+                pass
             self.proxy.stop()
             # Stop mavproxy and any traffic generator wrapper
             if self.mavproxy_proc:
@@ -574,6 +628,14 @@ def main():
     except Exception as _e:
         log(f"persistent mavproxy startup exception: {_e}")
 
+    # Start telemetry sniffer on QGC port if available
+    try:
+        qgc_port = int(CONFIG.get("QGC_PORT", 14550))
+        if getattr(control, "telemetry", None):
+            control.telemetry.start(qgc_port)
+    except Exception as _e:
+        log(f"telemetry.start on GCS failed: {_e}")
+
     # Apply local in-file overrides for rate/duration if set
     if LOCAL_RATE_MBPS is not None:
         control.rate_mbps = float(LOCAL_RATE_MBPS)
@@ -591,8 +653,25 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     
     try:
+        count = 0
         while not shutdown.is_set():
             shutdown.wait(timeout=1.0)
+            count += 1
+            # every 10s, log link-quality metrics
+            if count % 10 == 0:
+                try:
+                    if getattr(control, "telemetry", None):
+                        stats = control.telemetry.snapshot()
+                        logging.info(f"[LINK QUALITY] Loss: {stats['packet_loss']} pkts | Jitter: {stats['jitter_ms']:.2f}ms | Blackout Recovery: {stats['blackout_recovery']:.2f}s")
+                        # also persist snapshot to jsonl
+                        try:
+                            current_suite = control.proxy.current_suite
+                            if current_suite:
+                                control.telemetry.log_snapshot(current_suite)
+                        except Exception:
+                            pass
+                except Exception as _e:
+                    log(f"telemetry snapshot failed: {_e}")
     finally:
         log("Shutting down...")
         control.stop()

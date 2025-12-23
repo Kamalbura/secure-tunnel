@@ -37,6 +37,7 @@ from core.config import CONFIG
 from core.suites import get_suite, list_suites
 from tools.mavproxy_manager import MavProxyManager
 from sscheduler.policy import LinearLoopPolicy, RandomPolicy, ManualOverridePolicy
+from sscheduler.telemetry import TelemetryCollector
 
 # Extract config values (use CONFIG as single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
@@ -461,6 +462,19 @@ class DroneScheduler:
                     return {"status": "error", "message": str(e)}
 
         self.gcs_client = _GcsClient()
+        # telemetry collector
+        self.log_dir = LOGS_DIR
+        try:
+            self.telemetry = TelemetryCollector(role="drone")
+            # Run-id for this scheduler run
+            self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            try:
+                self.telemetry.configure_logging("logs", self.run_id)
+            except Exception as _e:
+                log(f"telemetry.configure_logging failed: {_e}")
+        except Exception as e:
+            log(f"Telemetry initialization failed: {e}")
+            self.telemetry = None
 
     def start_persistent_mavproxy(self) -> bool:
         """Start MAVProxy once for the scheduler and keep handle."""
@@ -477,6 +491,7 @@ class DroneScheduler:
                 f"--master={master}",
                 f"--master={rx_master}",
                 f"--out={out_arg}",
+                "--out=udp:127.0.0.1:14552",
                 "--nowait",
             ]
 
@@ -539,6 +554,13 @@ class DroneScheduler:
         if not ok:
             log("Warning: persistent MAVProxy failed to start; continuing")
 
+        # start telemetry sniffer if available (listen to MAVProxy mirror port)
+        try:
+            if getattr(self, "telemetry", None):
+                self.telemetry.start(14552)
+        except Exception as _e:
+            log(f"telemetry.start failed: {_e}")
+
         count = 0
         try:
             while True:
@@ -549,7 +571,8 @@ class DroneScheduler:
                 # Coordinate with GCS: request GCS to start its proxy BEFORE starting local proxy
                 try:
                     log(f"Telling GCS to start proxy for {suite_name}...")
-                    resp = self.gcs_client.send_command("start_proxy", {"suite": suite_name})
+                    # include run_id so GCS can log into the same run folder
+                    resp = self.gcs_client.send_command("start_proxy", {"suite": suite_name, "run_id": getattr(self, 'run_id', '')})
                     if resp.get("status") != "ok":
                         logging.error(f"GCS rejected start_proxy: {resp}")
                         # skip this suite and continue
@@ -564,7 +587,27 @@ class DroneScheduler:
 
                 # Now start local crypto tunnel (drone proxy)
                 self.start_tunnel_for_suite(suite_name)
+
+                # Wait for duration while collecting telemetry
                 time.sleep(duration)
+
+                # Snapshot telemetry and log
+                try:
+                    if getattr(self, "telemetry", None):
+                        stats = self.telemetry.snapshot()
+                        logging.info(
+                            f"[METRICS] Temp: {stats['temp_c']}C | CPU: {stats['cpu_util']}% | Slope: {stats['temp_slope']:.2f}"
+                        )
+                except Exception as _e:
+                    logging.error(f"Telemetry snapshot failed: {_e}")
+
+                # Mark blackout immediately before stopping the tunnel
+                try:
+                    if getattr(self, "telemetry", None):
+                        self.telemetry.mark_rekey_event()
+                except Exception:
+                    pass
+
                 self.stop_current_tunnel()
 
                 count += 1
@@ -575,6 +618,12 @@ class DroneScheduler:
         except Exception as e:
             logging.error(f"Scheduler crash: {e}")
         finally:
+            # stop telemetry collector
+            try:
+                if getattr(self, "telemetry", None):
+                    self.telemetry.stop()
+            except Exception:
+                pass
             self.cleanup()
 
 

@@ -216,6 +216,8 @@ class GcsProxyManager:
     def __init__(self):
         self.process = None
         self.current_suite = None
+        self._last_log = None
+        self._log_handle = None
     
     def start(self, suite_name: str) -> bool:
         """Start GCS proxy with given suite"""
@@ -235,19 +237,46 @@ class GcsProxyManager:
             return False
         
         cmd = [
-            sys.executable, "-m", "core.run_proxy", "gcs",
-            "--suite", suite_name,
-            "--gcs-secret-file", str(gcs_key),
-            "--status-file", str(GCS_PROXY_STATUS_FILE),
-            "--quiet"
+            sys.executable,
+            "-u",
+            "-m",
+            "core.run_proxy",
+            "gcs",
+            "--suite",
+            suite_name,
+            "--gcs-secret-file",
+            str(gcs_key),
+            "--status-file",
+            str(GCS_PROXY_STATUS_FILE),
         ]
-        
-        log(f"Launching: {' '.join(cmd)}")
-        self.process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+
+        log_dir = ROOT / "logs" / "sscheduler" / "gcs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        log_path = log_dir / f"gcs_{suite_name}_{timestamp}.log"
+        log(f"Launching: {' '.join(cmd)} (log: {log_path})")
+
+        try:
+            self._log_handle = open(log_path, "w", encoding="utf-8")
+        except Exception:
+            self._log_handle = None
+        self._last_log = log_path
+
+        creationflags = 0
+        if sys.platform.startswith("win"):
+            # Enables CTRL_BREAK_EVENT for graceful shutdown.
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+        popen_kwargs = {
+            "bufsize": 1,
+            "universal_newlines": True,
+        }
+        if self._log_handle is not None:
+            popen_kwargs.update({"stdout": self._log_handle, "stderr": subprocess.STDOUT})
+        else:
+            popen_kwargs.update({"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL})
+
+        self.process = subprocess.Popen(cmd, creationflags=creationflags, **popen_kwargs)
         self.current_suite = suite_name
         
         # Wait for proxy to initialize
@@ -255,6 +284,17 @@ class GcsProxyManager:
         
         if self.process.poll() is not None:
             log(f"Proxy exited early with code {self.process.returncode}")
+            # Print tail of log for diagnosis
+            if self._last_log:
+                try:
+                    with open(self._last_log, "r", encoding="utf-8") as fh:
+                        lines = fh.read().splitlines()[-30:]
+                        log("--- proxy log tail ---")
+                        for l in lines:
+                            log(l)
+                        log("--- end log tail ---")
+                except Exception:
+                    pass
             return False
         
         return True
@@ -262,13 +302,34 @@ class GcsProxyManager:
     def stop(self):
         """Stop GCS proxy"""
         if self.process:
-            self.process.terminate()
+            # Try graceful stop first so status/counters can be written.
+            try:
+                if sys.platform.startswith("win"):
+                    self.process.send_signal(signal.CTRL_BREAK_EVENT)
+                    self.process.wait(timeout=2.0)
+                else:
+                    self.process.send_signal(signal.SIGINT)
+                    self.process.wait(timeout=2.0)
+            except Exception:
+                pass
+
+            try:
+                if self.process.poll() is None:
+                    self.process.terminate()
+            except Exception:
+                pass
             try:
                 self.process.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
                 self.process.kill()
             self.process = None
             self.current_suite = None
+            if self._log_handle is not None:
+                try:
+                    self._log_handle.close()
+                except Exception:
+                    pass
+                self._log_handle = None
     
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
@@ -290,6 +351,8 @@ class ControlServer:
         self.mavproxy = MavProxyManager("gcs")
         # Persistent mavproxy subprocess handle (if started here)
         self.mavproxy_proc = None
+        # Optional QGC UDP bridge (preferred on Windows)
+        self.qgc_bridge_proc = None
         self.server_sock = None
         self.running = False
         self.thread = None
@@ -314,6 +377,47 @@ class ControlServer:
             listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
             tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
             QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
+            QGC_BRIDGE_PORT = int(CONFIG.get("QGC_BRIDGE_PORT", QGC_PORT + 1))
+
+            # On Windows, prefer a minimal UDP bridge for QGC <-> proxy ports.
+            # MAVProxy is easy to misconfigure here (feedback loops when "--out" points
+            # back into the tunnel). The bridge is deterministic and bidirectional.
+            use_mavproxy = str(CONFIG.get("GCS_USE_MAVPROXY", "")).strip().lower() in {"1", "true", "yes"}
+            if sys.platform.startswith("win") and not use_mavproxy:
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "tools.qgc_udp_bridge",
+                    "--qgc-host",
+                    "127.0.0.1",
+                    "--qgc-port",
+                    str(QGC_PORT),
+                    "--bridge-bind-host",
+                    "127.0.0.1",
+                    "--bridge-port",
+                    str(QGC_BRIDGE_PORT),
+                    "--proxy-rx-bind-host",
+                    "127.0.0.1",
+                    "--proxy-rx-port",
+                    str(listen_port),
+                    "--proxy-tx-host",
+                    "127.0.0.1",
+                    "--proxy-tx-port",
+                    str(tunnel_out_port),
+                    "--log-every",
+                    "5",
+                ]
+
+                log(f"Starting QGC UDP bridge (Windows default): {' '.join(cmd)}")
+                # Keep it in a new console so it's visible/debuggable.
+                creationflags = subprocess.CREATE_NEW_CONSOLE
+                self.qgc_bridge_proc = subprocess.Popen(cmd, stdout=None, stderr=None, creationflags=creationflags)
+                time.sleep(0.5)
+                if self.qgc_bridge_proc and self.qgc_bridge_proc.poll() is None:
+                    log("QGC UDP bridge started")
+                    return True
+                log("QGC UDP bridge failed to start")
+                return False
 
             master_str = f"udpin:{bind_host}:{listen_port}"
             out_arg = f"udp:127.0.0.1:{tunnel_out_port}"
@@ -619,6 +723,13 @@ class ControlServer:
             except Exception:
                 pass
             self.mavproxy_proc = None
+
+        if self.qgc_bridge_proc:
+            try:
+                self.qgc_bridge_proc.terminate()
+            except Exception:
+                pass
+            self.qgc_bridge_proc = None
 
 # ============================================================
 # Main

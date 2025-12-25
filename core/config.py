@@ -55,6 +55,13 @@ CONFIG = {
     "GCS_HOST_LAN": _GCS_HOST_LAN,
     "GCS_HOST_TAILSCALE": _GCS_HOST_TAILSCALE,
 
+    # --- sscheduler integration knobs ---
+    # Prefer MAVProxy-to-MAVProxy bridging by default. On Windows the GCS follower
+    # can otherwise choose the QGC UDP bridge path.
+    "GCS_USE_MAVPROXY": True,
+    # QGroundControl default UDP listen port (used when MAVProxy/bridge forwards to QGC).
+    "QGC_PORT": 14550,
+
     # Pre-shared key (hex) for drone authentication during handshake.
     # Default is a placeholder; override in production via environment variable.
     # Intentionally default to empty; require injection via environment in non-dev.

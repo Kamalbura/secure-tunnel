@@ -223,6 +223,7 @@ class DroneProxyManager:
     def __init__(self):
         self.process = None
         self.current_suite = None
+        self._log_handle = None
     
     def start(self, suite_name: str) -> bool:
         """Start drone proxy with given suite"""
@@ -242,23 +243,36 @@ class DroneProxyManager:
             return False
         
         cmd = [
-            sys.executable, "-m", "core.run_proxy", "drone",
-            "--suite", suite_name,
-            "--peer-pubkey-file", str(peer_pubkey),
-            "--status-file", str(DRONE_PROXY_STATUS_FILE),
-            "--quiet"
+            sys.executable,
+            "-u",
+            "-m",
+            "core.run_proxy",
+            "drone",
+            "--suite",
+            suite_name,
+            "--peer-pubkey-file",
+            str(peer_pubkey),
+            "--status-file",
+            str(DRONE_PROXY_STATUS_FILE),
         ]
 
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         log_path = LOGS_DIR / f"drone_{suite_name}_{timestamp}.log"
         log(f"Launching: {' '.join(cmd)} (log: {log_path})")
-        log_handle = open(log_path, "w", encoding="utf-8")
+        self._log_handle = open(log_path, "w", encoding="utf-8")
+
+        creationflags = 0
+        if sys.platform.startswith("win"):
+            # Enables CTRL_BREAK_EVENT for graceful shutdown.
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
         self.process = subprocess.Popen(
             cmd,
-            stdout=log_handle,
+            stdout=self._log_handle,
             stderr=subprocess.STDOUT,
             bufsize=1,
             universal_newlines=True,
+            creationflags=creationflags,
         )
         self._last_log = log_path
         self.current_suite = suite_name
@@ -285,18 +299,34 @@ class DroneProxyManager:
     def stop(self):
         """Stop drone proxy"""
         if self.process:
-            self.process.terminate()
+            # Try graceful stop first so status/counters can be written.
+            try:
+                if sys.platform.startswith("win"):
+                    self.process.send_signal(signal.CTRL_BREAK_EVENT)
+                    self.process.wait(timeout=2.0)
+                else:
+                    self.process.send_signal(signal.SIGINT)
+                    self.process.wait(timeout=2.0)
+            except Exception:
+                pass
+
+            try:
+                if self.process.poll() is None:
+                    self.process.terminate()
+            except Exception:
+                pass
             try:
                 self.process.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
                 self.process.kill()
             self.process = None
             self.current_suite = None
-            try:
-                # close last log handle if exists by leaving file closed (we opened in start)
-                pass
-            except Exception:
-                pass
+            if self._log_handle is not None:
+                try:
+                    self._log_handle.close()
+                except Exception:
+                    pass
+                self._log_handle = None
     
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None

@@ -60,6 +60,9 @@ PROXY_INTERNAL_CONTROL_PORT = GCS_CONTROL_PORT + 100
 
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
 
+ROOT = Path(__file__).resolve().parents[1]
+GCS_PROXY_STATUS_FILE = ROOT / "logs" / "gcs_status.json"
+
 # Default traffic settings (can be overridden by drone)
 DEFAULT_RATE_MBPS = 110.0
 DEFAULT_DURATION = 10.0
@@ -235,6 +238,7 @@ class GcsProxyManager:
             sys.executable, "-m", "core.run_proxy", "gcs",
             "--suite", suite_name,
             "--gcs-secret-file", str(gcs_key),
+            "--status-file", str(GCS_PROXY_STATUS_FILE),
             "--quiet"
         ]
         

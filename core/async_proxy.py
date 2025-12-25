@@ -53,6 +53,7 @@ from core.exceptions import ConfigError, SequenceOverflow
 from core.policy_engine import (
     ControlResult,
     ControlState,
+    MSG_TYPE_TELEMETRY_REPORT,
     coordinator_role_from_config,
     create_control_state,
     handle_control,
@@ -912,6 +913,11 @@ def run_proxy(
     # during long-running experiments without waiting for process exit.
     stop_status_writer = threading.Event()
 
+    control_state_ref: Optional[ControlState] = None
+    telemetry_last_arrival_ns: int = 0
+    telemetry_gap_ema_ms: float = 0.0
+    telemetry_last_sent_mono: float = 0.0
+
     def _status_writer() -> None:
         while not stop_status_writer.is_set():
             try:
@@ -922,6 +928,22 @@ def run_proxy(
                         "counters": counters.to_dict(),
                         "ts_ns": time.time_ns(),
                     }
+
+                if control_state_ref is not None:
+                    try:
+                        with control_state_ref.lock:
+                            payload["control"] = {
+                                "role": control_state_ref.role,
+                                "coordinator_role": control_state_ref.coordinator_role,
+                                "state": control_state_ref.state,
+                                "active_rid": control_state_ref.active_rid,
+                                "last_rekey_ms": control_state_ref.last_rekey_ms,
+                                "last_rekey_suite": control_state_ref.last_rekey_suite,
+                                "last_status": control_state_ref.last_status,
+                                "last_telemetry": control_state_ref.last_telemetry,
+                            }
+                    except Exception:
+                        pass
                 write_status(payload)
             except Exception:
                 logger.debug("status writer failed", extra={"role": role})
@@ -939,6 +961,7 @@ def run_proxy(
     sender, receiver = _build_sender_receiver(role, aead_ids, session_id, k_d2g, k_g2d, cfg)
 
     control_state = create_control_state(role, suite_id)
+    control_state_ref = control_state
     coordinator_role = coordinator_role_from_config(cfg)
     try:
         set_coordinator_role(control_state, coordinator_role)
@@ -1257,6 +1280,35 @@ def run_proxy(
                 if stop_after_seconds is not None and (time.time() - start_time) >= stop_after_seconds:
                     break
 
+                # Best-effort, low-frequency in-band telemetry report.
+                # Intended mainly for GCS -> Drone so the controller can adapt.
+                if role == "gcs" and cfg.get("ENABLE_PACKET_TYPE"):
+                    try:
+                        report_every_s = float(cfg.get("TELEMETRY_REPORT_INTERVAL_S", 1.0))
+                    except Exception:
+                        report_every_s = 1.0
+
+                    if report_every_s > 0:
+                        now_mono = time.monotonic()
+                        if (now_mono - telemetry_last_sent_mono) >= report_every_s:
+                            with counters_lock:
+                                c = counters.to_dict()
+                            enc_in = int(c.get("enc_in", 0) or 0)
+                            drops = int(c.get("drops", 0) or 0)
+                            denom = max(1, enc_in + drops)
+                            packet_loss_pct = (drops / denom) * 100.0
+
+                            control_state.outbox.put({
+                                "type": MSG_TYPE_TELEMETRY_REPORT,
+                                "metrics": {
+                                    # Note: latency is approximated by inter-arrival time EMA.
+                                    "avg_latency_ms": float(telemetry_gap_ema_ms),
+                                    "packet_loss_pct": float(packet_loss_pct),
+                                },
+                                "t_ms": int(time.monotonic_ns() // 1_000_000),
+                            })
+                            telemetry_last_sent_mono = now_mono
+
                 while True:
                     try:
                         control_payload = control_state.outbox.get_nowait()
@@ -1371,6 +1423,16 @@ def run_proxy(
 
                             with counters_lock:
                                 counters.enc_in += 1
+
+                            # Update inter-arrival EMA for a lightweight latency approximation.
+                            try:
+                                now_ns = time.monotonic_ns()
+                                if telemetry_last_arrival_ns:
+                                    gap_ms = (now_ns - telemetry_last_arrival_ns) / 1_000_000.0
+                                    telemetry_gap_ema_ms = (telemetry_gap_ema_ms * 0.9) + (gap_ms * 0.1)
+                                telemetry_last_arrival_ns = now_ns
+                            except Exception:
+                                pass
 
                             cipher_len = len(wire)
                             decrypt_start_ns = time.perf_counter_ns()

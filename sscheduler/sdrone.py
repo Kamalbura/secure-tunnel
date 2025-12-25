@@ -82,6 +82,8 @@ ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = ROOT / "logs" / "sscheduler" / "drone"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
+DRONE_PROXY_STATUS_FILE = ROOT / "logs" / "drone_status.json"
+
 # ============================================================
 # Logging
 # ============================================================
@@ -243,6 +245,7 @@ class DroneProxyManager:
             sys.executable, "-m", "core.run_proxy", "drone",
             "--suite", suite_name,
             "--peer-pubkey-file", str(peer_pubkey),
+            "--status-file", str(DRONE_PROXY_STATUS_FILE),
             "--quiet"
         ]
 
@@ -502,6 +505,24 @@ class DroneScheduler:
         except Exception:
             return 0.0
 
+    def _read_inband_gcs_metrics(self) -> dict:
+        try:
+            if not DRONE_PROXY_STATUS_FILE.exists():
+                return {}
+            payload = json.loads(DRONE_PROXY_STATUS_FILE.read_text(encoding="utf-8"))
+            control = payload.get("control") if isinstance(payload, dict) else None
+            if not isinstance(control, dict):
+                return {}
+            last_tel = control.get("last_telemetry")
+            if isinstance(last_tel, dict) and isinstance(last_tel.get("metrics"), dict):
+                return dict(last_tel.get("metrics"))
+            if isinstance(last_tel, dict):
+                # tolerate older shapes
+                return dict(last_tel)
+            return {}
+        except Exception:
+            return {}
+
     def start_persistent_mavproxy(self) -> bool:
         """Start MAVProxy once for the scheduler and keep handle."""
         try:
@@ -626,12 +647,19 @@ class DroneScheduler:
                 except Exception as _e:
                     logging.error(f"Telemetry snapshot failed: {_e}")
 
+                # Prefer in-band telemetry delivered via proxy control-plane.
                 try:
-                    st = self.gcs_client.send_command("status")
-                    if isinstance(st, dict):
-                        gcs_metrics = st.get("gcs_metrics") if isinstance(st.get("gcs_metrics"), dict) else {}
+                    gcs_metrics = self._read_inband_gcs_metrics()
                 except Exception:
                     gcs_metrics = {}
+
+                if not gcs_metrics:
+                    try:
+                        st = self.gcs_client.send_command("status")
+                        if isinstance(st, dict):
+                            gcs_metrics = st.get("gcs_metrics") if isinstance(st.get("gcs_metrics"), dict) else {}
+                    except Exception:
+                        gcs_metrics = {}
 
                 power_w = self._sample_power_w()
                 merged = {

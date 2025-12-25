@@ -115,9 +115,22 @@ class TrafficGenerator:
         self.rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
-        # Bind receive socket on the GCS plaintext RX port so echoes return here
-        self.rx_sock.bind((GCS_HOST, GCS_PLAIN_RX_PORT))
-        self.rx_sock.settimeout(1.0)
+        # Best-effort bind on the GCS plaintext RX port.
+        # Note: this may conflict with a persistent MAVProxy master on the same port.
+        # In that case we still generate traffic (TX-only) and skip RX stats.
+        rx_bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "127.0.0.1"))
+        try:
+            self.rx_sock.bind((rx_bind_host, GCS_PLAIN_RX_PORT))
+            self.rx_sock.settimeout(1.0)
+        except OSError as e:
+            log(
+                f"Traffic RX bind failed on {rx_bind_host}:{GCS_PLAIN_RX_PORT} ({e}); continuing TX-only"
+            )
+            try:
+                self.rx_sock.close()
+            except Exception:
+                pass
+            self.rx_sock = None
         
         self.running = True
         self.complete = False
@@ -152,8 +165,10 @@ class TrafficGenerator:
             
             for _ in range(batch_size):
                 try:
-                    # Send traffic to the Drone's plaintext receive port
-                    self.tx_sock.sendto(payload, (DRONE_HOST, DRONE_PLAIN_RX_PORT))
+                    # Send traffic into the local GCS proxy plaintext input.
+                    # The proxy handles encryption + forwarding to the drone.
+                    ptx_host = str(CONFIG.get("GCS_PLAINTEXT_HOST", "127.0.0.1"))
+                    self.tx_sock.sendto(payload, (ptx_host, GCS_PLAIN_TX_PORT))
                     with self.lock:
                         self.tx_count += 1
                         self.tx_bytes += len(payload)
@@ -170,6 +185,9 @@ class TrafficGenerator:
     
     def _receive_loop(self):
         """Receive echo responses"""
+        if self.rx_sock is None:
+            return
+
         while self.running:
             try:
                 data, addr = self.rx_sock.recvfrom(65535)

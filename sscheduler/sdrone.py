@@ -113,11 +113,14 @@ class UdpEchoServer:
     def start(self):
         if self.running:
             return
+
+        bind_host = str(CONFIG.get("DRONE_PLAINTEXT_BIND") or CONFIG.get("DRONE_PLAINTEXT_HOST") or "127.0.0.1")
+        send_host = str(CONFIG.get("DRONE_PLAINTEXT_HOST") or "127.0.0.1")
         
         self.rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
-        self.rx_sock.bind((DRONE_HOST, DRONE_PLAIN_RX_PORT))
+        self.rx_sock.bind((bind_host, DRONE_PLAIN_RX_PORT))
         self.rx_sock.settimeout(1.0)
         
         self.tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -127,7 +130,7 @@ class UdpEchoServer:
         self.thread = threading.Thread(target=self._echo_loop, daemon=True)
         self.thread.start()
         
-        log(f"Echo server listening on {DRONE_HOST}:{DRONE_PLAIN_RX_PORT}")
+        log(f"Echo server listening on {bind_host}:{DRONE_PLAIN_RX_PORT}")
     
     def _echo_loop(self):
         while self.running:
@@ -137,7 +140,7 @@ class UdpEchoServer:
                     self.rx_count += 1
                     self.rx_bytes += len(data)
                 
-                self.tx_sock.sendto(data, (DRONE_HOST, DRONE_PLAIN_TX_PORT))
+                self.tx_sock.sendto(data, (send_host, DRONE_PLAIN_TX_PORT))
                 with self.lock:
                     self.tx_count += 1
                     self.tx_bytes += len(data)

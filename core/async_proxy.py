@@ -801,20 +801,26 @@ def run_proxy(
     def write_status(payload: Dict[str, object]) -> None:
         if status_path is None:
             return
+        import os as _os
         import time as _time
-        attempts = 2
+        attempts = 6
         status_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = status_path.with_suffix(status_path.suffix + ".tmp")
+        # Use a PID-scoped temp file to reduce collisions and AV/indexer locks.
+        tmp_path = status_path.with_name(status_path.name + f".{_os.getpid()}.tmp")
         data = json.dumps(payload)
         for attempt in range(attempts):
             try:
                 tmp_path.write_text(data, encoding="utf-8")
+                # On Windows it's common for AV/indexers to hold brand-new files
+                # briefly; a tiny delay materially improves replace() success.
+                if _os.name == "nt":
+                    _time.sleep(0.01)
                 tmp_path.replace(status_path)
                 return
             except PermissionError:
                 # Common on Windows when antivirus/indexer holds the file briefly.
                 if attempt + 1 < attempts:
-                    _time.sleep(0.05)
+                    _time.sleep(0.03 * (attempt + 1))
                     continue
                 logger.warning(
                     "Failed to write status file due to PermissionError",

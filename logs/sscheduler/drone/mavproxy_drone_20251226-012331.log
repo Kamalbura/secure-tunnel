@@ -1,0 +1,30 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\burak\miniconda3\envs\oqs-dev\Lib\site-packages\MAVProxy\mavproxy.py", line 1454, in <module>
+    mpstate.rl = rline.rline("MAV> ", mpstate)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\burak\miniconda3\envs\oqs-dev\Lib\site-packages\MAVProxy\modules\lib\rline.py", line 57, in __init__
+    self.session = PromptSession()
+                   ^^^^^^^^^^^^^^^
+  File "C:\Users\burak\miniconda3\envs\oqs-dev\Lib\site-packages\prompt_toolkit\shortcuts\prompt.py", line 483, in __init__
+    self.app = self._create_application(editing_mode, erase_when_done)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\burak\miniconda3\envs\oqs-dev\Lib\site-packages\prompt_toolkit\shortcuts\prompt.py", line 744, in _create_application
+    application: Application[_T] = Application(
+                                   ^^^^^^^^^^^^
+  File "C:\Users\burak\miniconda3\envs\oqs-dev\Lib\site-packages\prompt_toolkit\application\application.py", line 267, in __init__
+    self.output = output or session.output
+                            ^^^^^^^^^^^^^^
+  File "C:\Users\burak\miniconda3\envs\oqs-dev\Lib\site-packages\prompt_toolkit\application\current.py", line 67, in output
+    self._output = create_output()
+                   ^^^^^^^^^^^^^^^
+  File "C:\Users\burak\miniconda3\envs\oqs-dev\Lib\site-packages\prompt_toolkit\output\defaults.py", line 91, in create_output
+    return Win32Output(stdout, default_color_depth=color_depth_from_env)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\burak\miniconda3\envs\oqs-dev\Lib\site-packages\prompt_toolkit\output\win32.py", line 115, in __init__
+    info = self.get_win32_screen_buffer_info()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\burak\miniconda3\envs\oqs-dev\Lib\site-packages\prompt_toolkit\output\win32.py", line 219, in get_win32_screen_buffer_info
+    raise NoConsoleScreenBufferError
+prompt_toolkit.output.win32.NoConsoleScreenBufferError: No Windows console found. Are you running cmd.exe?

@@ -1,0 +1,4 @@
+Log file: logs\drone-20251225-195351.log
+Starting drone proxy with suite cs-classicmceliece460896-chacha20poly1305-mldsa65
+
+{"ts": "2025-12-25T19:53:52Z", "level": "INFO", "name": "pqc", "msg": "PQC handshake completed successfully", "suite_id": "cs-classicmceliece460896-chacha20poly1305-mldsa65", "peer_role": "gcs", "session_id": "67918d3b..."}

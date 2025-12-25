@@ -184,3 +184,52 @@ GREEN
 - Selector-based UDP proxy loop is appropriate for low-overhead RPi usage; avoids heavyweight frameworks.
 - MAVLink friendliness: telemetry/reporting runs out-of-band (status JSON + optional control-plane messages) and does not interfere with MAVLink payload framing.
 
+
+=== Scheduler/Operations Addendum (2025-12-25) ===
+
+File: sscheduler/sgcs.py
+Path: sscheduler/sgcs.py
+Role: GCS-side follower; exposes TCP control server and launches the GCS proxy + MAVProxy/QGC integration.
+Key symbols: ControlServer, GcsProxyManager, TrafficGenerator
+Observations:
+- Persistent MAVProxy master listens on GCS plaintext RX port (default 47002) and forwards to the GCS proxy plaintext TX port (default 47001).
+- TrafficGenerator previously attempted to bind directly on GCS_HOST:47002; on Windows this commonly collides with MAVProxy’s UDP listener and can silently break traffic generation.
+Fix applied:
+- TrafficGenerator bind is now best-effort; on bind conflict it continues TX-only (so suites can still run).
+- TrafficGenerator TX now targets the local proxy plaintext input (GCS_PLAINTEXT_HOST:47001), ensuring traffic actually exercises the encrypted tunnel.
+Severity: Medium (availability/diagnostics; can cause false “no traffic” / misleading results)
+Suggestion:
+- Keep only one consumer of GCS_PLAINTEXT_RX (47002). If you need both MAVProxy and a synthetic blaster, use separate ports or rely on proxy counters/status JSON.
+
+---
+File: sscheduler/sdrone.py
+Path: sscheduler/sdrone.py
+Role: Drone-side controller; starts drone proxy + persistent MAVProxy and drives suite rotation by commanding the GCS follower.
+Key symbols: DroneScheduler, DroneProxyManager, UdpEchoServer
+Observations:
+- Persistent MAVProxy wiring is loopback-based (masters on 127.0.0.1:DRONE_PLAINTEXT_RX and out to 127.0.0.1:DRONE_PLAINTEXT_TX), consistent with core proxy defaults.
+- UdpEchoServer binding previously used DRONE_HOST (LAN IP), which is inconsistent with loopback plaintext defaults.
+Fix applied:
+- UdpEchoServer now binds/sends using DRONE_PLAINTEXT_BIND / DRONE_PLAINTEXT_HOST where available, falling back to 127.0.0.1.
+Severity: Low/Medium (only impacts echo-mode usage; MAVProxy path is primary)
+
+---
+File: scripts/run_sscheduler_gcs.ps1
+Path: scripts/run_sscheduler_gcs.ps1
+Role: Operator helper for Windows; ensures inbound firewall rules exist, then starts sscheduler follower.
+Observations:
+- Explicitly opens inbound TCP 46000 (handshake), UDP 46011 (encrypted receive on GCS), and TCP 48080 (scheduler control).
+Severity: High operational importance on Windows (most common cause of “handshake works but link stays down” is UDP being blocked).
+
+---
+File: core/handshake.py
+Path: core/handshake.py
+Role: PQC handshake + key derivation.
+Key change vs 39a4e96 baseline:
+- Added a “Finished” explicit key-confirmation exchange derived from HKDF output.
+Risk:
+- If the GCS and drone are running different commits (one with Finished support, one without), handshake will fail deterministically.
+Severity: High (interop)
+Suggestion:
+- Treat code version parity across Windows+Pi as a hard requirement; pin both to the same commit when debugging connectivity.
+

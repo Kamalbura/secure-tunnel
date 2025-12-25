@@ -1,0 +1,1 @@
+{"ts": "2025-12-25T11:56:57Z", "level": "INFO", "name": "pqc", "msg": "PQC handshake completed successfully", "suite_id": "cs-mlkem768-aesgcm-mldsa65", "peer_role": "drone", "session_id": "e5e8783f..."}

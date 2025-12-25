@@ -1258,7 +1258,9 @@ def run_proxy(
             with context_lock:
                 peer = active_context.get("peer_addr")
             if not isinstance(peer, tuple) or len(peer) != 2:
-                return cfg["GCS_HOST"], int(cfg["UDP_GCS_RX"])
+                if role == "gcs":
+                    return str(cfg["DRONE_HOST"]), int(cfg["UDP_DRONE_RX"])
+                return str(cfg["GCS_HOST"]), int(cfg["UDP_GCS_RX"])
             return peer  # type: ignore[return-value]
 
         def send_control(payload: dict) -> None:

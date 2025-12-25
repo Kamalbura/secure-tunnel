@@ -292,11 +292,7 @@ class ControlServer:
         self.rate_mbps = DEFAULT_RATE_MBPS
         self.duration = DEFAULT_DURATION
         self.current_run_id = None
-        # telemetry collector for link-quality
-        try:
-            self.telemetry = TelemetryCollector(role="gcs")
-        except Exception:
-            self.telemetry = None
+        self.last_drone_metrics = None
         # telemetry collector for link-quality
         try:
             self.telemetry = TelemetryCollector(role="gcs")
@@ -403,13 +399,47 @@ class ControlServer:
         
         elif cmd == "status":
             traffic_stats = self.traffic.get_stats() if self.traffic else {}
+            gcs_metrics = {}
+            try:
+                if getattr(self, "telemetry", None):
+                    snap = self.telemetry.snapshot()
+                    pkt = int(snap.get("packet_count", 0) or 0)
+                    lost = int(snap.get("packet_loss", 0) or 0)
+                    denom = max(1, pkt + lost)
+                    loss_pct = (lost / denom) * 100.0
+                    # We approximate latency using the inter-arrival jitter EMA when
+                    # true RTT measurement is not available.
+                    avg_latency_ms = float(snap.get("jitter_ms", 0.0) or 0.0)
+                    gcs_metrics = {
+                        "avg_latency_ms": avg_latency_ms,
+                        "packet_loss_pct": loss_pct,
+                        "cpu_util": float(snap.get("cpu_util", 0.0) or 0.0),
+                        "temp_c": float(snap.get("temp_c", 0.0) or 0.0),
+                    }
+            except Exception:
+                gcs_metrics = {}
             return {
                 "status": "ok",
                 "proxy_running": self.proxy.is_running(),
                 "current_suite": self.proxy.current_suite,
                 "traffic_complete": traffic_stats.get("complete", False),
                 "traffic_stats": traffic_stats,
+                "gcs_metrics": gcs_metrics,
+                "drone_metrics": self.last_drone_metrics or {},
             }
+
+        elif cmd == "telemetry_report":
+            # Drone -> GCS metrics report over the scheduler control TCP channel.
+            metrics = request.get("metrics")
+            if not isinstance(metrics, dict):
+                return {"status": "error", "message": "metrics must be an object"}
+            self.last_drone_metrics = {
+                "t": time.time(),
+                "suite": request.get("suite"),
+                "run_id": request.get("run_id"),
+                "metrics": metrics,
+            }
+            return {"status": "ok", "message": "telemetry_received"}
         
         elif cmd == "configure":
             # Drone tells GCS the traffic parameters

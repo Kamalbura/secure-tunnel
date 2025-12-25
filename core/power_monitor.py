@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import math
 import os
+import queue
 import random
 import re
 import shutil
@@ -217,28 +218,105 @@ class Ina219PowerMonitor:
         start_wall_ns = time.time_ns()
         start_perf = time.perf_counter()
 
+        # Producer-consumer pipeline:
+        # - Producer (this thread): reads INA219 at target rate and enqueues raw samples.
+        # - Consumer (background): batches CSV writes to minimize SD card overhead.
+        batch_size = int(os.getenv("POWER_MONITOR_BATCH", "500"))
+        if batch_size <= 0:
+            batch_size = 500
+        max_queue = int(os.getenv("POWER_MONITOR_QUEUE_MAX", str(batch_size * 20)))
+        if max_queue < batch_size:
+            max_queue = batch_size
+
+        sample_queue: "queue.Queue[object]" = queue.Queue(maxsize=max_queue)
+        sentinel = object()
+        writer_done = threading.Event()
+        writer_error: dict[str, str] = {}
+
+        def _writer_thread() -> None:
+            buffer: list[tuple[int, float, float, float, int]] = []
+            try:
+                with open(csv_path, "w", newline="", encoding="utf-8") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(["timestamp_ns", "current_a", "voltage_v", "power_w", "sign_factor"])
+
+                    while True:
+                        try:
+                            item = sample_queue.get(timeout=0.25)
+                        except queue.Empty:
+                            item = None
+
+                        if item is sentinel:
+                            # Drain remaining items before exiting.
+                            while True:
+                                try:
+                                    drained = sample_queue.get_nowait()
+                                except queue.Empty:
+                                    break
+                                if drained is sentinel:
+                                    continue
+                                buffer.append(drained)  # type: ignore[arg-type]
+                            if buffer:
+                                writer.writerows(
+                                    [
+                                        [ts, f"{c:.6f}", f"{v:.6f}", f"{p:.6f}", s]
+                                        for (ts, c, v, p, s) in buffer
+                                    ]
+                                )
+                                buffer.clear()
+                                handle.flush()
+                            break
+
+                        if item is None:
+                            if buffer:
+                                writer.writerows(
+                                    [
+                                        [ts, f"{c:.6f}", f"{v:.6f}", f"{p:.6f}", s]
+                                        for (ts, c, v, p, s) in buffer
+                                    ]
+                                )
+                                buffer.clear()
+                                handle.flush()
+                            continue
+
+                        buffer.append(item)  # type: ignore[arg-type]
+                        if len(buffer) >= batch_size:
+                            writer.writerows(
+                                [
+                                    [ts, f"{c:.6f}", f"{v:.6f}", f"{p:.6f}", s]
+                                    for (ts, c, v, p, s) in buffer
+                                ]
+                            )
+                            buffer.clear()
+                            handle.flush()
+            except Exception as exc:  # pragma: no cover - IO failures depend on host
+                writer_error["error"] = str(exc)
+            finally:
+                writer_done.set()
+
+        consumer = threading.Thread(target=_writer_thread, daemon=True)
+        consumer.start()
+
         sum_current = 0.0
         sum_voltage = 0.0
         sum_power = 0.0
         samples = 0
 
-        with open(csv_path, "w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(["timestamp_ns", "current_a", "voltage_v", "power_w", "sign_factor"])
-
+        try:
             while True:
                 elapsed = time.perf_counter() - start_perf
                 if elapsed >= duration_s:
                     break
+
                 try:
                     current_a, voltage_v = self._read_current_voltage()
                 except Exception as exc:  # pragma: no cover - hardware failure path
                     raise PowerMonitorUnavailable(f"INA219 read failed: {exc}") from exc
 
                 power_w = current_a * voltage_v
-                writer.writerow([time.time_ns(), f"{current_a:.6f}", f"{voltage_v:.6f}", f"{power_w:.6f}", self._sign_factor])
-                if samples % 250 == 0:
-                    handle.flush()
+                ts_ns = time.time_ns()
+                # Producer must be minimal: enqueue raw values.
+                sample_queue.put((ts_ns, current_a, voltage_v, power_w, self._sign_factor))
 
                 sum_current += current_a
                 sum_voltage += voltage_v
@@ -249,6 +327,16 @@ class Ina219PowerMonitor:
                 sleep_for = next_tick - time.perf_counter()
                 if sleep_for > 0:
                     time.sleep(sleep_for)
+        finally:
+            # Ensure consumer drains and flushes all remaining samples.
+            try:
+                sample_queue.put(sentinel)
+            except Exception:
+                pass
+            writer_done.wait(timeout=5.0)
+            consumer.join(timeout=1.0)
+            if writer_error:
+                raise PowerMonitorUnavailable(f"power CSV writer failed: {writer_error.get('error', 'unknown')}")
 
         end_perf = time.perf_counter()
         end_wall_ns = time.time_ns()

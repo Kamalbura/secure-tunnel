@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
 
+MSG_TYPE_TELEMETRY_REPORT = "telemetry_report"
+
+
 def _now_ms() -> int:
     """Return monotonic milliseconds for control timestamps."""
 
@@ -41,6 +44,7 @@ class ControlState:
     last_rekey_ms: Optional[int] = None
     last_rekey_suite: Optional[str] = None
     last_status: Optional[Dict[str, object]] = None
+    last_telemetry: Optional[Dict[str, object]] = None
     stats: Dict[str, int] = field(default_factory=lambda: {
         "prepare_sent": 0,
         "prepare_received": 0,
@@ -178,6 +182,14 @@ def handle_control(msg: dict, role: str, state: ControlState) -> ControlResult:
     msg_type = msg.get("type")
     if not isinstance(msg_type, str):
         result.notes.append("missing_type")
+        return result
+
+    if msg_type == MSG_TYPE_TELEMETRY_REPORT:
+        # Telemetry reports may be sent by either side, but are primarily intended
+        # for follower (GCS) -> controller (drone) feedback.
+        payload = msg.get("metrics")
+        with state.lock:
+            state.last_telemetry = payload if isinstance(payload, dict) else msg
         return result
 
     rid = msg.get("rid")

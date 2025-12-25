@@ -391,9 +391,12 @@ def derive_transport_keys(
     derive_wall_start = time.time_ns() if metrics_ref is not None else None
     derive_perf_start = time.perf_counter_ns() if metrics_ref is not None else None
     info = b"pq-drone-gcs:kdf:v1|" + session_id + b"|" + kem_name + b"|" + sig_name
+    # Expand enough material for:
+    # - two 32-byte traffic keys (d2g/g2d)
+    # - one 32-byte finished key for explicit key confirmation
     hkdf = HKDF(
         algorithm=hashes.SHA256(),
-        length=64,
+        length=96,
         salt=b"pq-drone-gcs|hkdf|v1",
         info=info,
     )
@@ -407,13 +410,36 @@ def derive_transport_keys(
         metrics_ref[f"kdf_{prefix}_wall_end_ns"] = derive_wall_end
     key_d2g = okm[:32]
     key_g2d = okm[32:64]
+    finished_key = okm[64:96]
 
     if role == "client":
-        # Drone acts as client; return (send_to_gcs, receive_from_gcs).
-        return key_d2g, key_g2d
+        # Drone acts as client; return (send_to_gcs, receive_from_gcs, finished_key).
+        return key_d2g, key_g2d, finished_key
     else:  # server == GCS
         # GCS perspective: send_to_drone first, receive_from_drone second.
-        return key_g2d, key_d2g
+        return key_g2d, key_d2g, finished_key
+
+
+def _handshake_transcript_hash(
+    hello_len_bytes: bytes,
+    hello_wire: bytes,
+    ct_len_bytes: bytes,
+    kem_ct: bytes,
+) -> bytes:
+    """Hash the full handshake transcript used for Finished key confirmation."""
+
+    h = hashlib.sha256()
+    h.update(hello_len_bytes)
+    h.update(hello_wire)
+    h.update(ct_len_bytes)
+    h.update(kem_ct)
+    return h.digest()
+
+
+def _finished_tag(finished_key: bytes, label: bytes, transcript_hash: bytes) -> bytes:
+    """Compute a Finished tag as HMAC-SHA256 over transcript hash."""
+
+    return hmac.new(finished_key, b"pq-drone-gcs:finished:v1|" + label + b"|" + transcript_hash, hashlib.sha256).digest()
 def server_gcs_handshake(conn, suite, gcs_sig_secret, *, timeout: float = 10.0):
     """Authenticated GCS side handshake.
 
@@ -446,7 +472,8 @@ def server_gcs_handshake(conn, suite, gcs_sig_secret, *, timeout: float = 10.0):
     handshake_metrics["handshake_wall_start_ns"] = handshake_wall_start
     artifacts = handshake_metrics.setdefault("artifacts", {})
     artifacts.setdefault("server_hello_bytes", len(hello_wire))
-    conn.sendall(struct.pack("!I", len(hello_wire)) + hello_wire)
+    hello_len_bytes = struct.pack("!I", len(hello_wire))
+    conn.sendall(hello_len_bytes + hello_wire)
 
     # Receive KEM ciphertext
     ct_len_bytes = b""
@@ -493,7 +520,7 @@ def server_gcs_handshake(conn, suite, gcs_sig_secret, *, timeout: float = 10.0):
         raise HandshakeVerifyError("drone authentication failed")
 
     shared_secret = server_decapsulate(ephemeral, kem_ct, metrics=handshake_metrics)
-    key_send, key_recv = derive_transport_keys(
+    key_send, key_recv, finished_key = derive_transport_keys(
         "server",
         ephemeral.session_id,
         ephemeral.kem_name.encode("utf-8"),
@@ -501,6 +528,20 @@ def server_gcs_handshake(conn, suite, gcs_sig_secret, *, timeout: float = 10.0):
         shared_secret,
         metrics=handshake_metrics,
     )
+
+    # Finished key confirmation (client -> server, then server -> client)
+    transcript_hash = _handshake_transcript_hash(hello_len_bytes, hello_wire, ct_len_bytes, kem_ct)
+    client_finished = b""
+    while len(client_finished) < hashlib.sha256().digest_size:
+        chunk = conn.recv(hashlib.sha256().digest_size - len(client_finished))
+        if not chunk:
+            raise ConnectionError("Connection closed reading client Finished")
+        client_finished += chunk
+    expected_client = _finished_tag(finished_key, b"client", transcript_hash)
+    if not hmac.compare_digest(client_finished, expected_client):
+        raise HandshakeVerifyError("bad client Finished")
+    server_finished = _finished_tag(finished_key, b"server", transcript_hash)
+    conn.sendall(server_finished)
     handshake_metrics["handshake_wall_end_ns"] = time.time_ns()
     handshake_metrics["handshake_total_ns"] = time.perf_counter_ns() - handshake_perf_start
     _finalize_handshake_metrics(handshake_metrics)
@@ -598,12 +639,13 @@ def client_drone_handshake(client_sock, suite, gcs_sig_public, *, timeout: float
     kem_metrics = primitives.setdefault("kem", {})
     kem_metrics.setdefault("ciphertext_bytes", len(kem_ct))
     kem_metrics.setdefault("shared_secret_bytes", len(shared_secret))
+    ct_len_bytes = struct.pack("!I", len(kem_ct))
     tag = hmac.new(_drone_psk_bytes(), hello_wire, hashlib.sha256).digest()
-    client_sock.sendall(struct.pack("!I", len(kem_ct)) + kem_ct + tag)
+    client_sock.sendall(ct_len_bytes + kem_ct + tag)
     artifacts["auth_tag_bytes"] = len(tag)
     
     # Derive transport keys
-    key_send, key_recv = derive_transport_keys(
+    key_send, key_recv, finished_key = derive_transport_keys(
         "client",
         hello.session_id,
         hello.kem_name,
@@ -611,6 +653,21 @@ def client_drone_handshake(client_sock, suite, gcs_sig_public, *, timeout: float
         shared_secret,
         metrics=handshake_metrics,
     )
+
+    # Finished key confirmation.
+    transcript_hash = _handshake_transcript_hash(hello_len_bytes, hello_wire, ct_len_bytes, kem_ct)
+    client_finished = _finished_tag(finished_key, b"client", transcript_hash)
+    client_sock.sendall(client_finished)
+
+    server_finished = b""
+    while len(server_finished) < hashlib.sha256().digest_size:
+        chunk = client_sock.recv(hashlib.sha256().digest_size - len(server_finished))
+        if not chunk:
+            raise ConnectionError("Connection closed reading server Finished")
+        server_finished += chunk
+    expected_server = _finished_tag(finished_key, b"server", transcript_hash)
+    if not hmac.compare_digest(server_finished, expected_server):
+        raise HandshakeVerifyError("bad server Finished")
 
     handshake_metrics["handshake_wall_start_ns"] = handshake_wall_start
     handshake_metrics["handshake_wall_end_ns"] = time.time_ns()

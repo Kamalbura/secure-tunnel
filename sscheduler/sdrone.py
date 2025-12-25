@@ -36,8 +36,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
 from tools.mavproxy_manager import MavProxyManager
-from sscheduler.policy import LinearLoopPolicy, RandomPolicy, ManualOverridePolicy
+from sscheduler.policy import LinearLoopPolicy, RandomPolicy, ManualOverridePolicy, AdaptiveResourcePolicy
 from sscheduler.telemetry import TelemetryCollector
+
+try:  # Optional power sampling backends (Raspberry Pi only)
+    from core.power_monitor import create_power_monitor, PowerMonitorUnavailable  # type: ignore
+except Exception:  # pragma: no cover
+    create_power_monitor = None  # type: ignore
+    PowerMonitorUnavailable = Exception  # type: ignore
 
 # Extract config values (use CONFIG as single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
@@ -448,10 +454,11 @@ class DroneScheduler:
     def __init__(self, args, suites):
         self.args = args
         self.suites = suites
-        self.policy = LinearLoopPolicy(self.suites)
+        self.policy = AdaptiveResourcePolicy(self.suites) if getattr(args, "adaptive", False) else LinearLoopPolicy(self.suites)
         self.proxy = DroneProxyManager()
         self.mavproxy_proc = None
         self.current_proxy_proc = None
+        self.power_monitor = None
         # Simple GCS client wrapper exposing send_command
         class _GcsClient:
             def send_command(self, cmd, params=None):
@@ -475,6 +482,25 @@ class DroneScheduler:
         except Exception as e:
             log(f"Telemetry initialization failed: {e}")
             self.telemetry = None
+
+        # Optional: sample instantaneous power without writing CSVs.
+        if create_power_monitor is not None and getattr(args, "enable_power", False):
+            try:
+                power_dir = (LOGS_DIR / "power")
+                power_dir.mkdir(parents=True, exist_ok=True)
+                # Use a low sample rate for spot checks to minimize CPU/I2C overhead.
+                self.power_monitor = create_power_monitor(power_dir, backend="auto", sample_hz=10)
+            except Exception as _e:
+                self.power_monitor = None
+
+    def _sample_power_w(self) -> float:
+        if self.power_monitor is None:
+            return 0.0
+        try:
+            sample = next(self.power_monitor.iter_samples(duration_s=0.05))
+            return float(sample.power_w)
+        except Exception:
+            return 0.0
 
     def start_persistent_mavproxy(self) -> bool:
         """Start MAVProxy once for the scheduler and keep handle."""
@@ -591,15 +617,68 @@ class DroneScheduler:
                 # Wait for duration while collecting telemetry
                 time.sleep(duration)
 
-                # Snapshot telemetry and log
+                # Collect local + GCS metrics for adaptive policy.
+                drone_stats = {}
+                gcs_metrics = {}
                 try:
                     if getattr(self, "telemetry", None):
-                        stats = self.telemetry.snapshot()
-                        logging.info(
-                            f"[METRICS] Temp: {stats['temp_c']}C | CPU: {stats['cpu_util']}% | Slope: {stats['temp_slope']:.2f}"
-                        )
+                        drone_stats = self.telemetry.snapshot()
                 except Exception as _e:
                     logging.error(f"Telemetry snapshot failed: {_e}")
+
+                try:
+                    st = self.gcs_client.send_command("status")
+                    if isinstance(st, dict):
+                        gcs_metrics = st.get("gcs_metrics") if isinstance(st.get("gcs_metrics"), dict) else {}
+                except Exception:
+                    gcs_metrics = {}
+
+                power_w = self._sample_power_w()
+                merged = {
+                    "drone": {
+                        "temp_c": float(drone_stats.get("temp_c", 0.0) or 0.0),
+                        "cpu_util": float(drone_stats.get("cpu_util", 0.0) or 0.0),
+                        "power_w": power_w,
+                    },
+                    "gcs": {
+                        "avg_latency_ms": float(gcs_metrics.get("avg_latency_ms", 0.0) or 0.0),
+                        "packet_loss_pct": float(gcs_metrics.get("packet_loss_pct", 0.0) or 0.0),
+                        "cpu_util": float(gcs_metrics.get("cpu_util", 0.0) or 0.0),
+                        "temp_c": float(gcs_metrics.get("temp_c", 0.0) or 0.0),
+                    },
+                }
+
+                logging.info(
+                    "[METRICS] drone_temp=%.1fC drone_cpu=%.1f%% power=%.2fW | gcs_loss=%.1f%% gcs_lat=%.1fms",
+                    merged["drone"]["temp_c"],
+                    merged["drone"]["cpu_util"],
+                    merged["drone"]["power_w"],
+                    merged["gcs"]["packet_loss_pct"],
+                    merged["gcs"]["avg_latency_ms"],
+                )
+
+                try:
+                    if hasattr(self.policy, "update_metrics"):
+                        self.policy.update_metrics(merged)
+                except Exception:
+                    pass
+
+                # Bidirectional metrics: report drone-side telemetry to GCS for logging/diagnostics.
+                try:
+                    _metrics_payload = {
+                        "drone": merged.get("drone", {}),
+                        "gcs": merged.get("gcs", {}),
+                    }
+                    self.gcs_client.send_command(
+                        "telemetry_report",
+                        {
+                            "suite": suite_name,
+                            "run_id": getattr(self, "run_id", ""),
+                            "metrics": _metrics_payload,
+                        },
+                    )
+                except Exception:
+                    pass
 
                 # Mark blackout immediately before stopping the tunnel
                 try:
@@ -640,6 +719,8 @@ def main():
     parser.add_argument("--duration", type=float, default=DEFAULT_DURATION, help="Seconds per suite")
     parser.add_argument("--rate", type=float, default=DEFAULT_RATE_MBPS, help="Traffic rate Mbps")
     parser.add_argument("--max-suites", type=int, default=None, help="Max suites to run")
+    parser.add_argument("--adaptive", action="store_true", help="Enable adaptive suite downgrades based on telemetry")
+    parser.add_argument("--enable-power", action="store_true", help="Enable lightweight power sampling (no CSV)")
     args = parser.parse_args()
     
     print("=" * 60)

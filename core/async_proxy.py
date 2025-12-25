@@ -67,6 +67,11 @@ from core.control_tcp import start_control_server_if_enabled
 logger = get_logger("pqc")
 
 
+# During rekeys, keep the previous receiver around briefly to reduce packet loss
+# while both peers converge on the new session/epoch.
+_DEFAULT_REKEY_GRACE_DURATION_S = 5.0
+
+
 class ProxyCounters:
     """Simple counters for proxy statistics."""
 
@@ -952,6 +957,8 @@ def run_proxy(
         "aead_ids": aead_ids,
         "sender": sender,
         "receiver": receiver,
+        "old_receiver": None,
+        "grace_expiry": 0.0,
         "peer_addr": peer_addr,
         "peer_match_strict": bool(cfg.get("STRICT_UDP_PEER_MATCH", True)),
     }
@@ -1141,11 +1148,23 @@ def run_proxy(
                     role, new_ids, new_session_id, new_k_d2g, new_k_g2d, cfg
                 )
 
+                # Grace window: retain previous receiver briefly to avoid blackouts.
+                with context_lock:
+                    previous_receiver = active_context.get("receiver")
+                try:
+                    grace_seconds = float(cfg.get("REKEY_GRACE_DURATION", _DEFAULT_REKEY_GRACE_DURATION_S))
+                except Exception:
+                    grace_seconds = _DEFAULT_REKEY_GRACE_DURATION_S
+                if grace_seconds <= 0:
+                    grace_seconds = 0.0
+
                 with context_lock:
                     active_context.update(
                         {
                             "sender": new_sender,
                             "receiver": new_receiver,
+                            "old_receiver": previous_receiver,
+                            "grace_expiry": (time.monotonic() + grace_seconds) if grace_seconds else 0.0,
                             "session_id": new_session_id,
                             "aead_ids": new_ids,
                             "suite": new_suite["suite_id"],
@@ -1421,44 +1440,72 @@ def run_proxy(
 
                             decrypt_elapsed_ns = time.perf_counter_ns() - decrypt_start_ns
                             if plaintext is None:
-                                with counters_lock:
-                                    counters.drops += 1
-                                    last_reason = current_receiver.last_error_reason()
-                                    # Bug #7 fix: Proper error classification without redundancy
-                                    if last_reason == "auth":
-                                        counters.drop_auth += 1
-                                    elif last_reason == "header":
-                                        counters.drop_header += 1
-                                    elif last_reason == "replay":
-                                        counters.drop_replay += 1
-                                    elif last_reason == "session":
-                                        counters.drop_session_epoch += 1
-                                    elif last_reason is None or last_reason == "unknown":
-                                        # Only parse header if receiver didn't classify it
-                                        reason, _seq = _parse_header_fields(
-                                            CONFIG["WIRE_VERSION"],
-                                            current_receiver.ids,
-                                            current_receiver.session_id,
-                                            wire,
-                                        )
-                                        if reason in (
-                                            "version_mismatch",
-                                            "crypto_id_mismatch",
-                                            "header_too_short",
-                                            "header_unpack_error",
-                                        ):
-                                            counters.drop_header += 1
-                                        elif reason == "session_mismatch":
-                                            counters.drop_session_epoch += 1
-                                        elif reason == "auth_fail_or_replay":
-                                            counters.drop_auth += 1
-                                        else:
-                                            counters.drop_other += 1
+                                last_reason = current_receiver.last_error_reason()
+
+                                # Rekey grace: if mismatch is due to session/epoch, try old receiver.
+                                fallback_plaintext = None
+                                if last_reason == "session":
+                                    now_mono = time.monotonic()
+                                    with context_lock:
+                                        old_receiver = active_context.get("old_receiver")
+                                        grace_expiry = float(active_context.get("grace_expiry") or 0.0)
+                                    if old_receiver is not None and grace_expiry and now_mono <= grace_expiry:
+                                        try:
+                                            old_start_ns = time.perf_counter_ns()
+                                            fallback_plaintext = old_receiver.decrypt(wire)  # type: ignore[union-attr]
+                                            old_elapsed_ns = time.perf_counter_ns() - old_start_ns
+                                            if fallback_plaintext is not None:
+                                                with counters_lock:
+                                                    counters.record_decrypt_ok(old_elapsed_ns, cipher_len, len(fallback_plaintext))
+                                        except Exception:
+                                            fallback_plaintext = None
                                     else:
-                                        # Unrecognized last_reason value
-                                        counters.drop_other += 1
-                                    counters.record_decrypt_fail(decrypt_elapsed_ns, cipher_len)
-                                continue
+                                        # Expired or absent: clear reference to avoid stale state.
+                                        if grace_expiry and now_mono > grace_expiry:
+                                            with context_lock:
+                                                active_context["old_receiver"] = None
+                                                active_context["grace_expiry"] = 0.0
+
+                                if fallback_plaintext is not None:
+                                    plaintext = fallback_plaintext
+                                else:
+                                    with counters_lock:
+                                        counters.drops += 1
+                                        # Bug #7 fix: Proper error classification without redundancy
+                                        if last_reason == "auth":
+                                            counters.drop_auth += 1
+                                        elif last_reason == "header":
+                                            counters.drop_header += 1
+                                        elif last_reason == "replay":
+                                            counters.drop_replay += 1
+                                        elif last_reason == "session":
+                                            counters.drop_session_epoch += 1
+                                        elif last_reason is None or last_reason == "unknown":
+                                            # Only parse header if receiver didn't classify it
+                                            reason, _seq = _parse_header_fields(
+                                                CONFIG["WIRE_VERSION"],
+                                                current_receiver.ids,
+                                                current_receiver.session_id,
+                                                wire,
+                                            )
+                                            if reason in (
+                                                "version_mismatch",
+                                                "crypto_id_mismatch",
+                                                "header_too_short",
+                                                "header_unpack_error",
+                                            ):
+                                                counters.drop_header += 1
+                                            elif reason == "session_mismatch":
+                                                counters.drop_session_epoch += 1
+                                            elif reason == "auth_fail_or_replay":
+                                                counters.drop_auth += 1
+                                            else:
+                                                counters.drop_other += 1
+                                        else:
+                                            # Unrecognized last_reason value
+                                            counters.drop_other += 1
+                                        counters.record_decrypt_fail(decrypt_elapsed_ns, cipher_len)
+                                    continue
 
                             plaintext_len = len(plaintext)
                             with counters_lock:

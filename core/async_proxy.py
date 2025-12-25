@@ -1195,7 +1195,6 @@ def run_proxy(
                             "peer_addr": new_peer_addr,
                         }
                     )
-                    sockets["encrypted_peer"] = new_peer_addr
 
                 with counters_lock:
                     counters.rekeys_ok += 1
@@ -1255,6 +1254,13 @@ def run_proxy(
         selector.register(sockets["encrypted"], selectors.EVENT_READ, data="encrypted")
         selector.register(sockets["plaintext_in"], selectors.EVENT_READ, data="plaintext_in")
 
+        def _get_encrypted_peer() -> Tuple[str, int]:
+            with context_lock:
+                peer = active_context.get("peer_addr")
+            if not isinstance(peer, tuple) or len(peer) != 2:
+                return cfg["GCS_HOST"], int(cfg["UDP_GCS_RX"])
+            return peer  # type: ignore[return-value]
+
         def send_control(payload: dict) -> None:
             body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
             frame = b"\x02" + body
@@ -1268,7 +1274,7 @@ def run_proxy(
                 logger.warning("Failed to encrypt control payload", extra={"role": role, "error": str(exc)})
                 return
             try:
-                sockets["encrypted"].sendto(wire, sockets["encrypted_peer"])
+                sockets["encrypted"].sendto(wire, _get_encrypted_peer())
                 counters.enc_out += 1
             except socket.error as exc:
                 counters.drops += 1
@@ -1279,6 +1285,18 @@ def run_proxy(
             while True:
                 if stop_after_seconds is not None and (time.time() - start_time) >= stop_after_seconds:
                     break
+
+                # Rekey grace cleanup: ensure old keys are dropped promptly after expiry
+                # even if no session-mismatch packets arrive.
+                try:
+                    now_mono = time.monotonic()
+                    with context_lock:
+                        grace_expiry = float(active_context.get("grace_expiry") or 0.0)
+                        if grace_expiry and now_mono > grace_expiry:
+                            active_context["old_receiver"] = None
+                            active_context["grace_expiry"] = 0.0
+                except Exception:
+                    pass
 
                 # Best-effort, low-frequency in-band telemetry report.
                 # Intended mainly for GCS -> Drone so the controller can adapt.
@@ -1383,7 +1401,7 @@ def run_proxy(
                                 counters.record_encrypt(encrypt_elapsed_ns, plaintext_len, ciphertext_len)
 
                             try:
-                                sockets["encrypted"].sendto(wire, sockets["encrypted_peer"])
+                                sockets["encrypted"].sendto(wire, _get_encrypted_peer())
                                 with counters_lock:
                                     counters.enc_out += 1
                             except socket.error:

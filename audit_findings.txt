@@ -138,3 +138,49 @@ Suggestions: None
 
 ---
 Progress: Initial traversal and analysis of key modules complete. Next: iterate remaining files (auto/*, core/* extras, secrets, tools, tests), append findings, map flows, and produce final recommendations.
+
+
+=== Verification Addendum (2025-12-25) ===
+
+Scope: requested Phase 1–4 verification checkpoints across crypto, networking robustness, and efficiency.
+
+Phase 1: Crypto correctness & edge-cases
+
+GREEN
+- Handshake transcript binding: length-prefixed transcript hashing and Finished MAC are present (prevents transcript ambiguity).
+- Downgrade resistance: client checks negotiated KEM/SIG against expected suite; signature covers key suite identifiers and challenge.
+- Nonce/IV safety: deterministic IV construction uses epoch||seq; epoch wrap is forbidden and SequenceOverflow triggers rekey.
+- Replay protection: receiver uses sliding replay window and rejects replays.
+
+YELLOW
+- Operational safety: default rekey threshold is extremely large (2^63) which is cryptographically fine, but it can hide “never rekeys” operator mistakes. Consider lowering REKEY_SEQ_THRESHOLD operationally for long-lived sessions.
+- PSK safety: empty PSK is permitted in dev; make sure ENV discipline prevents accidental production use of empty PSK.
+
+Phase 2: Networking robustness & rekey-grace safety
+
+GREEN
+- TCP handshake framing: length-prefixed reads handle partial reads.
+- TCP control framing: newline-delimited JSON buffer handles partial reads.
+- Socket lifecycle: UDP sockets and selector are closed via context managers/finally.
+
+YELLOW (FIXED)
+- Thread safety: background rekey worker updated sockets["encrypted_peer"], while the main loop read it concurrently for sendto(). This is a data race and can cause transient misrouting during rekey.
+	Fix: main loop now routes via active_context["peer_addr"] under lock; worker no longer mutates sockets dict.
+- Key retention: old_receiver could remain referenced after grace expiry if no mismatched packets arrive (keys linger longer than intended).
+	Fix: periodic grace-expiry cleanup runs in the main loop.
+
+Phase 3: Efficiency & boundedness
+
+GREEN
+- Power monitor producer/consumer queue is bounded (maxsize) and batches disk writes.
+
+YELLOW (OPTIONAL MITIGATION ADDED)
+- If disk I/O stalls, producer blocking on queue can stall sampling and extend capture wall-time.
+	Mitigation: POWER_MONITOR_BLOCK_ON_FULL=0 enables drop-on-full behavior to preserve liveness under extreme I/O pressure.
+
+Phase 4: Best-practices alignment (event loop & MAVLink friendliness)
+
+GREEN
+- Selector-based UDP proxy loop is appropriate for low-overhead RPi usage; avoids heavyweight frameworks.
+- MAVLink friendliness: telemetry/reporting runs out-of-band (status JSON + optional control-plane messages) and does not interfere with MAVLink payload framing.
+

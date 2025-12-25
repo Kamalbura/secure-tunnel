@@ -227,6 +227,7 @@ class Ina219PowerMonitor:
         max_queue = int(os.getenv("POWER_MONITOR_QUEUE_MAX", str(batch_size * 20)))
         if max_queue < batch_size:
             max_queue = batch_size
+        block_on_full = os.getenv("POWER_MONITOR_BLOCK_ON_FULL", "1").strip().lower() not in {"0", "false", "no"}
 
         sample_queue: "queue.Queue[object]" = queue.Queue(maxsize=max_queue)
         sentinel = object()
@@ -316,7 +317,17 @@ class Ina219PowerMonitor:
                 power_w = current_a * voltage_v
                 ts_ns = time.time_ns()
                 # Producer must be minimal: enqueue raw values.
-                sample_queue.put((ts_ns, current_a, voltage_v, power_w, self._sign_factor))
+                if block_on_full:
+                    sample_queue.put((ts_ns, current_a, voltage_v, power_w, self._sign_factor))
+                else:
+                    try:
+                        sample_queue.put_nowait((ts_ns, current_a, voltage_v, power_w, self._sign_factor))
+                    except queue.Full:
+                        next_tick += dt
+                        sleep_for = next_tick - time.perf_counter()
+                        if sleep_for > 0:
+                            time.sleep(sleep_for)
+                        continue
 
                 sum_current += current_a
                 sum_voltage += voltage_v

@@ -11,6 +11,11 @@ venv/
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Bytecode & caches (explicit)
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+
 # Logs
 logs/
 *.log

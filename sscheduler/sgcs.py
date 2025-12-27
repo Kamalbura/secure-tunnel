@@ -26,6 +26,7 @@ import signal
 import argparse
 import threading
 import subprocess
+import atexit
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -328,9 +329,27 @@ class ControlServer:
             log(f"Starting persistent mavproxy: {' '.join(cmd)}")
 
             if sys.platform.startswith("win"):
-                # Open new console on Windows for interactive UI
-                creationflags = subprocess.CREATE_NEW_CONSOLE
-                self.mavproxy_proc = subprocess.Popen(cmd, creationflags=creationflags)
+                # Windows: Use CREATE_NEW_PROCESS_GROUP to allow group signaling, but NO new console.
+                # This keeps the process attached to the parent's lifetime more closely.
+                # We MUST redirect stdout/stderr because there is no console window.
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+                
+                log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                ts_now = time.strftime("%Y%m%d-%H%M%S")
+                log_path = log_dir / f"mavproxy_gcs_{ts_now}.log"
+                try:
+                    fh = open(log_path, "w", encoding="utf-8")
+                except Exception:
+                    fh = subprocess.DEVNULL
+
+                self.mavproxy_proc = subprocess.Popen(
+                    cmd, 
+                    creationflags=creationflags,
+                    stdout=fh,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
             else:
                 # On POSIX keep logs
                 log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
@@ -527,10 +546,16 @@ class ControlServer:
             return {
                 "status": "ok",
                 "suites": [s["name"] for s in SUITES],
-                "count": len(SUITES),
-            }
-        
-        else:
+            log(f"Killing MAVProxy tree PID: {self.mavproxy_proc.pid}")
+            if sys.platform.startswith("win"):
+                # Force kill tree on Windows
+                subprocess.run(f"taskkill /F /T /PID {self.mavproxy_proc.pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                try:
+                    self.mavproxy_proc.terminate()
+                    self.mavproxy_proc.wait(timeout=2)
+                except Exception:
+                    self.mavproxy_proc.kill()
             return {"status": "error", "message": f"unknown command: {cmd}"}
     
     def stop(self):
@@ -555,6 +580,36 @@ class ControlServer:
 # Main
 # ============================================================
 
+def cleanup_environment():
+    """Force kill any stale instances of our components."""
+    log("Cleaning up stale processes...")
+    
+    # Current PID to avoid suicide (though unlikely to match targets)
+    my_pid = os.getpid()
+    
+    targets = ["mavproxy", "core.run_proxy"]
+    
+    if sys.platform.startswith("win"):
+        # Windows: Use taskkill for known PIDs if we tracked them, but here we are cleaning up *stale* ones.
+        # WMIC is slow but effective for pattern matching.
+        for t in targets:
+            # Clause: name='python.exe' AND commandline like '%target%' AND ProcessId != my_pid
+            query = f"name='python.exe' and commandline like '%{t}%' and ProcessId!={my_pid}"
+            cmd = f'wmic process where "{query}" call terminate'
+            try:
+                subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+    else:
+        # Linux/Posix
+        for t in targets:
+             subprocess.run(["pkill", "-f", t], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             
+    time.sleep(1.0)
+
+# Register cleanup on exit
+atexit.register(cleanup_environment)
+
 def main():
     parser = argparse.ArgumentParser(description="GCS Scheduler (Follower)")
     args = parser.parse_args()
@@ -578,6 +633,9 @@ def main():
     log("GCS scheduler running. Waiting for commands from drone...")
     log("(Drone will send 'start', 'rekey', 'stop' commands)")
     
+    # Cleanup environment before starting
+    cleanup_environment()
+
     # Initialize components
     proxy = GcsProxyManager()
     control = ControlServer(proxy)

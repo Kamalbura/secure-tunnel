@@ -27,6 +27,7 @@ import argparse
 import threading
 import subprocess
 import logging
+import atexit
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -236,19 +237,26 @@ class DroneProxyManager:
             sys.executable, "-m", "core.run_proxy", "drone",
             "--suite", suite_name,
             "--peer-pubkey-file", str(peer_pubkey),
-            "--quiet"
+            "--quiet",
+            "--status-file", str(LOGS_DIR / "drone_status.json")
         ]
 
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         log_path = LOGS_DIR / f"drone_{suite_name}_{timestamp}.log"
         log(f"Launching: {' '.join(cmd)} (log: {log_path})")
         log_handle = open(log_path, "w", encoding="utf-8")
+        
+        # Use setsid to create a new process group, allowing group kill
+        def preexec():
+            os.setsid()
+            
         self.process = subprocess.Popen(
             cmd,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             bufsize=1,
             universal_newlines=True,
+            preexec_fn=preexec
         )
         self._last_log = log_path
         self.current_suite = suite_name
@@ -269,11 +277,18 @@ class DroneProxyManager:
             except Exception:
                 pass
             return False
-        
-        return True
-    
-    def stop(self):
-        """Stop drone proxy"""
+        try:
+                # Kill the entire process group
+                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+                self.process.wait(timeout=5.0)
+            except (ProcessLookupError, OSError):
+                pass
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+                except:
+                    pass
+            
         if self.process:
             self.process.terminate()
             try:
@@ -471,7 +486,7 @@ class DroneScheduler:
                 try:
                     with open(status_file, "r") as f:
                         data = json.load(f)
-                        if data.get("status") == "handshake_complete":
+                        if data.get("status") == "handshake_ok":
                             return True
                 except Exception:
                     pass
@@ -506,21 +521,29 @@ class DroneScheduler:
                 f"--master={master}",
                 f"--out={out_arg}",
                 "--nowait",
-            ]
-
-            if sys.platform.startswith("win"):
-                log(f"Starting persistent mavproxy (drone) in NEW CONSOLE: {' '.join(cmd)}")
-                creationflags = subprocess.CREATE_NEW_CONSOLE
-                self.mavproxy_proc = subprocess.Popen(cmd, creationflags=creationflags)
-            else:
-                # Linux/Posix: Use daemon mode and log to file to support headless/SSH
-                if "--daemon" not in cmd:
-                    cmd.append("--daemon")
+            ]setsid for process group management.
+                # REMOVED --daemon to keep it attached to our lifecycle management.
                 
                 ts = time.strftime("%Y%m%d-%H%M%S")
                 log_dir = LOGS_DIR
                 log_dir.mkdir(parents=True, exist_ok=True)
                 log_path = log_dir / f"mavproxy_drone_{ts}.log"
+                try:
+                    fh = open(log_path, "w", encoding="utf-8")
+                except Exception:
+                    fh = subprocess.DEVNULL  # type: ignore[arg-type]
+
+                log(f"Starting persistent mavproxy (drone): {' '.join(cmd)} (log: {log_path})")
+                
+                def preexec():
+                    os.setsid()
+                    
+                self.mavproxy_proc = subprocess.Popen(
+                    cmd, 
+                    stdout=fh, 
+                    stderr=subprocess.STDOUT,
+                    preexec_fn=preexec
+                
                 try:
                     fh = open(log_path, "w", encoding="utf-8")
                 except Exception:
@@ -538,11 +561,19 @@ class DroneScheduler:
         return self.proxy.start(suite_name)
 
     def stop_current_tunnel(self):
-        self.proxy.stop()
-
-    def cleanup(self):
-        logging.info("--- DroneScheduler CLEANUP START ---")
-        try:
+        self.proif sys.platform.startswith("win"):
+                    self.mavproxy_proc.terminate()
+                else:
+                    try:
+                        os.killpg(os.getpgid(self.mavproxy_proc.pid), signal.SIGTERM)
+                        self.mavproxy_proc.wait(timeout=2)
+                    except (ProcessLookupError, OSError):
+                        pass
+                    except subprocess.TimeoutExpired:
+                        try:
+                            os.killpg(os.getpgid(self.mavproxy_proc.pid), signal.SIGKILL)
+                        except:
+                            pass
             # stop crypto proxy
             if self.proxy and self.proxy.is_running():
                 logging.info("Stopping crypto proxy")
@@ -626,6 +657,19 @@ class DroneScheduler:
 # Main
 # ============================================================
 
+def cleanup_environment():
+    """Force kill any stale instances of our components (Linux/Posix)."""
+    log("Cleaning up stale processes...")
+    patterns = ["mavproxy.py", "core.run_proxy"]
+    for p in patterns:
+        try:
+            # -f matches full command line, ignore exit code (1 if not found)
+            subprocess.run(["pkill", "-f", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            log(f"Cleanup warning: {e}")
+    # Give OS time to reclaim resources
+    time.sleep(1.0)
+
 def main():
     parser = argparse.ArgumentParser(description="Drone Scheduler (Controller)")
     parser.add_argument("--mav-master", default=str(CONFIG.get("MAV_MASTER", "/dev/ttyACM0")), help="Primary MAVLink master (e.g. /dev/ttyACM0 or tcp:host:port)")
@@ -666,6 +710,9 @@ def main():
         suites_to_run = [s["name"] for s in SUITES]
 
     if args.max_suites:
+    
+    # Register cleanup on exit
+    atexit.register(cleanup_environment)
         suites_to_run = suites_to_run[:args.max_suites]
 
     # Apply local in-file overrides
@@ -679,6 +726,9 @@ def main():
         suites_to_run = suites_to_run[: int(LOCAL_MAX_SUITES)]
 
     log(f"Suites to run: {len(suites_to_run)}")
+
+    # Cleanup environment before starting
+    cleanup_environment()
 
     # Initialize components
     scheduler = DroneScheduler(args, suites_to_run)

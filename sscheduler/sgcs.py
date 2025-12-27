@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
+from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
 
 # Extract config values (single source of truth)
@@ -221,12 +222,12 @@ class GcsProxyManager:
     """Manages GCS proxy subprocess"""
     
     def __init__(self):
-        self.process = None
+        self.managed_proc = None
         self.current_suite = None
     
     def start(self, suite_name: str) -> bool:
         """Start GCS proxy with given suite"""
-        if self.process and self.process.poll() is None:
+        if self.managed_proc and self.managed_proc.is_running():
             self.stop()
         
         suite = get_suite(suite_name)
@@ -249,35 +250,31 @@ class GcsProxyManager:
         ]
         
         log(f"Launching: {' '.join(cmd)}")
-        self.process = subprocess.Popen(
-            cmd,
+        self.managed_proc = ManagedProcess(
+            cmd=cmd,
+            name=f"proxy-{suite_name}",
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
         )
-        self.current_suite = suite_name
         
-        # Wait for proxy to initialize
-        time.sleep(2.0)
-        
-        if self.process.poll() is not None:
-            log(f"Proxy exited early with code {self.process.returncode}")
-            return False
-        
-        return True
+        if self.managed_proc.start():
+            self.current_suite = suite_name
+            time.sleep(2.0)
+            if not self.managed_proc.is_running():
+                log(f"Proxy exited early")
+                return False
+            return True
+        return False
     
     def stop(self):
         """Stop GCS proxy"""
-        if self.process:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-            self.process = None
+        if self.managed_proc:
+            self.managed_proc.stop()
+            self.managed_proc = None
             self.current_suite = None
     
     def is_running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
+        return self.managed_proc is not None and self.managed_proc.is_running()
 
 
 # MavProxyManager imported from tools.mavproxy_manager
@@ -319,8 +316,6 @@ class ControlServer:
 
             # Prefer module invocation to avoid PATH issues on Windows
             python_exe = sys.executable
-            # Add --daemon to prevent prompt_toolkit from crashing when no console is present
-            # cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", f"--out={out_arg}", "--dialect=ardupilotmega", "--nowait", "--daemon", f"--out=udp:127.0.0.1:{QGC_PORT}"]
             
             # Interactive mode requested: Remove --daemon and use CREATE_NEW_CONSOLE on Windows
             # Removed --out to proxy to prevent loops; rely on reply-to-sender from proxy
@@ -328,59 +323,38 @@ class ControlServer:
 
             log(f"Starting persistent mavproxy: {' '.join(cmd)}")
 
-            if sys.platform.startswith("win"):
-                # Windows: Use CREATE_NEW_PROCESS_GROUP to allow group signaling, but NO new console.
-                # This keeps the process attached to the parent's lifetime more closely.
-                # We MUST redirect stdout/stderr because there is no console window.
-                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-                
-                log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
-                log_dir.mkdir(parents=True, exist_ok=True)
-                ts_now = time.strftime("%Y%m%d-%H%M%S")
-                log_path = log_dir / f"mavproxy_gcs_{ts_now}.log"
-                try:
-                    fh = open(log_path, "w", encoding="utf-8")
-                except Exception:
-                    fh = subprocess.DEVNULL
+            log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            ts_now = time.strftime("%Y%m%d-%H%M%S")
+            log_path = log_dir / f"mavproxy_gcs_{ts_now}.log"
+            try:
+                fh = open(log_path, "w", encoding="utf-8")
+            except Exception:
+                fh = subprocess.DEVNULL
 
-                self.mavproxy_proc = subprocess.Popen(
-                    cmd, 
-                    creationflags=creationflags,
-                    stdout=fh,
-                    stderr=subprocess.STDOUT,
-                    text=True
-                )
-            else:
-                # On POSIX keep logs
-                log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
-                log_dir.mkdir(parents=True, exist_ok=True)
-                ts_now = time.strftime("%Y%m%d-%H%M%S")
-                log_path = log_dir / f"mavproxy_gcs_{ts_now}.log"
-                try:
-                    fh = open(log_path, "w", encoding="utf-8")
-                except Exception:
-                    fh = subprocess.DEVNULL  # type: ignore[arg-type]
-                # Add --daemon for non-interactive background on Linux if needed, or keep interactive if running in fg
-                # For now, assuming we want interactive if possible, but without new console it might be messy.
-                # Re-adding --daemon for Linux to be safe unless we spawn a terminal.
-                cmd.append("--daemon")
-                self.mavproxy_proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, text=True)
-
-            # give it a moment
-            # time.sleep(0.5)
-            if wait_for_tcp_port(TCP_CTRL_PORT, timeout=5.0):
-                log("Persistent mavproxy started (port open)")
-                return True
-            elif self.mavproxy_proc and self.mavproxy_proc.poll() is None:
-                log("Persistent mavproxy started (process running, but port not yet ready)")
-                return True
-            else:
-                log("Persistent mavproxy failed to start")
-                return False
+            self.mavproxy_proc = ManagedProcess(
+                cmd=cmd,
+                name="mavproxy-gcs",
+                stdout=fh,
+                stderr=subprocess.STDOUT,
+                new_console=False # Headless for stability
+            )
+            
+            if self.mavproxy_proc.start():
+                if wait_for_tcp_port(TCP_CTRL_PORT, timeout=5.0):
+                    log("Persistent mavproxy started (port open)")
+                    return True
+                elif self.mavproxy_proc.is_running():
+                    log("Persistent mavproxy started (process running, but port not yet ready)")
+                    return True
+                else:
+                    log("Persistent mavproxy failed to start")
+                    return False
+            return False
         except Exception as e:
             log(f"start_persistent_mavproxy exception: {e}")
             return False
-    
+
     def start(self):
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -546,17 +520,9 @@ class ControlServer:
             return {
                 "status": "ok",
                 "suites": [s["name"] for s in SUITES],
-            log(f"Killing MAVProxy tree PID: {self.mavproxy_proc.pid}")
-            if sys.platform.startswith("win"):
-                # Force kill tree on Windows
-                subprocess.run(f"taskkill /F /T /PID {self.mavproxy_proc.pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                try:
-                    self.mavproxy_proc.terminate()
-                    self.mavproxy_proc.wait(timeout=2)
-                except Exception:
-                    self.mavproxy_proc.kill()
-            return {"status": "error", "message": f"unknown command: {cmd}"}
+            }
+        
+        return {"status": "error", "message": f"unknown command: {cmd}"}
     
     def stop(self):
         self.running = False
@@ -571,7 +537,7 @@ class ControlServer:
                 pass
         if self.mavproxy_proc:
             try:
-                self.mavproxy_proc.terminate()
+                self.mavproxy_proc.stop()
             except Exception:
                 pass
             self.mavproxy_proc = None

@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
+from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
 from sscheduler.policy import LinearLoopPolicy, RandomPolicy, ManualOverridePolicy
 
@@ -213,12 +214,12 @@ class DroneProxyManager:
     """Manages drone proxy subprocess"""
     
     def __init__(self):
-        self.process = None
+        self.managed_proc = None
         self.current_suite = None
     
     def start(self, suite_name: str) -> bool:
         """Start drone proxy with given suite"""
-        if self.process and self.process.poll() is None:
+        if self.managed_proc and self.managed_proc.is_running():
             self.stop()
         
         suite = get_suite(suite_name)
@@ -246,65 +247,32 @@ class DroneProxyManager:
         log(f"Launching: {' '.join(cmd)} (log: {log_path})")
         log_handle = open(log_path, "w", encoding="utf-8")
         
-        # Use setsid to create a new process group, allowing group kill
-        def preexec():
-            os.setsid()
-            
-        self.process = subprocess.Popen(
-            cmd,
+        self.managed_proc = ManagedProcess(
+            cmd=cmd,
+            name=f"proxy-{suite_name}",
             stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            bufsize=1,
-            universal_newlines=True,
-            preexec_fn=preexec
+            stderr=subprocess.STDOUT
         )
-        self._last_log = log_path
-        self.current_suite = suite_name
         
-        # Wait for proxy to initialize
-        time.sleep(3.0)
-
-        if self.process.poll() is not None:
-            log(f"Proxy exited early with code {self.process.returncode}")
-            # Print tail of log for diagnosis
-            try:
-                with open(self._last_log, "r", encoding="utf-8") as fh:
-                    lines = fh.read().splitlines()[-30:]
-                    log("--- proxy log tail ---")
-                    for l in lines:
-                        log(l)
-                    log("--- end log tail ---")
-            except Exception:
-                pass
-            return False
-        try:
-                # Kill the entire process group
-                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-                self.process.wait(timeout=5.0)
-            except (ProcessLookupError, OSError):
-                pass
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                except:
-                    pass
-            
-        if self.process:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-            self.process = None
+        if self.managed_proc.start():
+            self._last_log = log_path
+            self.current_suite = suite_name
+            time.sleep(3.0)
+            if not self.managed_proc.is_running():
+                log(f"Proxy exited early")
+                return False
+            return True
+        return False
+    
+    def stop(self):
+        """Stop drone proxy"""
+        if self.managed_proc:
+            self.managed_proc.stop()
+            self.managed_proc = None
             self.current_suite = None
-            try:
-                # close last log handle if exists by leaving file closed (we opened in start)
-                pass
-            except Exception:
-                pass
     
     def is_running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
+        return self.managed_proc is not None and self.managed_proc.is_running()
 
 # ============================================================
 # Suite Runner
@@ -499,19 +467,6 @@ class DroneScheduler:
             python_exe = sys.executable
             master = self.args.mav_master
             out_arg = f"udp:127.0.0.1:{DRONE_PLAIN_TX_PORT}"
-            # [FIX] Removed listening port for RX from Proxy to prevent loops; rely on reply-to-sender from proxy
-            # rx_master = f"udpin:127.0.0.1:{DRONE_PLAIN_RX_PORT}"
-            # Add --daemon to prevent prompt_toolkit issues in background
-            # cmd = [
-            #     python_exe,
-            #     "-m",
-            #     "MAVProxy.mavproxy",
-            #     f"--master={master}",
-            #     f"--master={rx_master}",
-            #     f"--out={out_arg}",
-            #     "--nowait",
-            #     "--daemon",
-            # ]
 
             # Interactive mode requested
             cmd = [
@@ -521,38 +476,31 @@ class DroneScheduler:
                 f"--master={master}",
                 f"--out={out_arg}",
                 "--nowait",
-            ]setsid for process group management.
-                # REMOVED --daemon to keep it attached to our lifecycle management.
-                
-                ts = time.strftime("%Y%m%d-%H%M%S")
-                log_dir = LOGS_DIR
-                log_dir.mkdir(parents=True, exist_ok=True)
-                log_path = log_dir / f"mavproxy_drone_{ts}.log"
-                try:
-                    fh = open(log_path, "w", encoding="utf-8")
-                except Exception:
-                    fh = subprocess.DEVNULL  # type: ignore[arg-type]
+            ]
 
-                log(f"Starting persistent mavproxy (drone): {' '.join(cmd)} (log: {log_path})")
-                
-                def preexec():
-                    os.setsid()
-                    
-                self.mavproxy_proc = subprocess.Popen(
-                    cmd, 
-                    stdout=fh, 
-                    stderr=subprocess.STDOUT,
-                    preexec_fn=preexec
-                
-                try:
-                    fh = open(log_path, "w", encoding="utf-8")
-                except Exception:
-                    fh = subprocess.DEVNULL  # type: ignore[arg-type]
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            log_dir = LOGS_DIR
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / f"mavproxy_drone_{ts}.log"
+            try:
+                fh = open(log_path, "w", encoding="utf-8")
+            except Exception:
+                fh = subprocess.DEVNULL
 
-                log(f"Starting persistent mavproxy (drone): {' '.join(cmd)} (log: {log_path})")
-                self.mavproxy_proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT)
-            time.sleep(1.0)
-            return self.mavproxy_proc is not None and self.mavproxy_proc.poll() is None
+            log(f"Starting persistent mavproxy (drone): {' '.join(cmd)} (log: {log_path})")
+            
+            self.mavproxy_proc = ManagedProcess(
+                cmd=cmd,
+                name="mavproxy-drone",
+                stdout=fh,
+                stderr=subprocess.STDOUT,
+                new_console=False # Headless for stability
+            )
+            
+            if self.mavproxy_proc.start():
+                time.sleep(1.0)
+                return self.mavproxy_proc.is_running()
+            return False
         except Exception as e:
             log(f"start_persistent_mavproxy exception: {e}")
             return False
@@ -561,19 +509,7 @@ class DroneScheduler:
         return self.proxy.start(suite_name)
 
     def stop_current_tunnel(self):
-        self.proif sys.platform.startswith("win"):
-                    self.mavproxy_proc.terminate()
-                else:
-                    try:
-                        os.killpg(os.getpgid(self.mavproxy_proc.pid), signal.SIGTERM)
-                        self.mavproxy_proc.wait(timeout=2)
-                    except (ProcessLookupError, OSError):
-                        pass
-                    except subprocess.TimeoutExpired:
-                        try:
-                            os.killpg(os.getpgid(self.mavproxy_proc.pid), signal.SIGKILL)
-                        except:
-                            pass
+        try:
             # stop crypto proxy
             if self.proxy and self.proxy.is_running():
                 logging.info("Stopping crypto proxy")
@@ -581,14 +517,17 @@ class DroneScheduler:
         except Exception:
             pass
 
+    def cleanup(self):
+        logging.info("--- DroneScheduler CLEANUP START ---")
         try:
-            if self.mavproxy_proc and getattr(self.mavproxy_proc, "poll", lambda: 1)() is None:
-                logging.info(f"Terminating MAVProxy PID: {self.mavproxy_proc.pid}")
-                self.mavproxy_proc.terminate()
-                try:
-                    self.mavproxy_proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    self.mavproxy_proc.kill()
+            self.stop_current_tunnel()
+        except Exception:
+            pass
+
+        try:
+            if self.mavproxy_proc:
+                logging.info(f"Terminating MAVProxy")
+                self.mavproxy_proc.stop()
         except Exception:
             pass
 
@@ -710,10 +649,10 @@ def main():
         suites_to_run = [s["name"] for s in SUITES]
 
     if args.max_suites:
-    
+        suites_to_run = suites_to_run[:args.max_suites]
+
     # Register cleanup on exit
     atexit.register(cleanup_environment)
-        suites_to_run = suites_to_run[:args.max_suites]
 
     # Apply local in-file overrides
     if LOCAL_RATE_MBPS is not None:

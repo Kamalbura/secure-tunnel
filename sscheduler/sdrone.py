@@ -514,8 +514,10 @@ class DroneScheduler:
                 creationflags = subprocess.CREATE_NEW_CONSOLE
                 self.mavproxy_proc = subprocess.Popen(cmd, creationflags=creationflags)
             else:
-                # Linux/Posix: Use daemon mode and log to file
-                cmd.append("--daemon")
+                # Linux/Posix: Use daemon mode and log to file to support headless/SSH
+                if "--daemon" not in cmd:
+                    cmd.append("--daemon")
+                
                 ts = time.strftime("%Y%m%d-%H%M%S")
                 log_dir = LOGS_DIR
                 log_dir.mkdir(parents=True, exist_ok=True)

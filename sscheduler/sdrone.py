@@ -45,6 +45,7 @@ DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
 GCS_HOST = str(CONFIG.get("GCS_HOST"))
 DRONE_PLAIN_RX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_RX", 47004))
 DRONE_PLAIN_TX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_TX", 47003))
+GCS_TELEMETRY_PORT = int(CONFIG.get("GCS_TELEMETRY_PORT", 52080))
 
 # Control endpoint for GCS: use configured GCS_HOST and GCS_CONTROL_PORT
 GCS_CONTROL_HOST = str(CONFIG.get("GCS_HOST"))
@@ -84,6 +85,73 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 def log(msg: str):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[{ts}] [sdrone-ctrl] {msg}", flush=True)
+
+# ============================================================
+# Telemetry Listener & Decision Context
+# ============================================================
+
+class TelemetryListener:
+    """Receives telemetry updates from GCS via UDP"""
+    def __init__(self, port: int):
+        self.port = port
+        self.sock = None
+        self.running = False
+        self.thread = None
+        self.latest_data = {}
+        self.last_update = 0
+        self.lock = threading.Lock()
+
+    def start(self):
+        if self.running:
+            return
+            
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("0.0.0.0", self.port))
+        self.sock.settimeout(1.0)
+        
+        self.running = True
+        self.thread = threading.Thread(target=self._listen_loop, daemon=True)
+        self.thread.start()
+        log(f"Telemetry listener started on port {self.port}")
+
+    def _listen_loop(self):
+        while self.running:
+            try:
+                data, addr = self.sock.recvfrom(65535)
+                try:
+                    packet = json.loads(data.decode('utf-8'))
+                    with self.lock:
+                        self.latest_data = packet.get("data", {})
+                        self.last_update = time.time()
+                except json.JSONDecodeError:
+                    pass
+            except socket.timeout:
+                continue
+            except Exception as e:
+                if self.running:
+                    log(f"Telemetry error: {e}")
+
+    def get_latest(self):
+        with self.lock:
+            return self.latest_data, self.last_update
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=2.0)
+        if self.sock:
+            self.sock.close()
+
+class DecisionContext:
+    """Aggregates system state for policy decisions"""
+    def __init__(self, telemetry: TelemetryListener):
+        self.telemetry = telemetry
+
+    def get_gcs_status(self):
+        data, ts = self.telemetry.get_latest()
+        age = time.time() - ts
+        return data, age
 
 # ============================================================
 # UDP Echo Server (drone receives traffic from GCS)
@@ -434,6 +502,11 @@ class DroneScheduler:
         self.proxy = DroneProxyManager()
         self.mavproxy_proc = None
         self.current_proxy_proc = None
+        
+        # Telemetry & Decision Context
+        self.telemetry = TelemetryListener(GCS_TELEMETRY_PORT)
+        self.context = DecisionContext(self.telemetry)
+        
         # Simple GCS client wrapper exposing send_command
         class _GcsClient:
             def send_command(self, cmd, params=None):
@@ -522,6 +595,12 @@ class DroneScheduler:
     def cleanup(self):
         logging.info("--- DroneScheduler CLEANUP START ---")
         try:
+            if self.telemetry:
+                self.telemetry.stop()
+        except Exception:
+            pass
+
+        try:
             self.stop_current_tunnel()
         except Exception:
             pass
@@ -542,6 +621,9 @@ class DroneScheduler:
             sys.exit(0)
 
         signal.signal(signal.SIGINT, _sigint)
+
+        # Start Telemetry Listener
+        self.telemetry.start()
 
         # Start MAVProxy once
         ok = self.start_persistent_mavproxy()

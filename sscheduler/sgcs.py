@@ -37,6 +37,7 @@ from core.config import CONFIG
 from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
+from sscheduler.gcs_metrics import GcsMetricsCollector
 
 # Extract config values (single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
@@ -44,6 +45,8 @@ GCS_HOST = str(CONFIG.get("GCS_HOST"))
 GCS_PLAIN_TX_PORT = int(CONFIG.get("GCS_PLAINTEXT_TX", 47001))
 GCS_PLAIN_RX_PORT = int(CONFIG.get("GCS_PLAINTEXT_RX", 47002))
 DRONE_PLAIN_RX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_RX", 47004))
+GCS_TELEMETRY_PORT = int(CONFIG.get("GCS_TELEMETRY_PORT", 52080))
+GCS_TELEMETRY_SNIFF_PORT = 14552
 TCP_CTRL_PORT = CONFIG.get("TCP_HANDSHAKE_PORT")
 
 # ============================================================
@@ -281,6 +284,40 @@ class GcsProxyManager:
 
 
 # ============================================================
+# Telemetry Sender
+# ============================================================
+
+class TelemetrySender:
+    """Sends telemetry updates to the Drone via UDP (Fire-and-Forget)"""
+    def __init__(self, target_host: str, target_port: int):
+        self.target_addr = (target_host, target_port)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.seq = 0
+        self.lock = threading.Lock()
+
+    def send(self, data: dict):
+        """Send a telemetry packet"""
+        with self.lock:
+            self.seq += 1
+            seq = self.seq
+        
+        packet = {
+            "seq": seq,
+            "ts": time.time(),
+            "data": data
+        }
+        
+        try:
+            payload = json.dumps(packet).encode('utf-8')
+            self.sock.sendto(payload, self.target_addr)
+        except Exception:
+            # Fire and forget
+            pass
+
+    def close(self):
+        self.sock.close()
+
+# ============================================================
 # Control Server (GCS listens for drone commands)
 # ============================================================
 
@@ -298,6 +335,17 @@ class ControlServer:
         self.thread = None
         self.rate_mbps = DEFAULT_RATE_MBPS
         self.duration = DEFAULT_DURATION
+        
+        # Telemetry
+        self.telemetry = TelemetrySender(DRONE_HOST, GCS_TELEMETRY_PORT)
+        self.telemetry_thread = None
+        
+        # Metrics Collector
+        self.metrics_collector = GcsMetricsCollector(
+            mavlink_host="127.0.0.1",
+            mavlink_port=GCS_TELEMETRY_SNIFF_PORT,
+            log_dir=Path(__file__).parent.parent / "logs" / "telemetry"
+        )
 
     def start_persistent_mavproxy(self):
         """Start a persistent mavproxy subprocess for the lifetime of the scheduler.
@@ -320,7 +368,17 @@ class ControlServer:
             # Interactive mode requested: Remove --daemon and use CREATE_NEW_CONSOLE on Windows
             # Removed --out to proxy to prevent loops; rely on reply-to-sender from proxy
             # [FIX] Removed --daemon, added --map --console for interactive GUI
-            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", "--dialect=ardupilotmega", "--nowait", "--map", "--console", f"--out=udp:127.0.0.1:{QGC_PORT}"]
+            # Added telemetry sniff port output
+            cmd = [
+                python_exe, "-m", "MAVProxy.mavproxy", 
+                f"--master={master_str}", 
+                "--dialect=ardupilotmega", 
+                "--nowait", 
+                "--map", 
+                "--console", 
+                f"--out=udp:127.0.0.1:{QGC_PORT}",
+                f"--out=udp:127.0.0.1:{GCS_TELEMETRY_SNIFF_PORT}"
+            ]
 
             log(f"Starting persistent mavproxy: {' '.join(cmd)}")
 
@@ -385,6 +443,13 @@ class ControlServer:
         self.thread = threading.Thread(target=self._server_loop, daemon=True)
         self.thread.start()
         
+        # Start metrics collector
+        self.metrics_collector.start()
+        
+        # Start telemetry loop
+        self.telemetry_thread = threading.Thread(target=self._telemetry_loop, daemon=True)
+        self.telemetry_thread.start()
+        
         log(f"Control server listening on {GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}")
     
     def _server_loop(self):
@@ -397,6 +462,28 @@ class ControlServer:
             except Exception as e:
                 if self.running:
                     log(f"Server error: {e}")
+
+    def _telemetry_loop(self):
+        """Periodically send status to drone"""
+        while self.running:
+            try:
+                # Get latest metrics snapshot
+                metrics, _ = self.metrics_collector.get_latest_snapshot()
+                
+                stats = {
+                    "proxy_running": self.proxy.is_running(),
+                    "current_suite": self.proxy.current_suite,
+                    "timestamp": time.time(),
+                    "metrics": metrics
+                }
+                if self.traffic:
+                     stats["traffic"] = self.traffic.get_stats()
+                
+                self.telemetry.send(stats)
+            except Exception:
+                pass
+            
+            time.sleep(1.0) # 1Hz update rate
     
     def _handle_client(self, client: socket.socket, addr):
         try:
@@ -547,6 +634,12 @@ class ControlServer:
         self.running = False
         if self.thread:
             self.thread.join(timeout=2.0)
+        if self.telemetry_thread:
+            self.telemetry_thread.join(timeout=2.0)
+        if self.metrics_collector:
+            self.metrics_collector.stop()
+        if self.telemetry:
+            self.telemetry.close()
         if self.server_sock:
             self.server_sock.close()
         if self.traffic:

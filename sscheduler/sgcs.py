@@ -489,14 +489,10 @@ class ControlServer:
             # Drone tells GCS to prepare for rekey (stop proxy)
             log("Prepare rekey: stopping proxy...")
             self.proxy.stop()
-            # stop mavproxy if running
-            if self.mavproxy_proc:
-                try:
-                    self.mavproxy_proc.terminate()
-                except Exception:
-                    pass
-                self.mavproxy_proc = None
-
+            
+            # DO NOT stop persistent MAVProxy here. It should keep running.
+            # if self.mavproxy_proc: ...
+            
             if self.traffic:
                 try:
                     self.traffic.stop()

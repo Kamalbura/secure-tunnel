@@ -319,8 +319,8 @@ class ControlServer:
             
             # Interactive mode requested: Remove --daemon and use CREATE_NEW_CONSOLE on Windows
             # Removed --out to proxy to prevent loops; rely on reply-to-sender from proxy
-            # [FIX] Added --daemon to prevent prompt_toolkit crash on Windows when no console is present
-            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", "--dialect=ardupilotmega", "--nowait", "--daemon", f"--out=udp:127.0.0.1:{QGC_PORT}"]
+            # [FIX] Removed --daemon, added --map --console for interactive GUI
+            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", "--dialect=ardupilotmega", "--nowait", "--map", "--console", f"--out=udp:127.0.0.1:{QGC_PORT}"]
 
             log(f"Starting persistent mavproxy: {' '.join(cmd)}")
 
@@ -345,11 +345,16 @@ class ControlServer:
             env = os.environ.copy()
             env["TERM"] = "dumb"
 
+            stdin_arg = subprocess.DEVNULL
+            if sys.platform == "win32":
+                stdin_arg = None # Allow inheritance/detachment for interactive console
+
             self.mavproxy_proc = ManagedProcess(
                 cmd=cmd,
                 name="mavproxy-gcs",
                 stdout=stdout_arg,
                 stderr=stderr_arg,
+                stdin=stdin_arg,
                 new_console=True, # Windows requires a console for prompt_toolkit
                 env=env
             )

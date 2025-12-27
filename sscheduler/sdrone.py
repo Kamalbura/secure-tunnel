@@ -484,8 +484,8 @@ class DroneScheduler:
             python_exe = sys.executable
             master = self.args.mav_master
             out_arg = f"udp:127.0.0.1:{DRONE_PLAIN_TX_PORT}"
-            # [FIX] Add listening port for RX from Proxy so MAVProxy receives uplink from proxy
-            rx_master = f"udpin:127.0.0.1:{DRONE_PLAIN_RX_PORT}"
+            # [FIX] Removed listening port for RX from Proxy to prevent loops; rely on reply-to-sender from proxy
+            # rx_master = f"udpin:127.0.0.1:{DRONE_PLAIN_RX_PORT}"
             # Add --daemon to prevent prompt_toolkit issues in background
             # cmd = [
             #     python_exe,
@@ -504,7 +504,6 @@ class DroneScheduler:
                 "-m",
                 "MAVProxy.mavproxy",
                 f"--master={master}",
-                f"--master={rx_master}",
                 f"--out={out_arg}",
                 "--nowait",
             ]

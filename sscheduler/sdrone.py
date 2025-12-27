@@ -469,6 +469,7 @@ class DroneScheduler:
             out_arg = f"udp:127.0.0.1:{DRONE_PLAIN_TX_PORT}"
 
             # Interactive mode requested
+            # [FIX] Added --daemon to prevent prompt_toolkit crash on Windows/Headless environments
             cmd = [
                 python_exe,
                 "-m",
@@ -476,6 +477,7 @@ class DroneScheduler:
                 f"--master={master}",
                 f"--out={out_arg}",
                 "--nowait",
+                "--daemon",
             ]
 
             ts = time.strftime("%Y%m%d-%H%M%S")

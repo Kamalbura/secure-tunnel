@@ -4,6 +4,7 @@
 Keeps a minimal API: `start(listen_host, listen_port, peer_host, peer_port) -> bool`,
 `stop()`, and `is_running()`.
 """
+import signal
 from pathlib import Path
 import time
 import subprocess
@@ -96,12 +97,23 @@ class MavProxyManager:
         ts_now = time.strftime("%Y%m%d-%H%M%S")
         log_path = log_dir / f"mavproxy_{self.role}_{ts_now}.log"
         try:
-            # On Windows, open MAVProxy in a new console so the interactive UI appears.
+            # On Windows, use CREATE_NEW_PROCESS_GROUP to allow group signaling.
+            # We remove CREATE_NEW_CONSOLE to keep it attached to the parent's console lifetime (or lack thereof).
             is_windows = sys.platform.startswith("win")
             if is_windows:
-                creationflags = subprocess.CREATE_NEW_CONSOLE
-                # Do not redirect stdout/stderr on Windows so the console UI is interactive.
-                proc = subprocess.Popen(cmd, stdout=None, stderr=None, creationflags=creationflags)
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+                # Redirect stdout/stderr to file since we have no console
+                try:
+                    log_fh = open(log_path, "w", encoding="utf-8")
+                except Exception:
+                    log_fh = subprocess.DEVNULL
+
+                proc = subprocess.Popen(
+                    cmd, 
+                    stdout=log_fh, 
+                    stderr=subprocess.STDOUT, 
+                    creationflags=creationflags
+                )
                 self.process = proc
                 self._last_log = log_path
                 time.sleep(0.5)
@@ -114,7 +126,17 @@ class MavProxyManager:
                 except Exception:
                     log_fh = subprocess.DEVNULL  # type: ignore[arg-type]
 
-                self.process = subprocess.Popen(cmd, stdout=log_fh, stderr=subprocess.STDOUT, text=True)
+                # Use setsid for process group management
+                def preexec():
+                    os.setsid()
+
+                self.process = subprocess.Popen(
+                    cmd, 
+                    stdout=log_fh, 
+                    stderr=subprocess.STDOUT, 
+                    text=True,
+                    preexec_fn=preexec
+                )
                 self._last_log = log_path
                 # small pause to let process initialize
                 time.sleep(0.5)
@@ -128,14 +150,17 @@ class MavProxyManager:
 
     def stop(self) -> None:
         if self.process:
-            try:
-                self.process.terminate()
-                self.process.wait(timeout=3.0)
-            except Exception:
+            if sys.platform.startswith("win"):
+                subprocess.run(f"taskkill /F /T /PID {self.process.pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
                 try:
-                    self.process.kill()
+                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+                    self.process.wait(timeout=3.0)
                 except Exception:
-                    pass
+                    try:
+                        os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+                    except Exception:
+                        pass
             self.process = None
 
     def is_running(self) -> bool:

@@ -319,26 +319,17 @@ class ControlServer:
             # Prefer module invocation to avoid PATH issues on Windows
             python_exe = sys.executable
             # Add --daemon to prevent prompt_toolkit from crashing when no console is present
-            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", f"--out={out_arg}", "--dialect=ardupilotmega", "--nowait", "--daemon", f"--out=udp:127.0.0.1:{QGC_PORT}"]
+            # cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", f"--out={out_arg}", "--dialect=ardupilotmega", "--nowait", "--daemon", f"--out=udp:127.0.0.1:{QGC_PORT}"]
+            
+            # Interactive mode requested: Remove --daemon and use CREATE_NEW_CONSOLE on Windows
+            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", f"--out={out_arg}", "--dialect=ardupilotmega", "--nowait", f"--out=udp:127.0.0.1:{QGC_PORT}"]
 
             log(f"Starting persistent mavproxy: {' '.join(cmd)}")
 
             if sys.platform.startswith("win"):
                 # Open new console on Windows for interactive UI
-                # creationflags = subprocess.CREATE_NEW_CONSOLE
-                # self.mavproxy_proc = subprocess.Popen(cmd, stdout=None, stderr=None, creationflags=creationflags)
-                
-                # Redirect stdout/stderr to files to prevent silent failures/zombies
-                log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
-                log_dir.mkdir(parents=True, exist_ok=True)
-                ts_now = time.strftime("%Y%m%d-%H%M%S")
-                log_path = log_dir / f"mavproxy_gcs_{ts_now}.log"
-                try:
-                    fh = open(log_path, "w", encoding="utf-8")
-                except Exception:
-                    fh = subprocess.DEVNULL
-
-                self.mavproxy_proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, text=True)
+                creationflags = subprocess.CREATE_NEW_CONSOLE
+                self.mavproxy_proc = subprocess.Popen(cmd, creationflags=creationflags)
             else:
                 # On POSIX keep logs
                 log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
@@ -349,6 +340,10 @@ class ControlServer:
                     fh = open(log_path, "w", encoding="utf-8")
                 except Exception:
                     fh = subprocess.DEVNULL  # type: ignore[arg-type]
+                # Add --daemon for non-interactive background on Linux if needed, or keep interactive if running in fg
+                # For now, assuming we want interactive if possible, but without new console it might be messy.
+                # Re-adding --daemon for Linux to be safe unless we spawn a terminal.
+                cmd.append("--daemon")
                 self.mavproxy_proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, text=True)
 
             # give it a moment

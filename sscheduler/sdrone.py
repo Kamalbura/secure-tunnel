@@ -487,6 +487,18 @@ class DroneScheduler:
             # [FIX] Add listening port for RX from Proxy so MAVProxy receives uplink from proxy
             rx_master = f"udpin:127.0.0.1:{DRONE_PLAIN_RX_PORT}"
             # Add --daemon to prevent prompt_toolkit issues in background
+            # cmd = [
+            #     python_exe,
+            #     "-m",
+            #     "MAVProxy.mavproxy",
+            #     f"--master={master}",
+            #     f"--master={rx_master}",
+            #     f"--out={out_arg}",
+            #     "--nowait",
+            #     "--daemon",
+            # ]
+
+            # Interactive mode requested
             cmd = [
                 python_exe,
                 "-m",
@@ -495,20 +507,26 @@ class DroneScheduler:
                 f"--master={rx_master}",
                 f"--out={out_arg}",
                 "--nowait",
-                "--daemon",
             ]
 
-            ts = time.strftime("%Y%m%d-%H%M%S")
-            log_dir = LOGS_DIR
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_path = log_dir / f"mavproxy_drone_{ts}.log"
-            try:
-                fh = open(log_path, "w", encoding="utf-8")
-            except Exception:
-                fh = subprocess.DEVNULL  # type: ignore[arg-type]
+            if sys.platform.startswith("win"):
+                log(f"Starting persistent mavproxy (drone) in NEW CONSOLE: {' '.join(cmd)}")
+                creationflags = subprocess.CREATE_NEW_CONSOLE
+                self.mavproxy_proc = subprocess.Popen(cmd, creationflags=creationflags)
+            else:
+                # Linux/Posix: Use daemon mode and log to file
+                cmd.append("--daemon")
+                ts = time.strftime("%Y%m%d-%H%M%S")
+                log_dir = LOGS_DIR
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_path = log_dir / f"mavproxy_drone_{ts}.log"
+                try:
+                    fh = open(log_path, "w", encoding="utf-8")
+                except Exception:
+                    fh = subprocess.DEVNULL  # type: ignore[arg-type]
 
-            log(f"Starting persistent mavproxy (drone): {' '.join(cmd)} (log: {log_path})")
-            self.mavproxy_proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT)
+                log(f"Starting persistent mavproxy (drone): {' '.join(cmd)} (log: {log_path})")
+                self.mavproxy_proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT)
             time.sleep(1.0)
             return self.mavproxy_proc is not None and self.mavproxy_proc.poll() is None
         except Exception as e:

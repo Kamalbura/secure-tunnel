@@ -151,6 +151,7 @@ class ManagedProcess:
                  env: Optional[dict] = None,
                  stdout: Union[int, IO, None] = subprocess.DEVNULL,
                  stderr: Union[int, IO, None] = subprocess.STDOUT,
+                 stdin: Union[int, IO, None] = subprocess.DEVNULL,
                  new_console: bool = False):
         self.cmd = cmd
         self.name = name
@@ -158,6 +159,7 @@ class ManagedProcess:
         self.env = env
         self.stdout = stdout
         self.stderr = stderr
+        self.stdin = stdin
         self.new_console = new_console
         
         self.process: Optional[subprocess.Popen] = None
@@ -173,6 +175,7 @@ class ManagedProcess:
                 "env": self.env,
                 "stdout": self.stdout,
                 "stderr": self.stderr,
+                "stdin": self.stdin,
                 "text": True,
             }
 

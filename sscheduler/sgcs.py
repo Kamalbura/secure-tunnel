@@ -319,7 +319,8 @@ class ControlServer:
             
             # Interactive mode requested: Remove --daemon and use CREATE_NEW_CONSOLE on Windows
             # Removed --out to proxy to prevent loops; rely on reply-to-sender from proxy
-            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", "--dialect=ardupilotmega", "--nowait", f"--out=udp:127.0.0.1:{QGC_PORT}"]
+            # [FIX] Added --daemon to prevent prompt_toolkit crash on Windows when no console is present
+            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", "--dialect=ardupilotmega", "--nowait", "--daemon", f"--out=udp:127.0.0.1:{QGC_PORT}"]
 
             log(f"Starting persistent mavproxy: {' '.join(cmd)}")
 
@@ -332,12 +333,25 @@ class ControlServer:
             except Exception:
                 fh = subprocess.DEVNULL
 
+            stdout_arg = fh
+            stderr_arg = subprocess.STDOUT
+            
+            if sys.platform == "win32":
+                # On Windows, redirecting stdout breaks prompt_toolkit even with new_console=True
+                stdout_arg = None
+                stderr_arg = None
+            
+            # Add TERM=dumb to environment to avoid prompt_toolkit crash on Windows
+            env = os.environ.copy()
+            env["TERM"] = "dumb"
+
             self.mavproxy_proc = ManagedProcess(
                 cmd=cmd,
                 name="mavproxy-gcs",
-                stdout=fh,
-                stderr=subprocess.STDOUT,
-                new_console=False # Headless for stability
+                stdout=stdout_arg,
+                stderr=stderr_arg,
+                new_console=True, # Windows requires a console for prompt_toolkit
+                env=env
             )
             
             if self.mavproxy_proc.start():

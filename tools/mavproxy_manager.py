@@ -100,12 +100,24 @@ class MavProxyManager:
             
             log_fh = open(log_path, "w", encoding="utf-8")
             
+            stdout_arg = log_fh
+            stderr_arg = subprocess.STDOUT
+            
+            if sys.platform == "win32":
+                stdout_arg = None
+                stderr_arg = None
+
+            # Add TERM=dumb to environment to avoid prompt_toolkit crash on Windows
+            env = os.environ.copy()
+            env["TERM"] = "dumb"
+
             self.managed_proc = ManagedProcess(
                 cmd=cmd,
                 name=f"mavproxy-{self.role}",
-                stdout=log_fh,
-                stderr=subprocess.STDOUT,
-                new_console=False # Keep it attached/headless for now
+                stdout=stdout_arg,
+                stderr=stderr_arg,
+                new_console=True, # Windows requires a console
+                env=env
             )
             
             if self.managed_proc.start():

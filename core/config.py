@@ -156,6 +156,8 @@ CONFIG = {
     # Bind to 0.0.0.0 by default to accept local + remote commands.
     "GCS_CONTROL_HOST": "0.0.0.0",
     "GCS_CONTROL_PORT": 48080,
+    # Telemetry port for GCS -> Drone feedback channel (UDP)
+    "GCS_TELEMETRY_PORT": 52080,
         # Encrypted-plane control channel used by certain schedulers to route
         # drone-originated control/status back to the GCS when ENABLE_PACKET_TYPE is set.
         # Keep distinct from the plaintext follower RPC port to avoid conflicts.
@@ -348,6 +350,7 @@ _REQUIRED_KEYS = {
     "DRONE_CONTROL_PORT": int,
     "GCS_CONTROL_HOST": str,
     "GCS_CONTROL_PORT": int,
+    "GCS_TELEMETRY_PORT": int,
 }
 
 # Env-overridable keys that are not part of _REQUIRED_KEYS but still need type parsing.
@@ -373,6 +376,7 @@ _ENV_OVERRIDABLE = {
     "DRONE_CONTROL_HOST",
     "GCS_CONTROL_PORT",
     "GCS_CONTROL_HOST",
+    "GCS_TELEMETRY_PORT",
     "DRONE_TO_GCS_CTL_PORT",
     "ENABLE_PACKET_TYPE",
     "ENABLE_ASCON",

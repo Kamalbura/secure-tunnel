@@ -314,7 +314,7 @@ class ControlServer:
             QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
 
             master_str = f"udpin:{bind_host}:{listen_port}"
-            out_arg = f"udp:127.0.0.1:{tunnel_out_port}"
+            # out_arg = f"udp:127.0.0.1:{tunnel_out_port}"
 
             # Prefer module invocation to avoid PATH issues on Windows
             python_exe = sys.executable
@@ -322,7 +322,8 @@ class ControlServer:
             # cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", f"--out={out_arg}", "--dialect=ardupilotmega", "--nowait", "--daemon", f"--out=udp:127.0.0.1:{QGC_PORT}"]
             
             # Interactive mode requested: Remove --daemon and use CREATE_NEW_CONSOLE on Windows
-            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", f"--out={out_arg}", "--dialect=ardupilotmega", "--nowait", f"--out=udp:127.0.0.1:{QGC_PORT}"]
+            # Removed --out to proxy to prevent loops; rely on reply-to-sender from proxy
+            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", "--dialect=ardupilotmega", "--nowait", f"--out=udp:127.0.0.1:{QGC_PORT}"]
 
             log(f"Starting persistent mavproxy: {' '.join(cmd)}")
 

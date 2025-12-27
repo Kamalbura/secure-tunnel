@@ -586,9 +586,8 @@ def _setup_sockets(role: str, cfg: dict, *, encrypted_peer: Optional[Tuple[str, 
             ptx_in_sock.setblocking(False)
             sockets["plaintext_in"] = ptx_in_sock
 
-            # Plaintext egress - send to local app (no bind needed)
-            ptx_out_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sockets["plaintext_out"] = ptx_out_sock
+            # Plaintext egress - send to local app (reuse ingress socket to ensure correct source port)
+            sockets["plaintext_out"] = ptx_in_sock
 
             # Peer addresses
             sockets["encrypted_peer"] = encrypted_peer or (cfg["GCS_HOST"], cfg["UDP_GCS_RX"])
@@ -613,9 +612,8 @@ def _setup_sockets(role: str, cfg: dict, *, encrypted_peer: Optional[Tuple[str, 
             ptx_in_sock.setblocking(False)
             sockets["plaintext_in"] = ptx_in_sock
 
-            # Plaintext egress - send to local app (no bind needed)
-            ptx_out_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sockets["plaintext_out"] = ptx_out_sock
+            # Plaintext egress - send to local app (reuse ingress socket to ensure correct source port)
+            sockets["plaintext_out"] = ptx_in_sock
 
             # Peer addresses
             sockets["encrypted_peer"] = encrypted_peer or (cfg["DRONE_HOST"], cfg["UDP_DRONE_RX"])
@@ -625,10 +623,13 @@ def _setup_sockets(role: str, cfg: dict, *, encrypted_peer: Optional[Tuple[str, 
 
         yield sockets
     finally:
+        # Close unique sockets
+        closed = set()
         for sock in list(sockets.values()):
-            if isinstance(sock, socket.socket):
+            if isinstance(sock, socket.socket) and sock not in closed:
                 try:
                     sock.close()
+                    closed.add(sock)
                 except Exception:
                     pass
 
@@ -1213,6 +1214,11 @@ def run_proxy(
         selector.register(sockets["encrypted"], selectors.EVENT_READ, data="encrypted")
         selector.register(sockets["plaintext_in"], selectors.EVENT_READ, data="plaintext_in")
 
+        # Dynamic peer address for plaintext app (MAVProxy)
+        # Initialize with configured default, but update based on ingress traffic
+        # to support MAVProxy's ephemeral ports (when using --out).
+        app_peer_addr = sockets["plaintext_peer"]
+
         def send_control(payload: dict) -> None:
             body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
             frame = b"\x02" + body
@@ -1252,9 +1258,13 @@ def run_proxy(
 
                     if data_type == "plaintext_in":
                         try:
-                            payload, _addr = sock.recvfrom(16384)
+                            payload, addr = sock.recvfrom(16384)
                             if not payload:
                                 continue
+                            
+                            # Update dynamic peer address to reply to the correct source
+                            app_peer_addr = addr
+
                             with counters_lock:
                                 counters.ptx_in += 1
 
@@ -1499,7 +1509,7 @@ def run_proxy(
                             else:
                                 out_bytes = plaintext
 
-                            sockets["plaintext_out"].sendto(out_bytes, sockets["plaintext_peer"])
+                            sockets["plaintext_out"].sendto(out_bytes, app_peer_addr)
                             with counters_lock:
                                 counters.ptx_out += 1
                         except socket.error:

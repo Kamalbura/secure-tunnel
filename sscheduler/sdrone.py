@@ -462,6 +462,22 @@ class DroneScheduler:
 
         self.gcs_client = _GcsClient()
 
+    def wait_for_handshake_completion(self, timeout: float = 10.0) -> bool:
+        """Poll for the handshake completion status file."""
+        status_file = Path(__file__).resolve().parents[1] / "logs" / "drone_status.json"
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if status_file.exists():
+                try:
+                    with open(status_file, "r") as f:
+                        data = json.load(f)
+                        if data.get("status") == "handshake_complete":
+                            return True
+                except Exception:
+                    pass
+            time.sleep(0.1)
+        return False
+
     def start_persistent_mavproxy(self) -> bool:
         """Start MAVProxy once for the scheduler and keep handle."""
         try:
@@ -470,6 +486,7 @@ class DroneScheduler:
             out_arg = f"udp:127.0.0.1:{DRONE_PLAIN_TX_PORT}"
             # [FIX] Add listening port for RX from Proxy so MAVProxy receives uplink from proxy
             rx_master = f"udpin:127.0.0.1:{DRONE_PLAIN_RX_PORT}"
+            # Add --daemon to prevent prompt_toolkit issues in background
             cmd = [
                 python_exe,
                 "-m",
@@ -478,6 +495,7 @@ class DroneScheduler:
                 f"--master={rx_master}",
                 f"--out={out_arg}",
                 "--nowait",
+                "--daemon",
             ]
 
             ts = time.strftime("%Y%m%d-%H%M%S")
@@ -564,6 +582,13 @@ class DroneScheduler:
 
                 # Now start local crypto tunnel (drone proxy)
                 self.start_tunnel_for_suite(suite_name)
+                
+                # Wait for handshake to complete before counting duration
+                if self.wait_for_handshake_completion(timeout=10.0):
+                    log(f"Handshake complete for {suite_name}")
+                else:
+                    log(f"Warning: Handshake timed out for {suite_name}")
+
                 time.sleep(duration)
                 self.stop_current_tunnel()
 

@@ -83,6 +83,17 @@ def log(msg: str):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[{ts}] [sgcs-follow] {msg}", flush=True)
 
+def wait_for_tcp_port(port: int, timeout: float = 5.0) -> bool:
+    """Wait for a local TCP port to be listening."""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return True
+        except (ConnectionRefusedError, OSError, socket.timeout):
+            time.sleep(0.2)
+    return False
+
 # ============================================================
 # Traffic Generator
 # ============================================================
@@ -307,14 +318,27 @@ class ControlServer:
 
             # Prefer module invocation to avoid PATH issues on Windows
             python_exe = sys.executable
-            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", f"--out={out_arg}", "--dialect=ardupilotmega", "--nowait", f"--out=udp:127.0.0.1:{QGC_PORT}"]
+            # Add --daemon to prevent prompt_toolkit from crashing when no console is present
+            cmd = [python_exe, "-m", "MAVProxy.mavproxy", f"--master={master_str}", f"--out={out_arg}", "--dialect=ardupilotmega", "--nowait", "--daemon", f"--out=udp:127.0.0.1:{QGC_PORT}"]
 
             log(f"Starting persistent mavproxy: {' '.join(cmd)}")
 
             if sys.platform.startswith("win"):
                 # Open new console on Windows for interactive UI
-                creationflags = subprocess.CREATE_NEW_CONSOLE
-                self.mavproxy_proc = subprocess.Popen(cmd, stdout=None, stderr=None, creationflags=creationflags)
+                # creationflags = subprocess.CREATE_NEW_CONSOLE
+                # self.mavproxy_proc = subprocess.Popen(cmd, stdout=None, stderr=None, creationflags=creationflags)
+                
+                # Redirect stdout/stderr to files to prevent silent failures/zombies
+                log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                ts_now = time.strftime("%Y%m%d-%H%M%S")
+                log_path = log_dir / f"mavproxy_gcs_{ts_now}.log"
+                try:
+                    fh = open(log_path, "w", encoding="utf-8")
+                except Exception:
+                    fh = subprocess.DEVNULL
+
+                self.mavproxy_proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, text=True)
             else:
                 # On POSIX keep logs
                 log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
@@ -328,9 +352,12 @@ class ControlServer:
                 self.mavproxy_proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, text=True)
 
             # give it a moment
-            time.sleep(0.5)
-            if self.mavproxy_proc and self.mavproxy_proc.poll() is None:
-                log("Persistent mavproxy started")
+            # time.sleep(0.5)
+            if wait_for_tcp_port(TCP_CTRL_PORT, timeout=5.0):
+                log("Persistent mavproxy started (port open)")
+                return True
+            elif self.mavproxy_proc and self.mavproxy_proc.poll() is None:
+                log("Persistent mavproxy started (process running, but port not yet ready)")
                 return True
             else:
                 log("Persistent mavproxy failed to start")

@@ -187,6 +187,9 @@ class ManagedProcess:
                 creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
                 if self.new_console:
                     creationflags |= subprocess.CREATE_NEW_CONSOLE
+                    # If new console, and no redirection, detach handles so child uses new console
+                    if self.stdout is None and self.stderr is None and self.stdin is None:
+                        kwargs["close_fds"] = True
                 
                 kwargs["creationflags"] = creationflags
                 

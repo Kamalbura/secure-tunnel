@@ -14,6 +14,7 @@ import os
 from pathlib import Path as _Path
 
 from core.config import CONFIG
+from core.process import ManagedProcess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,20 +28,11 @@ def _logs_dir_for(role: str) -> Path:
 class MavProxyManager:
     def __init__(self, role: str = "generic") -> None:
         self.role = role
-        self.process: Optional[subprocess.Popen] = None
+        self.managed_proc: Optional[ManagedProcess] = None
         self._last_log: Optional[Path] = None
 
     def start(self, master_str_or_listen_host, master_baud_or_listen_port, out_ip=None, out_port=None, extra_args=None) -> bool:
-        """Start mavproxy.
-
-        New interface:
-            start(master_str, master_baud, out_ip, out_port, extra_args=None)
-
-        Backwards compatible with old calls:
-            start(listen_host, listen_port, peer_host, peer_port)
-
-        Returns True on success, False on failure.
-        """
+        """Start mavproxy using ManagedProcess."""
         # Backwards compatibility: old callers passed (listen_host, listen_port, peer_host, peer_port)
         if out_ip is None and out_port is None:
             # interpret as old-style
@@ -60,7 +52,6 @@ class MavProxyManager:
         if extra_args is None:
             extra_args = []
 
-        # [MODIFIED BY AGENT] Robust cross-platform command builder
         # Determine configured binary or fallback name
         configured = CONFIG.get("MAVPROXY_BINARY")
         # Build base out argument
@@ -96,75 +87,45 @@ class MavProxyManager:
         log_dir = _logs_dir_for(self.role)
         ts_now = time.strftime("%Y%m%d-%H%M%S")
         log_path = log_dir / f"mavproxy_{self.role}_{ts_now}.log"
+        
         try:
-            # On Windows, use CREATE_NEW_PROCESS_GROUP to allow group signaling.
-            # We remove CREATE_NEW_CONSOLE to keep it attached to the parent's console lifetime (or lack thereof).
-            is_windows = sys.platform.startswith("win")
-            if is_windows:
-                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-                # Redirect stdout/stderr to file since we have no console
-                try:
-                    log_fh = open(log_path, "w", encoding="utf-8")
-                except Exception:
-                    log_fh = subprocess.DEVNULL
-
-                proc = subprocess.Popen(
-                    cmd, 
-                    stdout=log_fh, 
-                    stderr=subprocess.STDOUT, 
-                    creationflags=creationflags
-                )
-                self.process = proc
+            # On Windows, we might want a new console for interactive use if requested.
+            # But for stability, we default to headless unless debugging.
+            # The previous code tried to use CREATE_NEW_CONSOLE on Windows.
+            # ManagedProcess supports new_console=True.
+            
+            # Determine if we want a console. Usually yes for GCS, maybe for Drone.
+            # But for "secure-tunnel" stability, headless is safer.
+            # Let's stick to headless (redirected logs) for now to ensure we capture output.
+            
+            log_fh = open(log_path, "w", encoding="utf-8")
+            
+            self.managed_proc = ManagedProcess(
+                cmd=cmd,
+                name=f"mavproxy-{self.role}",
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                new_console=False # Keep it attached/headless for now
+            )
+            
+            if self.managed_proc.start():
                 self._last_log = log_path
                 time.sleep(0.5)
-                if self.process.poll() is not None:
+                if not self.managed_proc.is_running():
                     return False
                 return True
-            else:
-                try:
-                    log_fh = open(log_path, "w", encoding="utf-8")
-                except Exception:
-                    log_fh = subprocess.DEVNULL  # type: ignore[arg-type]
-
-                # Use setsid for process group management
-                def preexec():
-                    os.setsid()
-
-                self.process = subprocess.Popen(
-                    cmd, 
-                    stdout=log_fh, 
-                    stderr=subprocess.STDOUT, 
-                    text=True,
-                    preexec_fn=preexec
-                )
-                self._last_log = log_path
-                # small pause to let process initialize
-                time.sleep(0.5)
-                if self.process.poll() is not None:
-                    return False
-                return True
-        except FileNotFoundError:
             return False
+            
         except Exception:
             return False
 
     def stop(self) -> None:
-        if self.process:
-            if sys.platform.startswith("win"):
-                subprocess.run(f"taskkill /F /T /PID {self.process.pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                try:
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-                    self.process.wait(timeout=3.0)
-                except Exception:
-                    try:
-                        os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                    except Exception:
-                        pass
-            self.process = None
+        if self.managed_proc:
+            self.managed_proc.stop()
+            self.managed_proc = None
 
     def is_running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
+        return self.managed_proc is not None and self.managed_proc.is_running()
 
     def last_log(self) -> Optional[Path]:
         return self._last_log

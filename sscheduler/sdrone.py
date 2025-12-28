@@ -29,6 +29,7 @@ import subprocess
 import logging
 import atexit
 from pathlib import Path
+from collections import deque
 from datetime import datetime, timezone
 
 # Add parent to path for imports
@@ -92,13 +93,20 @@ def log(msg: str):
 
 class TelemetryListener:
     """Receives telemetry updates from GCS via UDP"""
-    def __init__(self, port: int):
+    MAX_PACKET_SIZE = 8192
+    SCHEMA = "uav.pqc.telemetry.v1"
+
+    def __init__(self, port: int, allowed_ip: str = None):
         self.port = port
+        self.allowed_ip = allowed_ip
         self.sock = None
         self.running = False
         self.thread = None
         self.latest_data = {}
         self.last_update = 0
+        self.last_update_mono = 0.0
+        self.last_sender = None
+        self.history = deque(maxlen=5)
         self.lock = threading.Lock()
 
     def start(self):
@@ -113,21 +121,37 @@ class TelemetryListener:
         self.running = True
         self.thread = threading.Thread(target=self._listen_loop, daemon=True)
         self.thread.start()
-        log(f"Telemetry listener started on port {self.port}")
+        log(f"Telemetry listener started on port {self.port} (allowed_ip={self.allowed_ip})")
 
     def _listen_loop(self):
         while self.running:
             try:
                 data, addr = self.sock.recvfrom(65535)
+                
+                # Bounded size check
+                if len(data) > self.MAX_PACKET_SIZE:
+                    continue
+
+                # IP Allow-list check
+                if self.allowed_ip and addr[0] != self.allowed_ip:
+                    # log(f"Dropped telemetry from unauthorized IP: {addr[0]}")
+                    continue
+                
                 try:
                     packet = json.loads(data.decode('utf-8'))
+                    
+                    # Schema Validation
+                    if packet.get("schema") != self.SCHEMA:
+                        continue
+                    if packet.get("schema_ver") != 1:
+                        continue
+
                     with self.lock:
-                        # Support v1 schema (flat) or legacy (nested data)
-                        if "schema" in packet:
-                            self.latest_data = packet
-                        else:
-                            self.latest_data = packet.get("data", {})
+                        self.latest_data = packet
                         self.last_update = time.time()
+                        self.last_update_mono = time.monotonic()
+                        self.last_sender = addr[0]
+                        self.history.append(self.last_update_mono)
                 except json.JSONDecodeError:
                     pass
             except socket.timeout:
@@ -139,6 +163,16 @@ class TelemetryListener:
     def get_latest(self):
         with self.lock:
             return self.latest_data, self.last_update
+
+    def get_age_ms(self):
+        with self.lock:
+            if self.last_update_mono == 0.0:
+                return -1.0
+            return (time.monotonic() - self.last_update_mono) * 1000.0
+
+    def get_sender_ip(self):
+        with self.lock:
+            return self.last_sender
 
     def stop(self):
         self.running = False
@@ -508,7 +542,7 @@ class DroneScheduler:
         self.current_proxy_proc = None
         
         # Telemetry & Decision Context
-        self.telemetry = TelemetryListener(GCS_TELEMETRY_PORT)
+        self.telemetry = TelemetryListener(GCS_TELEMETRY_PORT, allowed_ip=GCS_HOST)
         self.context = DecisionContext(self.telemetry)
         
         # Simple GCS client wrapper exposing send_command
@@ -666,7 +700,19 @@ class DroneScheduler:
                 else:
                     log(f"Warning: Handshake timed out for {suite_name}")
 
-                time.sleep(duration)
+                # Monitor loop during duration
+                start_run = time.time()
+                while time.time() - start_run < duration:
+                    # Telemetry check
+                    telem_age = self.telemetry.get_age_ms()
+                    if telem_age >= 0:
+                        # log(f"Telemetry OK: age={telem_age:.1f}ms sender={self.telemetry.get_sender_ip()}")
+                        pass
+                    else:
+                        # log("Telemetry: NO DATA")
+                        pass
+                    time.sleep(1.0)
+
                 self.stop_current_tunnel()
 
                 count += 1

@@ -19677,6 +19677,164 @@ if __name__ == "__main__":
 
 ==================================================
 
+scripts\telemetry_recv_test.py
+==================================================
+#!/usr/bin/env python3
+"""
+Telemetry Receiver Doctor (Drone Side)
+Receives and validates uav.pqc.telemetry.v1 packets from GCS.
+"""
+
+import socket
+import time
+import json
+import sys
+from pathlib import Path
+
+# Add parent to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from core.config import CONFIG
+
+GCS_HOST = CONFIG.get("GCS_HOST")
+PORT = CONFIG.get("GCS_TELEMETRY_PORT", 52080)
+
+def main():
+    print(f"--- Telemetry Receiver Doctor ---")
+    print(f"Listening on 0.0.0.0:{PORT}")
+    print(f"Expecting packets from: {GCS_HOST}")
+    
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", PORT))
+    
+    last_seq = -1
+    
+    try:
+        while True:
+            data, addr = sock.recvfrom(4096)
+            sender_ip = addr[0]
+            
+            if sender_ip != GCS_HOST:
+                print(f"DROP: Packet from unauthorized IP {sender_ip}")
+                continue
+                
+            if len(data) > 2048:
+                print(f"DROP: Packet too large ({len(data)} bytes)")
+                continue
+                
+            try:
+                packet = json.loads(data.decode('utf-8'))
+            except json.JSONDecodeError:
+                print(f"INVALID: JSON decode failed")
+                continue
+                
+            # Schema validation
+            if packet.get("schema") != "uav.pqc.telemetry.v1":
+                print(f"INVALID: Wrong schema {packet.get('schema')}")
+                continue
+                
+            seq = packet.get("seq", 0)
+            age_ms = (time.time() * 1000.0) - packet.get("t", {}).get("wall_ms", 0)
+            
+            status = "OK"
+            if last_seq != -1 and seq != last_seq + 1:
+                status = "SEQ_JUMP"
+            
+            print(f"RX {status}: seq={seq} age={age_ms:.1f}ms from={sender_ip} suite={packet.get('state',{}).get('suite',{}).get('active_suite')}")
+            
+            last_seq = seq
+            
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sock.close()
+        print("Done.")
+
+if __name__ == "__main__":
+    main()
+
+==================================================
+
+scripts\telemetry_send_test.py
+==================================================
+#!/usr/bin/env python3
+"""
+Telemetry Sender Doctor (GCS Side)
+Sends valid uav.pqc.telemetry.v1 packets to the Drone to verify network connectivity.
+"""
+
+import socket
+import time
+import json
+import sys
+from pathlib import Path
+
+# Add parent to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from core.config import CONFIG
+
+DRONE_HOST = CONFIG.get("DRONE_HOST")
+PORT = CONFIG.get("GCS_TELEMETRY_PORT", 52080)
+
+def main():
+    print(f"--- Telemetry Sender Doctor ---")
+    print(f"Target: {DRONE_HOST}:{PORT}")
+    
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
+    seq = 0
+    try:
+        while True:
+            seq += 1
+            now_mono = time.monotonic()
+            now_wall = time.time()
+            
+            packet = {
+                "schema": "uav.pqc.telemetry.v1",
+                "schema_ver": 1,
+                "sender": {
+                    "role": "gcs",
+                    "node_id": "doctor_test",
+                    "pid": 12345
+                },
+                "t": {
+                    "wall_ms": now_wall * 1000.0,
+                    "mono_ms": now_mono * 1000.0,
+                    "boot_id": int(now_wall)
+                },
+                "state": {
+                    "suite": {
+                        "active_suite": "test-suite-123",
+                        "suite_epoch": 1
+                    }
+                },
+                "metrics": {
+                    "sys": {"cpu_pct": 10.5},
+                    "sniff": {"rx_pps": 50.0}
+                },
+                "seq": seq
+            }
+            
+            payload = json.dumps(packet).encode('utf-8')
+            sock.sendto(payload, (DRONE_HOST, PORT))
+            
+            print(f"Sent seq={seq} size={len(payload)} to {DRONE_HOST}:{PORT}")
+            time.sleep(0.1) # 10 Hz
+            
+            if seq >= 50:
+                break
+                
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sock.close()
+        print("Done.")
+
+if __name__ == "__main__":
+    main()
+
+==================================================
+
 sscheduler\gcs_metrics.py
 ==================================================
 """
@@ -20811,13 +20969,15 @@ def log(msg: str):
 
 class TelemetryListener:
     """Receives telemetry updates from GCS via UDP"""
-    def __init__(self, port: int):
+    def __init__(self, port: int, allowed_ip: str = None):
         self.port = port
+        self.allowed_ip = allowed_ip
         self.sock = None
         self.running = False
         self.thread = None
         self.latest_data = {}
         self.last_update = 0
+        self.last_sender = None
         self.lock = threading.Lock()
 
     def start(self):
@@ -20832,12 +20992,18 @@ class TelemetryListener:
         self.running = True
         self.thread = threading.Thread(target=self._listen_loop, daemon=True)
         self.thread.start()
-        log(f"Telemetry listener started on port {self.port}")
+        log(f"Telemetry listener started on port {self.port} (allowed_ip={self.allowed_ip})")
 
     def _listen_loop(self):
         while self.running:
             try:
                 data, addr = self.sock.recvfrom(65535)
+                
+                # IP Allow-list check
+                if self.allowed_ip and addr[0] != self.allowed_ip:
+                    # log(f"Dropped telemetry from unauthorized IP: {addr[0]}")
+                    continue
+                
                 try:
                     packet = json.loads(data.decode('utf-8'))
                     with self.lock:
@@ -20847,6 +21013,7 @@ class TelemetryListener:
                         else:
                             self.latest_data = packet.get("data", {})
                         self.last_update = time.time()
+                        self.last_sender = addr[0]
                 except json.JSONDecodeError:
                     pass
             except socket.timeout:
@@ -20858,6 +21025,16 @@ class TelemetryListener:
     def get_latest(self):
         with self.lock:
             return self.latest_data, self.last_update
+
+    def get_age_ms(self):
+        with self.lock:
+            if self.last_update == 0:
+                return -1.0
+            return (time.time() - self.last_update) * 1000.0
+
+    def get_sender_ip(self):
+        with self.lock:
+            return self.last_sender
 
     def stop(self):
         self.running = False
@@ -21227,7 +21404,7 @@ class DroneScheduler:
         self.current_proxy_proc = None
         
         # Telemetry & Decision Context
-        self.telemetry = TelemetryListener(GCS_TELEMETRY_PORT)
+        self.telemetry = TelemetryListener(GCS_TELEMETRY_PORT, allowed_ip=GCS_HOST)
         self.context = DecisionContext(self.telemetry)
         
         # Simple GCS client wrapper exposing send_command
@@ -21385,7 +21562,19 @@ class DroneScheduler:
                 else:
                     log(f"Warning: Handshake timed out for {suite_name}")
 
-                time.sleep(duration)
+                # Monitor loop during duration
+                start_run = time.time()
+                while time.time() - start_run < duration:
+                    # Telemetry check
+                    telem_age = self.telemetry.get_age_ms()
+                    if telem_age >= 0:
+                        # log(f"Telemetry OK: age={telem_age:.1f}ms sender={self.telemetry.get_sender_ip()}")
+                        pass
+                    else:
+                        # log("Telemetry: NO DATA")
+                        pass
+                    time.sleep(1.0)
+
                 self.stop_current_tunnel()
 
                 count += 1

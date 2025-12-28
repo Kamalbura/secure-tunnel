@@ -122,7 +122,11 @@ class TelemetryListener:
                 try:
                     packet = json.loads(data.decode('utf-8'))
                     with self.lock:
-                        self.latest_data = packet.get("data", {})
+                        # Support v1 schema (flat) or legacy (nested data)
+                        if "schema" in packet:
+                            self.latest_data = packet
+                        else:
+                            self.latest_data = packet.get("data", {})
                         self.last_update = time.time()
                 except json.JSONDecodeError:
                     pass

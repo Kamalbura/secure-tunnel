@@ -295,17 +295,11 @@ class TelemetrySender:
         self.seq = 0
         self.lock = threading.Lock()
 
-    def send(self, data: dict):
-        """Send a telemetry packet"""
+    def send(self, packet: dict):
+        """Send a telemetry packet (Schema v1)"""
         with self.lock:
             self.seq += 1
-            seq = self.seq
-        
-        packet = {
-            "seq": seq,
-            "ts": time.time(),
-            "data": data
-        }
+            packet["seq"] = self.seq
         
         try:
             payload = json.dumps(packet).encode('utf-8')
@@ -344,7 +338,8 @@ class ControlServer:
         self.metrics_collector = GcsMetricsCollector(
             mavlink_host="127.0.0.1",
             mavlink_port=GCS_TELEMETRY_SNIFF_PORT,
-            log_dir=Path(__file__).parent.parent / "logs" / "telemetry"
+            proxy_manager=self.proxy,
+            log_dir=Path(__file__).parent.parent / "logs" / "gcs_telemetry"
         )
 
     def start_persistent_mavproxy(self):
@@ -418,6 +413,9 @@ class ControlServer:
             )
             
             if self.mavproxy_proc.start():
+                # Update metrics collector with process handle
+                self.metrics_collector.mavproxy_proc = self.mavproxy_proc
+                
                 if wait_for_tcp_port(TCP_CTRL_PORT, timeout=5.0):
                     log("Persistent mavproxy started (port open)")
                     return True
@@ -468,37 +466,32 @@ class ControlServer:
         while self.running:
             try:
                 # Get latest metrics snapshot
-                metrics, _ = self.metrics_collector.get_latest_snapshot()
-                
-                stats = {
-                    "proxy_running": self.proxy.is_running(),
-                    "current_suite": self.proxy.current_suite,
-                    "timestamp": time.time(),
-                    "metrics": metrics
-                }
-                if self.traffic:
-                     stats["traffic"] = self.traffic.get_stats()
-                
-                self.telemetry.send(stats)
+                snapshot = self.metrics_collector.get_snapshot()
+                self.telemetry.send(snapshot)
             except Exception:
                 pass
             
-            time.sleep(1.0) # 1Hz update rate
-    
-    def _handle_client(self, client: socket.socket, addr):
+            time.sleep(0.2)
+
+    def _handle_client(self, client, addr):
         try:
-            client.settimeout(30.0)
             data = b""
-            while b"\n" not in data:
+            while True:
                 chunk = client.recv(4096)
                 if not chunk:
                     break
                 data += chunk
+                # Assuming simple one-shot JSON command
+                if len(data) > 0 and (data.strip().endswith(b"}") or b"\n" in data):
+                     break
             
             if data:
-                request = json.loads(data.decode().strip())
-                response = self._handle_command(request)
-                client.sendall(json.dumps(response).encode() + b"\n")
+                try:
+                    request = json.loads(data.decode().strip())
+                    response = self._handle_command(request)
+                    client.sendall(json.dumps(response).encode() + b"\n")
+                except json.JSONDecodeError:
+                    pass
         except Exception as e:
             log(f"Client error: {e}")
         finally:

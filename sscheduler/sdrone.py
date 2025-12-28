@@ -31,6 +31,7 @@ import atexit
 from pathlib import Path
 from collections import deque
 from datetime import datetime, timezone
+import statistics
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -95,6 +96,7 @@ class TelemetryListener:
     """Receives telemetry updates from GCS via UDP"""
     MAX_PACKET_SIZE = 8192
     SCHEMA = "uav.pqc.telemetry.v1"
+    HISTORY_LEN = 50 # 5 seconds at 10Hz
 
     def __init__(self, port: int, allowed_ip: str = None):
         self.port = port
@@ -106,8 +108,11 @@ class TelemetryListener:
         self.last_update = 0
         self.last_update_mono = 0.0
         self.last_sender = None
-        self.history = deque(maxlen=5)
+        # History stores (mono_time, packet_dict)
+        self.history = deque(maxlen=self.HISTORY_LEN)
         self.lock = threading.Lock()
+        
+        self.log_file = LOGS_DIR / "drone_telemetry_rx.jsonl"
 
     def start(self):
         if self.running:
@@ -146,12 +151,17 @@ class TelemetryListener:
                     if packet.get("schema_ver") != 1:
                         continue
 
+                    now_mono = time.monotonic()
                     with self.lock:
                         self.latest_data = packet
                         self.last_update = time.time()
-                        self.last_update_mono = time.monotonic()
+                        self.last_update_mono = now_mono
                         self.last_sender = addr[0]
-                        self.history.append(self.last_update_mono)
+                        self.history.append((now_mono, packet))
+                    
+                    # Best-effort logging
+                    self._write_log(now_mono, addr[0], packet)
+
                 except json.JSONDecodeError:
                     pass
             except socket.timeout:
@@ -159,6 +169,37 @@ class TelemetryListener:
             except Exception as e:
                 if self.running:
                     log(f"Telemetry error: {e}")
+
+    def _write_log(self, now_mono, sender_ip, packet):
+        try:
+            # Calculate simple stats for log
+            rx_pps = 0
+            if len(self.history) > 1:
+                # approximate pps from history duration
+                duration = self.history[-1][0] - self.history[0][0]
+                if duration > 0:
+                    rx_pps = len(self.history) / duration
+            
+            seq = packet.get("seq", 0)
+            
+            cpu_pct = 0
+            if "metrics" in packet and "sys" in packet["metrics"]:
+                cpu_pct = packet["metrics"]["sys"].get("cpu_pct", 0)
+
+            entry = {
+                "recv_mono_ms": now_mono * 1000.0,
+                "sender_ip": sender_ip,
+                "seq": seq,
+                "summary": {
+                    "rx_pps": round(rx_pps, 1),
+                    "silence_ms": 0,
+                    "cpu_pct": cpu_pct
+                }
+            }
+            with open(self.log_file, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass
 
     def get_latest(self):
         with self.lock:
@@ -173,6 +214,10 @@ class TelemetryListener:
     def get_sender_ip(self):
         with self.lock:
             return self.last_sender
+            
+    def get_history_snapshot(self):
+        with self.lock:
+            return list(self.history)
 
     def stop(self):
         self.running = False
@@ -190,6 +235,117 @@ class DecisionContext:
         data, ts = self.telemetry.get_latest()
         age = time.time() - ts
         return data, age
+
+    def get_summary(self):
+        """
+        Computes decision-ready stats from the 3–5s window:
+        - telemetry_age_ms
+        - rx_pps_median (using window)
+        - gap_p95_median (using window)
+        - silence_max_ms
+        - jitter_median
+        - gcs_cpu_median, gcs_mem_median
+        - alive ratios for mavproxy/proxy/collector
+        - latest heartbeat_age_ms + armed + failsafe flags
+        """
+        history = self.telemetry.get_history_snapshot()
+        now_mono = time.monotonic()
+        
+        if not history:
+            return {
+                "telemetry_age_ms": -1,
+                "valid": False
+            }
+
+        latest_mono, latest_pkt = history[-1]
+        telemetry_age_ms = (now_mono - latest_mono) * 1000.0
+        
+        # Calculate gaps
+        gaps = []
+        for i in range(1, len(history)):
+            g = (history[i][0] - history[i-1][0]) * 1000.0
+            gaps.append(g)
+            
+        # Stats
+        rx_pps = 0
+        if len(history) > 1:
+            dur = history[-1][0] - history[0][0]
+            if dur > 0:
+                rx_pps = (len(history) - 1) / dur
+
+        gap_p95 = 0
+        jitter = 0
+        if gaps:
+            gaps.sort()
+            idx = int(len(gaps) * 0.95)
+            gap_p95 = gaps[idx]
+            mean_gap = statistics.mean(gaps)
+            jitter = statistics.mean([abs(g - mean_gap) for g in gaps])
+
+        silence_max_ms = telemetry_age_ms
+        if gaps:
+            silence_max_ms = max(silence_max_ms, max(gaps))
+
+        # Extract GCS metrics from history
+        gcs_cpus = []
+        gcs_mems = []
+        mavproxy_alive_count = 0
+        proxy_alive_count = 0
+        collector_alive_count = 0
+        
+        for _, pkt in history:
+            if "metrics" in pkt and "sys" in pkt["metrics"]:
+                gcs_cpus.append(pkt["metrics"]["sys"].get("cpu_pct", 0))
+                gcs_mems.append(pkt["metrics"]["sys"].get("mem_pct", 0))
+            
+            if "state" in pkt and "gcs" in pkt["state"]:
+                if pkt["state"]["gcs"].get("mavproxy_alive"): mavproxy_alive_count += 1
+                if pkt["state"]["gcs"].get("collector_alive"): collector_alive_count += 1
+            
+            if "tunnel" in pkt:
+                if pkt["tunnel"].get("proxy_alive"): proxy_alive_count += 1
+
+        gcs_cpu_median = statistics.median(gcs_cpus) if gcs_cpus else 0
+        gcs_mem_median = statistics.median(gcs_mems) if gcs_mems else 0
+        
+        count = len(history)
+        mavproxy_alive_ratio = mavproxy_alive_count / count if count else 0
+        proxy_alive_ratio = proxy_alive_count / count if count else 0
+        collector_alive_ratio = collector_alive_count / count if count else 0
+
+        # Latest heartbeat info
+        hb_age = -1
+        armed = False
+        failsafe_flags = 0
+        
+        if "mav" in latest_pkt:
+            mav = latest_pkt["mav"]
+            if "heartbeat" in mav and mav["heartbeat"]:
+                hb_age = mav["heartbeat"].get("age_ms", -1)
+                armed = mav["heartbeat"].get("armed", False)
+            if "failsafe" in mav:
+                failsafe_flags = mav["failsafe"].get("flags", 0)
+
+        return {
+            "valid": True,
+            "telemetry_age_ms": round(telemetry_age_ms, 1),
+            "rx_pps": round(rx_pps, 1),
+            "gap_p95_ms": round(gap_p95, 1),
+            "silence_max_ms": round(silence_max_ms, 1),
+            "jitter_ms": round(jitter, 1),
+            "gcs_cpu_median": round(gcs_cpu_median, 1),
+            "gcs_mem_median": round(gcs_mem_median, 1),
+            "alive_ratios": {
+                "mavproxy": round(mavproxy_alive_ratio, 2),
+                "proxy": round(proxy_alive_ratio, 2),
+                "collector": round(collector_alive_ratio, 2)
+            },
+            "mav": {
+                "heartbeat_age_ms": hb_age,
+                "armed": armed,
+                "failsafe_flags": failsafe_flags
+            }
+        }
 
 # ============================================================
 # UDP Echo Server (drone receives traffic from GCS)

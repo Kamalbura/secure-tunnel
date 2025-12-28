@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 from collections import deque, defaultdict
 from datetime import datetime, timezone
+from core.config import CONFIG
 
 try:
     import psutil
@@ -46,6 +47,7 @@ class GcsMetricsCollector:
             self.log_dir = Path(__file__).parent.parent / "logs"
         
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        # Telemetry always writes to the production file. Simulation support removed.
         self.log_file = self.log_dir / "gcs_telemetry_v1.jsonl"
         
         self.running = False
@@ -184,18 +186,33 @@ class GcsMetricsCollector:
                 try:
                     msg = self.mav_conn.recv_match(blocking=False)
                     if msg:
+                        # Robust guard: Check for BAD_DATA explicitly
+                        if msg.get_type() == 'BAD_DATA':
+                            self.mav_state['decode_stats']['parse_errors'] += 1
+                            # Bound reason string
+                            reason = "MAVLink_bad_data"
+                            if hasattr(msg, 'reason'):
+                                reason = str(msg.reason)[:50]
+                            self.mav_state['decode_stats']['reason'] = reason
+                            continue
+
                         ts_mono = time.monotonic()
                         # Estimate size
                         size = 20 # Header
                         if hasattr(msg, 'get_payload'):
                              payload = msg.get_payload()
-                             if payload:
+                             # Robust guard: Never call len(payload) unless payload is bytes-like
+                             if payload is not None and isinstance(payload, (bytes, bytearray)):
                                  size += len(payload)
+                             elif payload is None:
+                                 # Payload is None, safe to ignore or handle
+                                 pass
+                        
                         self.mav_state['decode_stats']['ok'] += 1
                         self._process_mavlink(msg, ts_mono)
                 except Exception as e:
                     self.mav_state['decode_stats']['parse_errors'] += 1
-                    self.mav_state['decode_stats']['reason'] = str(e)
+                    self.mav_state['decode_stats']['reason'] = str(e)[:50] # Bounded reason string
             elif self.sock:
                 try:
                     data, _ = self.sock.recvfrom(65535)
@@ -313,11 +330,11 @@ class GcsMetricsCollector:
                     "mono_ms": now_mono * 1000.0,
                     "boot_id": self.boot_id
                 },
-                "caps": {
-                    "pymavlink": mavutil is not None,
-                    "psutil": psutil is not None,
-                    "proxy_status_file": False # Deprecated in favor of process check
-                },
+                    "caps": {
+                        "pymavlink": mavutil is not None,
+                        "psutil": psutil is not None,
+                        "proxy_status_file": False, # Deprecated in favor of process check
+                    },
                 "state": {
                     "gcs": {
                         "mavproxy_alive": mavproxy_alive,

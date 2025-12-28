@@ -1,72 +1,37 @@
-EVIDENCE REPORT: TELEMETRY VALIDATION
-=====================================
+End-to-End Validation Checklist for Telemetry Safety Gates
 
-1. TELEMETRY COMPUTATION & SENDING (GCS)
+Phase 1: Network & Firewall Verification
 ----------------------------------------
-File: sscheduler/sgcs.py
-Class: TelemetrySender
-Logic:
-- Sends to (DRONE_HOST, GCS_TELEMETRY_PORT) where GCS_TELEMETRY_PORT=52080.
-- Payload: JSON snapshot from GcsMetricsCollector.
-- Rate: ~5Hz (sleep 0.2s in _telemetry_loop).
-- Schema: v1 (inferred from scripts/telemetry_send_test.py, though sgcs.py uses metrics_collector which needs verification of schema injection).
+1. Verify UDP Port 52080 is open on Drone:
+   Command (Drone): sudo netstat -ulpn | grep 52080
+   Expected Output: udp 0 0 0.0.0.0:52080 ... python
 
-2. TELEMETRY RECEPTION (DRONE)
-------------------------------
-File: sscheduler/sdrone.py
-Class: TelemetryListener
-Logic:
-- Binds to 0.0.0.0:52080.
-- Enforces IP Allow-list (GCS_HOST).
-- Enforces Schema "uav.pqc.telemetry.v1".
-- Enforces Max Size 8192 bytes.
-- Tracks staleness via time.monotonic().
-- Maintains 5-sample sliding window.
+2. Verify GCS is sending telemetry packets:
+   Command (GCS): sudo tcpdump -i any udp port 52080
+   Expected Output: Continuous stream of packets to Drone IP
 
-3. SHORTCOMINGS ADDRESSED
--------------------------
-- [x] Missing Schema Validation: Added check for "uav.pqc.telemetry.v1".
-- [x] Unbounded Size: Added check for > 8192 bytes.
-- [x] Wall-clock Staleness: Switched to time.monotonic().
-- [x] Missing History: Added deque(maxlen=5).
+Phase 2: "Doctor" Script Verification
+-------------------------------------
+1. Stop the main scheduler on Drone (to free the port):
+   Command: pkill -f sscheduler.sdrone
 
-VALIDATION CHECKLIST & COMMANDS
-===============================
+2. Run the Doctor script:
+   Command: python3 scripts/telemetry_recv_test.py
 
-PHASE 1: FIREWALL SETUP
------------------------
-Windows (GCS) - PowerShell (Admin):
-> New-NetFirewallRule -DisplayName "PQC_Telemetry_Out" -Direction Outbound -Protocol UDP -LocalPort Any -RemotePort 52080 -RemoteAddress 192.168.0.105 -Action Allow
+3. Observe Output:
+   Success: RX OK: seq=101 age=15.2ms size=850 suite=cs-mlkem768...
+   Failure: DROP: Packet from unauthorized IP (Check GCS_HOST in config)
+   Failure: DROP: Packet too large (Check MAX_PACKET_SIZE)
 
-Linux (Drone) - Bash:
-> sudo ufw allow from 192.168.0.102 to any port 52080 proto udp comment 'PQC Telemetry'
+Phase 3: Production Verification
+--------------------------------
+1. Restart Drone Scheduler:
+   Command: python3 -m sscheduler.sdrone
 
-PHASE 2: DOCTOR TESTS
----------------------
-1. Start Receiver on Drone:
-   $ python3 scripts/telemetry_recv_test.py
+2. Check Logs for Rejection:
+   Command: tail -f logs/sscheduler/drone/sdrone-ctrl.log
+   Check: Ensure no "Telemetry error" or "Dropped telemetry" messages appear under normal operation.
 
-2. Start Sender on Windows:
-   > python scripts/telemetry_send_test.py
-
-3. Verify Output:
-   - Receiver should show: "RX OK: seq=... age=... from=192.168.0.102"
-   - No "DROP" messages unless IP is spoofed.
-
-PHASE 3: PACKET CAPTURE PROOF
------------------------------
-Drone:
-$ sudo tcpdump -ni any udp port 52080 -vv -c 20
-
-Expected Output:
-- IP 192.168.0.102.port > 192.168.0.105.52080: UDP, length ...
-
-PHASE 4: LOG PATTERNS
----------------------
-Pass:
-- "RX OK: seq=1 ..."
-- "RX OK: seq=2 ..." (Monotonic sequence)
-
-Fail:
-- "DROP: Packet from unauthorized IP ..." (Security working)
-- "INVALID: Wrong schema ..." (Validation working)
+3. Verify Telemetry in Drone Logic:
+   - The drone scheduler should log "Telemetry OK" or similar if debug logging is enabled.
+   - The system should successfully switch suites based on policy, which relies on telemetry for timing/coordination if configured.

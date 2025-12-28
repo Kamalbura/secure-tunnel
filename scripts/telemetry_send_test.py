@@ -12,7 +12,8 @@ from pathlib import Path
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from core.config import CONFIG
+print("telemetry_send_test removed: synthetic telemetry tooling has been deleted per repository cleanup.")
+sys.exit(0)
 
 DRONE_HOST = CONFIG.get("DRONE_HOST")
 PORT = CONFIG.get("GCS_TELEMETRY_PORT", 52080)

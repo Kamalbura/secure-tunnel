@@ -98,6 +98,10 @@ CONFIG = {
     "ENABLE_ASCON": True,
     "ENABLE_ASCON128A": True,
 
+    # Enable/disable simulation/test harnesses. Default False ensures
+    # synthetic traffic and telemetry generators are opt-in only.
+    "ENABLE_SIMULATION": False,
+
     # Enforce 16-byte key usage for ASCON-128 when enabled. Default False preserves
     # legacy behaviour while exposing the knob via CONFIG/env overrides.
     "ASCON_STRICT_KEY_SIZE": False,
@@ -121,6 +125,8 @@ CONFIG = {
     "MAV_LOCAL_HOST": "127.0.0.1",
     "MAV_LOCAL_OUT_PORT_1": 14550,
     "MAV_LOCAL_OUT_PORT_2": 14551,
+    # Local QGroundControl (QGC) listen port for mirrored MAVLink output
+    "QGC_PORT": 14550,
     # Explicit drone host/port for client-style GCS master (two-way heartbeat).
     # Using explicit remote prevents passive listener stalls on some platforms.
     "MAV_DRONE_HOST": _DEFAULT_DRONE_HOST,
@@ -351,6 +357,7 @@ _REQUIRED_KEYS = {
     "GCS_CONTROL_HOST": str,
     "GCS_CONTROL_PORT": int,
     "GCS_TELEMETRY_PORT": int,
+    "QGC_PORT": int,
 }
 
 # Env-overridable keys that are not part of _REQUIRED_KEYS but still need type parsing.

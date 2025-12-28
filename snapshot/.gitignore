@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Bytecode & caches (explicit)
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+
+# Logs
+logs/
+*.log
+*.err
+*.json
+
+# VS Code
+.vscode/
+*.code-workspace
+

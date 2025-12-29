@@ -32,15 +32,29 @@ from pathlib import Path
 from collections import deque
 from datetime import datetime, timezone
 import statistics
+from typing import Any, Dict, List, Optional
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.config import CONFIG
+from sscheduler.telemetry_window import TelemetryWindow
 from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
-from sscheduler.policy import LinearLoopPolicy, RandomPolicy, ManualOverridePolicy
+from sscheduler.policy import (
+    LinearLoopPolicy, 
+    RandomPolicy, 
+    ManualOverridePolicy,
+    TelemetryAwarePolicyV1,
+    DecisionInput,
+    PolicyAction,
+    PolicyOutput,
+    get_suite_tier,
+    COOLDOWN_SWITCH_S,
+    COOLDOWN_REKEY_S,
+    COOLDOWN_DOWNGRADE_S,
+)
 
 # Extract config values (use CONFIG as single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
@@ -113,6 +127,10 @@ class TelemetryListener:
         self.lock = threading.Lock()
         
         self.log_file = LOGS_DIR / "drone_telemetry_rx.jsonl"
+        # Full packet dump for forensic inspection (keeps original schema payloads)
+        self.full_log_file = LOGS_DIR / "drone_telemetry_full.jsonl"
+        # Sliding window helper (monotonic-time based)
+        self.window = TelemetryWindow(window_s=5.0)
 
     def start(self):
         if self.running:
@@ -158,6 +176,11 @@ class TelemetryListener:
                         self.last_update_mono = now_mono
                         self.last_sender = addr[0]
                         self.history.append((now_mono, packet))
+                        # Feed sliding window
+                        try:
+                            self.window.add(now_mono, packet)
+                        except Exception:
+                            pass
                     
                     # Best-effort logging
                     self._write_log(now_mono, addr[0], packet)
@@ -196,8 +219,16 @@ class TelemetryListener:
                     "cpu_pct": cpu_pct
                 }
             }
-            with open(self.log_file, "a") as f:
+            with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
+
+            # Also write the raw full telemetry packet (preserve original schema)
+            try:
+                with open(self.full_log_file, "a", encoding="utf-8") as ff:
+                    ff.write(json.dumps(packet) + "\n")
+            except Exception:
+                # Non-fatal: keep best-effort
+                pass
         except Exception:
             pass
 
@@ -228,124 +259,148 @@ class TelemetryListener:
 
 class DecisionContext:
     """Aggregates system state for policy decisions"""
-    def __init__(self, telemetry: TelemetryListener):
+    def __init__(self, telemetry: TelemetryListener, suites: List[str]):
         self.telemetry = telemetry
+        self.suites = suites
+        # cooldown after suite switch (mono seconds)
+        self._last_switch_mono = 0.0
+        self._cooldown_until_mono = 0.0
+        self._current_suite = ""
+        self._local_epoch = 0
+        self._armed_since_mono = 0.0
+        
+        # Telemetry-aware policy
+        self._policy = TelemetryAwarePolicyV1(suites)
 
     def get_gcs_status(self):
         data, ts = self.telemetry.get_latest()
         age = time.time() - ts
         return data, age
 
-    def get_summary(self):
-        """
-        Computes decision-ready stats from the 3–5s window:
-        - telemetry_age_ms
-        - rx_pps_median (using window)
-        - gap_p95_median (using window)
-        - silence_max_ms
-        - jitter_median
-        - gcs_cpu_median, gcs_mem_median
-        - alive ratios for mavproxy/proxy/collector
-        - latest heartbeat_age_ms + armed + failsafe flags
-        """
-        history = self.telemetry.get_history_snapshot()
-        now_mono = time.monotonic()
-        
-        if not history:
-            return {
-                "telemetry_age_ms": -1,
-                "valid": False
-            }
-
-        latest_mono, latest_pkt = history[-1]
-        telemetry_age_ms = (now_mono - latest_mono) * 1000.0
-        
-        # Calculate gaps
-        gaps = []
-        for i in range(1, len(history)):
-            g = (history[i][0] - history[i-1][0]) * 1000.0
-            gaps.append(g)
-            
-        # Stats
-        rx_pps = 0
-        if len(history) > 1:
-            dur = history[-1][0] - history[0][0]
-            if dur > 0:
-                rx_pps = (len(history) - 1) / dur
-
-        gap_p95 = 0
-        jitter = 0
-        if gaps:
-            gaps.sort()
-            idx = int(len(gaps) * 0.95)
-            gap_p95 = gaps[idx]
-            mean_gap = statistics.mean(gaps)
-            jitter = statistics.mean([abs(g - mean_gap) for g in gaps])
-
-        silence_max_ms = telemetry_age_ms
-        if gaps:
-            silence_max_ms = max(silence_max_ms, max(gaps))
-
-        # Extract GCS metrics from history
-        gcs_cpus = []
-        gcs_mems = []
-        mavproxy_alive_count = 0
-        proxy_alive_count = 0
-        collector_alive_count = 0
-        
-        for _, pkt in history:
-            if "metrics" in pkt and "sys" in pkt["metrics"]:
-                gcs_cpus.append(pkt["metrics"]["sys"].get("cpu_pct", 0))
-                gcs_mems.append(pkt["metrics"]["sys"].get("mem_pct", 0))
-            
-            if "state" in pkt and "gcs" in pkt["state"]:
-                if pkt["state"]["gcs"].get("mavproxy_alive"): mavproxy_alive_count += 1
-                if pkt["state"]["gcs"].get("collector_alive"): collector_alive_count += 1
-            
-            if "tunnel" in pkt:
-                if pkt["tunnel"].get("proxy_alive"): proxy_alive_count += 1
-
-        gcs_cpu_median = statistics.median(gcs_cpus) if gcs_cpus else 0
-        gcs_mem_median = statistics.median(gcs_mems) if gcs_mems else 0
-        
-        count = len(history)
-        mavproxy_alive_ratio = mavproxy_alive_count / count if count else 0
-        proxy_alive_ratio = proxy_alive_count / count if count else 0
-        collector_alive_ratio = collector_alive_count / count if count else 0
-
-        # Latest heartbeat info
-        hb_age = -1
-        armed = False
-        failsafe_flags = 0
-        
-        if "mav" in latest_pkt:
-            mav = latest_pkt["mav"]
-            if "heartbeat" in mav and mav["heartbeat"]:
-                hb_age = mav["heartbeat"].get("age_ms", -1)
-                armed = mav["heartbeat"].get("armed", False)
-            if "failsafe" in mav:
-                failsafe_flags = mav["failsafe"].get("flags", 0)
+    def get_summary(self) -> Dict[str, Any]:
+        """Return windowed telemetry stats."""
+        now = time.monotonic()
+        summary = self.telemetry.window.summarize(now)
+        last_seq = summary.get("last_seq", 0)
 
         return {
-            "valid": True,
-            "telemetry_age_ms": round(telemetry_age_ms, 1),
-            "rx_pps": round(rx_pps, 1),
-            "gap_p95_ms": round(gap_p95, 1),
-            "silence_max_ms": round(silence_max_ms, 1),
-            "jitter_ms": round(jitter, 1),
-            "gcs_cpu_median": round(gcs_cpu_median, 1),
-            "gcs_mem_median": round(gcs_mem_median, 1),
-            "alive_ratios": {
-                "mavproxy": round(mavproxy_alive_ratio, 2),
-                "proxy": round(proxy_alive_ratio, 2),
-                "collector": round(collector_alive_ratio, 2)
-            },
-            "mav": {
-                "heartbeat_age_ms": hb_age,
-                "armed": armed,
-                "failsafe_flags": failsafe_flags
-            }
+            "valid": summary.get("sample_count", 0) > 0,
+            "telemetry_age_ms": summary.get("telemetry_age_ms", -1),
+            "rx_pps_median": summary.get("rx_pps_median", 0.0),
+            "gap_p95_ms": summary.get("gap_p95_ms", 0.0),
+            "silence_max_ms": summary.get("silence_max_ms", 0.0),
+            "jitter_ms": summary.get("jitter_ms", 0.0),
+            "gcs_cpu_median": summary.get("gcs_cpu_median", 0.0),
+            "gcs_cpu_p95": summary.get("gcs_cpu_p95", 0.0),
+            "sample_count_window": summary.get("sample_count", 0),
+            "telemetry_last_seq": last_seq,
+            "confidence": summary.get("confidence", 0.0),
+            "missing_seq_count": summary.get("missing_seq_count", 0),
+            "out_of_order_count": summary.get("out_of_order_count", 0),
         }
+
+    def record_suite_switch(self, suite_name: str, cooldown_s: float = COOLDOWN_SWITCH_S):
+        """Record a suite switch event and set cooldown."""
+        now_mono = time.monotonic()
+        self._last_switch_mono = now_mono
+        self._cooldown_until_mono = now_mono + cooldown_s
+        self._current_suite = suite_name
+        self._local_epoch += 1
+
+    def build_decision_input(self, expected_suite: str) -> DecisionInput:
+        """Build immutable DecisionInput from current state."""
+        now = time.monotonic()
+        now_ms = now * 1000.0
+        
+        summary = self.telemetry.window.summarize(now)
+        flight_state = self.telemetry.window.get_flight_state()
+        
+        # Extract remote sync state from latest telemetry if available
+        latest, _ = self.telemetry.get_latest()
+        remote_suite = latest.get("active_suite") if latest else None
+        remote_epoch = latest.get("epoch", 0) if latest else 0
+        
+        # MAVProxy/collector health - infer from telemetry presence
+        mavproxy_alive = summary.get("sample_count", 0) > 0
+        collector_alive = summary.get("telemetry_age_ms", -1) >= 0
+        
+        # Armed duration
+        armed = flight_state.get("armed", False)
+        armed_duration_s = 0.0
+        if armed:
+            if self._armed_since_mono == 0.0:
+                self._armed_since_mono = now
+            armed_duration_s = now - self._armed_since_mono
+        else:
+            self._armed_since_mono = 0.0
+        
+        return DecisionInput(
+            mono_ms=now_ms,
+            telemetry_valid=summary.get("sample_count", 0) > 0,
+            telemetry_age_ms=summary.get("telemetry_age_ms", -1.0),
+            sample_count=summary.get("sample_count", 0),
+            rx_pps_median=summary.get("rx_pps_median", 0.0),
+            gap_p95_ms=summary.get("gap_p95_ms", 0.0),
+            silence_max_ms=summary.get("silence_max_ms", 0.0),
+            jitter_ms=summary.get("jitter_ms", 0.0),
+            gcs_cpu_median=summary.get("gcs_cpu_median", 0.0),
+            gcs_cpu_p95=summary.get("gcs_cpu_p95", 0.0),
+            telemetry_last_seq=summary.get("last_seq", 0),
+            mavproxy_alive=mavproxy_alive,
+            collector_alive=collector_alive,
+            heartbeat_age_ms=flight_state.get("heartbeat_age_ms", 0.0),
+            failsafe_active=flight_state.get("failsafe", False),
+            armed=armed,
+            armed_duration_s=armed_duration_s,
+            remote_suite=remote_suite,
+            remote_epoch=remote_epoch,
+            expected_suite=expected_suite,
+            current_tier=get_suite_tier(expected_suite),
+            local_epoch=self._local_epoch,
+            last_switch_mono_ms=self._last_switch_mono * 1000.0,
+            cooldown_until_mono_ms=self._cooldown_until_mono * 1000.0,
+        )
+
+    def evaluate_policy(self, expected_suite: str) -> PolicyOutput:
+        """Evaluate the telemetry-aware policy and return output."""
+        inp = self.build_decision_input(expected_suite)
+        return self._policy.evaluate(inp)
+
+    def decide(self, expected_suite: str) -> Dict[str, Any]:
+        """Legacy decide() for backward compatibility - returns dict."""
+        now = time.monotonic()
+        s = self.get_summary()
+        
+        # Use new policy
+        policy_out = self.evaluate_policy(expected_suite)
+
+        result = {
+            "schema": "uav.pqc.drone.decision_context.v1",
+            "mono_ms": now * 1000.0,
+            "suite_expected": expected_suite,
+            "suite_tier": get_suite_tier(expected_suite),
+            "local_epoch": self._local_epoch,
+            "telemetry_last_seq": s.get("telemetry_last_seq", 0),
+            "telemetry_age_ms": s.get("telemetry_age_ms"),
+            "rx_pps_median": s.get("rx_pps_median"),
+            "gap_p95_ms": s.get("gap_p95_ms"),
+            "silence_max_ms": s.get("silence_max_ms"),
+            "jitter_ms": s.get("jitter_ms"),
+            "gcs_cpu_median": s.get("gcs_cpu_median"),
+            "gcs_cpu_p95": s.get("gcs_cpu_p95"),
+            "sample_count_window": s.get("sample_count_window"),
+            "confidence": s.get("confidence", 0.0),
+            "missing_seq": s.get("missing_seq_count", 0),
+            "out_of_order": s.get("out_of_order_count", 0),
+            # Policy output
+            "policy_action": policy_out.action.value,
+            "policy_target_suite": policy_out.target_suite,
+            "policy_reasons": policy_out.reasons,
+            "policy_confidence": policy_out.confidence,
+            "cooldown_remaining_ms": policy_out.cooldown_remaining_ms,
+        }
+
+        return result
 
 # ============================================================
 # UDP Echo Server (drone receives traffic from GCS)
@@ -696,10 +751,15 @@ class DroneScheduler:
         self.proxy = DroneProxyManager()
         self.mavproxy_proc = None
         self.current_proxy_proc = None
+        self.current_suite = None
         
         # Telemetry & Decision Context
         self.telemetry = TelemetryListener(GCS_TELEMETRY_PORT, allowed_ip=GCS_HOST)
-        self.context = DecisionContext(self.telemetry)
+        self.context = DecisionContext(self.telemetry, self.suites)
+        
+        # Action log file
+        self.action_log_file = LOGS_DIR / "drone_actions.jsonl"
+        self.decision_log_file = LOGS_DIR / "drone_decision_context.jsonl"
         
         # Simple GCS client wrapper exposing send_command
         class _GcsClient:
@@ -786,6 +846,142 @@ class DroneScheduler:
         except Exception:
             pass
 
+    def _log_action(self, action: str, suite: str, target_suite: Optional[str], reasons: List[str], confidence: float):
+        """Write action to JSONL log (only for non-HOLD actions)."""
+        try:
+            entry = {
+                "schema": "uav.pqc.drone.action.v1",
+                "ts_iso": datetime.now(timezone.utc).isoformat(),
+                "mono_ms": time.monotonic() * 1000.0,
+                "action": action,
+                "current_suite": suite,
+                "target_suite": target_suite,
+                "reasons": reasons,
+                "confidence": round(confidence, 3),
+                "local_epoch": self.context._local_epoch,
+            }
+            with open(self.action_log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass
+
+    def _log_decision(self, decision: Dict[str, Any]):
+        """Write decision context to JSONL log (every tick)."""
+        try:
+            decision["ts_iso"] = datetime.now(timezone.utc).isoformat()
+            with open(self.decision_log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(decision) + "\n")
+        except Exception:
+            pass
+
+    def execute_action(self, policy_out: PolicyOutput, current_suite: str) -> bool:
+        """
+        Execute policy action.
+        
+        Returns True if action was executed successfully, False otherwise.
+        HOLD always returns True (no-op success).
+        """
+        action = policy_out.action
+        
+        if action == PolicyAction.HOLD:
+            return True
+        
+        target = policy_out.target_suite or current_suite
+        
+        # Log the action before executing
+        self._log_action(
+            action=action.value,
+            suite=current_suite,
+            target_suite=target,
+            reasons=policy_out.reasons,
+            confidence=policy_out.confidence,
+        )
+        
+        if action == PolicyAction.DOWNGRADE:
+            log(f"[ACTION] DOWNGRADE from {current_suite} to {target}")
+            return self._execute_suite_switch(target, cooldown_s=COOLDOWN_DOWNGRADE_S)
+        
+        elif action == PolicyAction.UPGRADE:
+            log(f"[ACTION] UPGRADE from {current_suite} to {target}")
+            return self._execute_suite_switch(target, cooldown_s=COOLDOWN_SWITCH_S)
+        
+        elif action == PolicyAction.REKEY:
+            log(f"[ACTION] REKEY suite {target}")
+            return self._execute_rekey(target)
+        
+        return True
+
+    def _execute_suite_switch(self, target_suite: str, cooldown_s: float) -> bool:
+        """Execute a suite switch (downgrade or upgrade)."""
+        try:
+            # Tell GCS to prepare for rekey
+            log(f"Telling GCS to prepare rekey for switch to {target_suite}...")
+            resp = self.gcs_client.send_command("prepare_rekey")
+            if resp.get("status") != "ok":
+                log(f"GCS prepare_rekey failed: {resp}")
+                return False
+            
+            # Stop local proxy
+            self.stop_current_tunnel()
+            time.sleep(0.5)
+            
+            # Tell GCS to start its proxy for new suite
+            log(f"Telling GCS to start proxy for {target_suite}...")
+            resp = self.gcs_client.send_command("start_proxy", {"suite": target_suite})
+            if resp.get("status") != "ok":
+                log(f"GCS start_proxy failed: {resp}")
+                return False
+            
+            # Start local proxy
+            if not self.start_tunnel_for_suite(target_suite):
+                log(f"Failed to start local proxy for {target_suite}")
+                return False
+            
+            # Record the switch
+            self.context.record_suite_switch(target_suite, cooldown_s)
+            self.current_suite = target_suite
+            log(f"Suite switch to {target_suite} complete")
+            return True
+            
+        except Exception as e:
+            log(f"Suite switch error: {e}")
+            return False
+
+    def _execute_rekey(self, suite_name: str) -> bool:
+        """Execute a rekey (restart proxies with same suite)."""
+        try:
+            log(f"Executing rekey for {suite_name}...")
+            
+            # Tell GCS to prepare
+            resp = self.gcs_client.send_command("prepare_rekey")
+            if resp.get("status") != "ok":
+                log(f"GCS prepare_rekey failed: {resp}")
+                return False
+            
+            # Stop and restart local proxy
+            self.stop_current_tunnel()
+            time.sleep(0.5)
+            
+            # Tell GCS to restart
+            resp = self.gcs_client.send_command("start_proxy", {"suite": suite_name})
+            if resp.get("status") != "ok":
+                log(f"GCS start_proxy failed: {resp}")
+                return False
+            
+            # Restart local
+            if not self.start_tunnel_for_suite(suite_name):
+                log(f"Failed to restart local proxy for {suite_name}")
+                return False
+            
+            # Record rekey with longer cooldown
+            self.context.record_suite_switch(suite_name, COOLDOWN_REKEY_S)
+            log(f"Rekey for {suite_name} complete")
+            return True
+            
+        except Exception as e:
+            log(f"Rekey error: {e}")
+            return False
+
     def cleanup(self):
         logging.info("--- DroneScheduler CLEANUP START ---")
         try:
@@ -809,6 +1005,19 @@ class DroneScheduler:
         logging.info("--- DroneScheduler CLEANUP COMPLETE ---")
 
     def run_scheduler(self):
+        """
+        Main scheduler loop with telemetry-aware policy evaluation.
+        
+        Flow:
+        1. Start telemetry listener and MAVProxy
+        2. Pick initial suite from policy
+        3. Per-tick loop:
+           a. Evaluate policy -> PolicyOutput (HOLD/DOWNGRADE/UPGRADE/REKEY)
+           b. Log decision context (every tick)
+           c. Execute action if not HOLD
+           d. Sleep tick interval
+        4. Suite duration triggers advance to next policy suite
+        """
         def _sigint(sig, frame):
             log("Interrupted; cleaning up and exiting")
             self.cleanup()
@@ -824,11 +1033,16 @@ class DroneScheduler:
         if not ok:
             log("Warning: persistent MAVProxy failed to start; continuing")
 
+        TICK_INTERVAL_S = 1.0  # Policy evaluation rate
         count = 0
+        
         try:
             while True:
+                # Get next suite from legacy policy (for scheduling progression)
                 suite_name = self.policy.next_suite()
                 duration = self.policy.get_duration()
+                self.current_suite = suite_name
+                
                 log(f"=== Activating Suite: {suite_name} (duration={duration}) ===")
 
                 # Coordinate with GCS: request GCS to start its proxy BEFORE starting local proxy
@@ -837,7 +1051,6 @@ class DroneScheduler:
                     resp = self.gcs_client.send_command("start_proxy", {"suite": suite_name})
                     if resp.get("status") != "ok":
                         logging.error(f"GCS rejected start_proxy: {resp}")
-                        # skip this suite and continue
                         time.sleep(1.0)
                         continue
                     else:
@@ -850,32 +1063,72 @@ class DroneScheduler:
                 # Now start local crypto tunnel (drone proxy)
                 self.start_tunnel_for_suite(suite_name)
                 
+                # Record suite activation
+                self.context.record_suite_switch(suite_name, COOLDOWN_SWITCH_S)
+                
                 # Wait for handshake to complete before counting duration
                 if self.wait_for_handshake_completion(timeout=10.0):
                     log(f"Handshake complete for {suite_name}")
                 else:
                     log(f"Warning: Handshake timed out for {suite_name}")
 
-                # Monitor loop during duration
+                # ============================================
+                # POLICY-DRIVEN MONITORING LOOP
+                # ============================================
                 start_run = time.time()
+                tick_count = 0
+                
                 while time.time() - start_run < duration:
-                    # Telemetry check
-                    telem_age = self.telemetry.get_age_ms()
-                    if telem_age >= 0:
-                        # log(f"Telemetry OK: age={telem_age:.1f}ms sender={self.telemetry.get_sender_ip()}")
-                        pass
-                    else:
-                        # log("Telemetry: NO DATA")
-                        pass
-                    time.sleep(1.0)
+                    tick_count += 1
+                    now_mono = time.monotonic()
+                    
+                    # 1. Evaluate telemetry-aware policy
+                    try:
+                        policy_out = self.context.evaluate_policy(self.current_suite)
+                        decision = self.context.decide(self.current_suite)
+                        
+                        # 2. Log decision context (every tick)
+                        self._log_decision(decision)
+                        
+                        # 3. Execute action if not HOLD
+                        if policy_out.action != PolicyAction.HOLD:
+                            log(f"[TICK {tick_count}] Policy action: {policy_out.action.value} -> {policy_out.target_suite}")
+                            log(f"  Reasons: {policy_out.reasons}")
+                            log(f"  Confidence: {policy_out.confidence:.2f}")
+                            
+                            # Execute the action
+                            success = self.execute_action(policy_out, self.current_suite)
+                            if success:
+                                log(f"  Action executed successfully")
+                                # If we switched suites, update current
+                                if policy_out.target_suite:
+                                    self.current_suite = policy_out.target_suite
+                            else:
+                                log(f"  Action execution FAILED")
+                        else:
+                            # HOLD - optional verbose logging (every 10th tick)
+                            if tick_count % 10 == 0:
+                                stats = self.telemetry.window.summarize()
+                                log(f"[TICK {tick_count}] HOLD - suite={self.current_suite}, "
+                                    f"samples={stats.get('count', 0)}, "
+                                    f"gap_p95={stats.get('gap_p95_ms', 'N/A')}, "
+                                    f"conf={policy_out.confidence:.2f}")
+                    
+                    except Exception as e:
+                        logging.warning(f"Policy evaluation error: {e}")
+                    
+                    time.sleep(TICK_INTERVAL_S)
 
+                # Duration complete - stop tunnel before switching
                 self.stop_current_tunnel()
 
                 count += 1
                 if self.args.max_suites and count >= int(self.args.max_suites):
+                    log(f"Reached max_suites ({self.args.max_suites}), stopping scheduler")
                     break
 
                 time.sleep(2.0)
+                
         except Exception as e:
             logging.error(f"Scheduler crash: {e}")
         finally:

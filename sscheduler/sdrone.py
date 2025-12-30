@@ -306,6 +306,9 @@ class DecisionContext:
         summary = self.telemetry.window.summarize(now)
         local_metrics = self.local_mon.get_metrics()
         
+        # Derive blackout_count from telemetry summary (missing seqs as proxy)
+        blackout_count = summary.get("missing_seq_count", 0)
+
         return DecisionInput(
             mono_ms=now_ms,
             telemetry_valid=summary.get("sample_count", 0) > 0,
@@ -315,7 +318,7 @@ class DecisionContext:
             gap_p95_ms=summary.get("gap_p95_ms", 0.0),
             silence_max_ms=summary.get("silence_max_ms", 0.0),
             jitter_ms=summary.get("jitter_ms", 0.0),
-            blackout_count=0, # TODO: Implement blackout counter in window
+            blackout_count=blackout_count,
             
             # Local Metrics
             battery_mv=local_metrics.battery_mv,
@@ -803,6 +806,13 @@ class DroneScheduler:
             
             # Record rekey with longer cooldown
             self.context.record_suite_switch(suite_name, 10.0)
+            # Inform policy that a rekey occurred so it's counted in limits
+            try:
+                now_mono = time.monotonic()
+                if hasattr(self.context, "_policy") and hasattr(self.context._policy, "record_rekey"):
+                    self.context._policy.record_rekey(now_mono)
+            except Exception:
+                pass
             log(f"Rekey for {suite_name} complete")
             return True
             

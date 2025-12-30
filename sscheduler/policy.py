@@ -76,7 +76,11 @@ def load_settings() -> Dict[str, Any]:
         "battery": {"critical_mv": 14000, "low_mv": 14800, "warn_mv": 15200, "rate_warn_mv_per_min": 500},
         "thermal": {"critical_c": 80.0, "warn_c": 70.0, "rate_warn_c_per_min": 5.0},
         "link": {"min_pps": 5.0, "max_gap_ms": 1000.0, "max_blackout_count": 3},
-        "rekey": {"min_stable_s": 60.0, "max_per_hour": 5, "blacklist_ttl_s": 1800},
+        # Rekey window and limits: default to short 5-minute window in dev
+        # `window_s` defines the sliding window (seconds) for counting recent
+        # successful rekeys. `max_per_window` is the allowed number of
+        # successful rekeys within that window.
+        "rekey": {"min_stable_s": 60.0, "max_per_window": 5, "window_s": 300, "blacklist_ttl_s": 1800},
         "hysteresis": {"downgrade_s": 5.0, "upgrade_s": 30.0}
     }
     try:
@@ -304,13 +308,15 @@ class TelemetryAwarePolicyV2:
         # Only if stable for long time
         stable_time = (inp.mono_ms - inp.last_switch_mono_ms) / 1000.0
         if stable_time > self.settings["rekey"]["min_stable_s"]:
-            # Check rekey limit
-            hour_ago = now_mono - 3600
-            self.rekey_timestamps = [t for t in self.rekey_timestamps if t > hour_ago]
-            
-            if len(self.rekey_timestamps) < self.settings["rekey"]["max_per_hour"]:
-                # Can rekey
-                self.rekey_timestamps.append(now_mono)
+            # Check rekey limit (do NOT record the rekey here; record only after
+            # successful execution to avoid counting failed attempts)
+            window_s = float(self.settings["rekey"].get("window_s", 300))
+            window_ago = now_mono - window_s
+            self.rekey_timestamps = [t for t in self.rekey_timestamps if t > window_ago]
+
+            max_per = int(self.settings["rekey"].get("max_per_window", self.settings["rekey"].get("max_per_hour", 5)))
+            if len(self.rekey_timestamps) < max_per:
+                # Request a rekey; actual recording happens after success
                 return PolicyOutput(PolicyAction.REKEY, inp.current_suite, reasons=["proactive_rekey"])
                 
         # 8. Upgrade (Very Conservative)
@@ -322,3 +328,11 @@ class TelemetryAwarePolicyV2:
                      return PolicyOutput(PolicyAction.UPGRADE, target, reasons=["stable_upgrade"])
 
         return PolicyOutput(PolicyAction.HOLD, reasons=["nominal"])
+
+    def record_rekey(self, now_mono: float) -> None:
+        """Record a successful rekey timestamp (mono seconds).
+
+        This should be called by the executor after the rekey completed
+        successfully to enforce the per-hour limit.
+        """
+        self.rekey_timestamps.append(now_mono)

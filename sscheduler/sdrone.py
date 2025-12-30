@@ -42,18 +42,13 @@ from sscheduler.telemetry_window import TelemetryWindow
 from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
+from sscheduler.local_mon import LocalMonitor
 from sscheduler.policy import (
-    LinearLoopPolicy, 
-    RandomPolicy, 
-    ManualOverridePolicy,
-    TelemetryAwarePolicyV1,
+    TelemetryAwarePolicyV2,
     DecisionInput,
     PolicyAction,
     PolicyOutput,
     get_suite_tier,
-    COOLDOWN_SWITCH_S,
-    COOLDOWN_REKEY_S,
-    COOLDOWN_DOWNGRADE_S,
 )
 
 # Extract config values (use CONFIG as single source of truth)
@@ -259,18 +254,18 @@ class TelemetryListener:
 
 class DecisionContext:
     """Aggregates system state for policy decisions"""
-    def __init__(self, telemetry: TelemetryListener, suites: List[str]):
+    def __init__(self, telemetry: TelemetryListener, local_mon: LocalMonitor, suites: List[str]):
         self.telemetry = telemetry
+        self.local_mon = local_mon
         self.suites = suites
         # cooldown after suite switch (mono seconds)
         self._last_switch_mono = 0.0
         self._cooldown_until_mono = 0.0
         self._current_suite = ""
         self._local_epoch = 0
-        self._armed_since_mono = 0.0
         
-        # Telemetry-aware policy
-        self._policy = TelemetryAwarePolicyV1(suites)
+        # Telemetry-aware policy V2
+        self._policy = TelemetryAwarePolicyV2()
 
     def get_gcs_status(self):
         data, ts = self.telemetry.get_latest()
@@ -290,16 +285,12 @@ class DecisionContext:
             "gap_p95_ms": summary.get("gap_p95_ms", 0.0),
             "silence_max_ms": summary.get("silence_max_ms", 0.0),
             "jitter_ms": summary.get("jitter_ms", 0.0),
-            "gcs_cpu_median": summary.get("gcs_cpu_median", 0.0),
-            "gcs_cpu_p95": summary.get("gcs_cpu_p95", 0.0),
             "sample_count_window": summary.get("sample_count", 0),
             "telemetry_last_seq": last_seq,
             "confidence": summary.get("confidence", 0.0),
-            "missing_seq_count": summary.get("missing_seq_count", 0),
-            "out_of_order_count": summary.get("out_of_order_count", 0),
         }
 
-    def record_suite_switch(self, suite_name: str, cooldown_s: float = COOLDOWN_SWITCH_S):
+    def record_suite_switch(self, suite_name: str, cooldown_s: float):
         """Record a suite switch event and set cooldown."""
         now_mono = time.monotonic()
         self._last_switch_mono = now_mono
@@ -313,26 +304,7 @@ class DecisionContext:
         now_ms = now * 1000.0
         
         summary = self.telemetry.window.summarize(now)
-        flight_state = self.telemetry.window.get_flight_state()
-        
-        # Extract remote sync state from latest telemetry if available
-        latest, _ = self.telemetry.get_latest()
-        remote_suite = latest.get("active_suite") if latest else None
-        remote_epoch = latest.get("epoch", 0) if latest else 0
-        
-        # MAVProxy/collector health - infer from telemetry presence
-        mavproxy_alive = summary.get("sample_count", 0) > 0
-        collector_alive = summary.get("telemetry_age_ms", -1) >= 0
-        
-        # Armed duration
-        armed = flight_state.get("armed", False)
-        armed_duration_s = 0.0
-        if armed:
-            if self._armed_since_mono == 0.0:
-                self._armed_since_mono = now
-            armed_duration_s = now - self._armed_since_mono
-        else:
-            self._armed_since_mono = 0.0
+        local_metrics = self.local_mon.get_metrics()
         
         return DecisionInput(
             mono_ms=now_ms,
@@ -343,19 +315,17 @@ class DecisionContext:
             gap_p95_ms=summary.get("gap_p95_ms", 0.0),
             silence_max_ms=summary.get("silence_max_ms", 0.0),
             jitter_ms=summary.get("jitter_ms", 0.0),
-            gcs_cpu_median=summary.get("gcs_cpu_median", 0.0),
-            gcs_cpu_p95=summary.get("gcs_cpu_p95", 0.0),
-            telemetry_last_seq=summary.get("last_seq", 0),
-            mavproxy_alive=mavproxy_alive,
-            collector_alive=collector_alive,
-            heartbeat_age_ms=flight_state.get("heartbeat_age_ms", 0.0),
-            failsafe_active=flight_state.get("failsafe", False),
-            armed=armed,
-            armed_duration_s=armed_duration_s,
-            remote_suite=remote_suite,
-            remote_epoch=remote_epoch,
-            expected_suite=expected_suite,
-            current_tier=get_suite_tier(expected_suite),
+            blackout_count=0, # TODO: Implement blackout counter in window
+            
+            # Local Metrics
+            battery_mv=local_metrics.battery_mv,
+            battery_roc=local_metrics.battery_roc,
+            temp_c=local_metrics.temp_c,
+            temp_roc=local_metrics.temp_roc,
+            armed=local_metrics.armed,
+            
+            # State
+            current_suite=expected_suite,
             local_epoch=self._local_epoch,
             last_switch_mono_ms=self._last_switch_mono * 1000.0,
             cooldown_until_mono_ms=self._cooldown_until_mono * 1000.0,
@@ -386,12 +356,8 @@ class DecisionContext:
             "gap_p95_ms": s.get("gap_p95_ms"),
             "silence_max_ms": s.get("silence_max_ms"),
             "jitter_ms": s.get("jitter_ms"),
-            "gcs_cpu_median": s.get("gcs_cpu_median"),
-            "gcs_cpu_p95": s.get("gcs_cpu_p95"),
             "sample_count_window": s.get("sample_count_window"),
             "confidence": s.get("confidence", 0.0),
-            "missing_seq": s.get("missing_seq_count", 0),
-            "out_of_order": s.get("out_of_order_count", 0),
             # Policy output
             "policy_action": policy_out.action.value,
             "policy_target_suite": policy_out.target_suite,
@@ -592,151 +558,6 @@ class DroneProxyManager:
         return self.managed_proc is not None and self.managed_proc.is_running()
 
 # ============================================================
-# Suite Runner
-# ============================================================
-
-def run_suite(proxy: DroneProxyManager, mavproxy, 
-              suite_name: str, duration: float, is_first: bool = False) -> dict:
-    """Run a single suite test - drone controls the flow.
-    
-    NOTE: Even though drone is the controller, GCS proxy must start first
-    because the TCP handshake requires GCS to listen and drone to connect.
-    Drone controls WHEN to start, but GCS proxy goes up first.
-    """
-    
-    result = {
-        "suite": suite_name,
-        "status": "unknown",
-        "echo_rx": 0,
-        "echo_tx": 0,
-    }
-    
-    # Ensure mavproxy (application-layer relay) is available
-    mav_running = False
-    try:
-        # Support either the manager object with is_running(), or a subprocess.Popen
-        if hasattr(mavproxy, "is_running"):
-            mav_running = bool(mavproxy.is_running())
-        else:
-            # treat mavproxy as subprocess-like
-            mav_running = mavproxy is not None and getattr(mavproxy, "poll", lambda: None)() is None
-    except Exception:
-        mav_running = False
-    
-    if not is_first:
-        # Rekey: tell GCS to prepare (stop its proxy)
-        log("Preparing GCS for rekey...")
-        resp = send_gcs_command("prepare_rekey")
-        if resp.get("status") != "ok":
-            log(f"GCS prepare_rekey failed: {resp}")
-            result["status"] = "gcs_prepare_failed"
-            return result
-        
-        # Stop our proxy too
-        proxy.stop()
-        time.sleep(0.5)
-    
-    # Tell GCS to start its proxy first (GCS listens, drone connects)
-    log(f"Telling GCS to start proxy for {suite_name}...")
-    resp = send_gcs_command("start_proxy", suite=suite_name)
-    log(f"GCS start_proxy response: {resp}")
-    if resp.get("status") != "ok":
-        log(f"GCS start_proxy failed: {resp}")
-        result["status"] = "gcs_start_failed"
-        return result
-
-    # Wait for GCS proxy to be ready by polling status
-    log("Waiting for GCS proxy to report ready...")
-    start_wait = time.time()
-    ready = False
-    while time.time() - start_wait < 20.0:
-        time.sleep(0.5)
-        try:
-            st = send_gcs_command("status")
-            if st.get("proxy_running"):
-                ready = True
-                break
-        except Exception:
-            pass
-
-    if not ready:
-        log("GCS proxy did not become ready in time")
-        result["status"] = "gcs_not_ready"
-        return result
-    
-    # Now start drone proxy (it will connect to GCS)
-    log(f"Starting drone proxy for {suite_name}...")
-    if not proxy.start(suite_name):
-        result["status"] = "proxy_start_failed"
-        # include last log path if available
-        try:
-            tail = getattr(proxy, "_last_log", None)
-            if tail:
-                result["log"] = str(tail)
-        except Exception:
-            pass
-        return result
-    
-    # Wait for handshake
-    time.sleep(1.0)
-    
-    # Tell GCS to start traffic
-    log("Telling GCS to start traffic...")
-    resp = send_gcs_command("start_traffic", duration=duration)
-    if resp.get("status") != "ok":
-        log(f"GCS start_traffic failed: {resp}")
-        result["status"] = "gcs_traffic_failed"
-        return result
-    
-    log("Traffic started, waiting for completion... (mavproxy relaying MAVLink)")
-    
-    # Wait for GCS to finish traffic generation
-    # Poll GCS status
-    traffic_done = False
-    start_time = time.time()
-    max_wait = duration + 30  # Extra buffer
-    
-    while time.time() - start_time < max_wait:
-        time.sleep(2.0)
-        
-        # Log mavproxy status periodically
-        try:
-            log(f"mavproxy running: {mavproxy.is_running()}")
-        except Exception:
-            pass
-        
-        # Check GCS status
-        status = send_gcs_command("status")
-        if status.get("traffic_complete"):
-            traffic_done = True
-            break
-        
-        # Check if proxy died
-        if not proxy.is_running():
-            log("Proxy exited unexpectedly")
-            result["status"] = "proxy_exited"
-            return result
-    
-    if not traffic_done:
-        log("Traffic did not complete in time")
-        result["status"] = "timeout"
-        return result
-    
-    # Indicate mavproxy and proxy status in result
-    try:
-        if hasattr(mavproxy, "is_running"):
-            result["mavproxy_running"] = bool(mavproxy.is_running())
-        else:
-            result["mavproxy_running"] = mavproxy is not None and getattr(mavproxy, "poll", lambda: 1)() is None
-    except Exception:
-        result["mavproxy_running"] = False
-    result["proxy_running"] = bool(proxy.is_running())
-    result["status"] = "pass"
-    
-    return result
-
-
-# ============================================================
 # Scheduler Class
 # ============================================================
 
@@ -747,7 +568,6 @@ class DroneScheduler:
     def __init__(self, args, suites):
         self.args = args
         self.suites = suites
-        self.policy = LinearLoopPolicy(self.suites)
         self.proxy = DroneProxyManager()
         self.mavproxy_proc = None
         self.current_proxy_proc = None
@@ -755,7 +575,8 @@ class DroneScheduler:
         
         # Telemetry & Decision Context
         self.telemetry = TelemetryListener(GCS_TELEMETRY_PORT, allowed_ip=GCS_HOST)
-        self.context = DecisionContext(self.telemetry, self.suites)
+        self.local_mon = LocalMonitor()
+        self.context = DecisionContext(self.telemetry, self.local_mon, self.suites)
         
         # Action log file
         self.action_log_file = LOGS_DIR / "drone_actions.jsonl"
@@ -794,6 +615,8 @@ class DroneScheduler:
             python_exe = sys.executable
             master = self.args.mav_master
             out_arg = f"udp:127.0.0.1:{DRONE_PLAIN_TX_PORT}"
+            # Secondary output for LocalMonitor sniffing
+            monitor_out = "udp:127.0.0.1:14555"
 
             # Interactive mode requested
             # [FIX] Added --daemon to prevent prompt_toolkit crash on Windows/Headless environments
@@ -803,6 +626,7 @@ class DroneScheduler:
                 "MAVProxy.mavproxy",
                 f"--master={master}",
                 f"--out={out_arg}",
+                f"--out={monitor_out}",
                 "--nowait",
                 "--daemon",
             ]
@@ -899,15 +723,19 @@ class DroneScheduler:
         
         if action == PolicyAction.DOWNGRADE:
             log(f"[ACTION] DOWNGRADE from {current_suite} to {target}")
-            return self._execute_suite_switch(target, cooldown_s=COOLDOWN_DOWNGRADE_S)
+            return self._execute_suite_switch(target, cooldown_s=5.0)
         
         elif action == PolicyAction.UPGRADE:
             log(f"[ACTION] UPGRADE from {current_suite} to {target}")
-            return self._execute_suite_switch(target, cooldown_s=COOLDOWN_SWITCH_S)
+            return self._execute_suite_switch(target, cooldown_s=5.0)
         
         elif action == PolicyAction.REKEY:
             log(f"[ACTION] REKEY suite {target}")
             return self._execute_rekey(target)
+        
+        elif action == PolicyAction.ROLLBACK:
+            log(f"[ACTION] ROLLBACK from {current_suite} to {target}")
+            return self._execute_suite_switch(target, cooldown_s=10.0)
         
         return True
 
@@ -974,7 +802,7 @@ class DroneScheduler:
                 return False
             
             # Record rekey with longer cooldown
-            self.context.record_suite_switch(suite_name, COOLDOWN_REKEY_S)
+            self.context.record_suite_switch(suite_name, 10.0)
             log(f"Rekey for {suite_name} complete")
             return True
             
@@ -987,6 +815,12 @@ class DroneScheduler:
         try:
             if self.telemetry:
                 self.telemetry.stop()
+        except Exception:
+            pass
+        
+        try:
+            if self.local_mon:
+                self.local_mon.stop()
         except Exception:
             pass
 
@@ -1007,16 +841,6 @@ class DroneScheduler:
     def run_scheduler(self):
         """
         Main scheduler loop with telemetry-aware policy evaluation.
-        
-        Flow:
-        1. Start telemetry listener and MAVProxy
-        2. Pick initial suite from policy
-        3. Per-tick loop:
-           a. Evaluate policy -> PolicyOutput (HOLD/DOWNGRADE/UPGRADE/REKEY)
-           b. Log decision context (every tick)
-           c. Execute action if not HOLD
-           d. Sleep tick interval
-        4. Suite duration triggers advance to next policy suite
         """
         def _sigint(sig, frame):
             log("Interrupted; cleaning up and exiting")
@@ -1027,6 +851,9 @@ class DroneScheduler:
 
         # Start Telemetry Listener
         self.telemetry.start()
+        
+        # Start Local Monitor
+        self.local_mon.start()
 
         # Start MAVProxy once
         ok = self.start_persistent_mavproxy()
@@ -1038,12 +865,17 @@ class DroneScheduler:
         
         try:
             while True:
-                # Get next suite from legacy policy (for scheduling progression)
-                suite_name = self.policy.next_suite()
-                duration = self.policy.get_duration()
-                self.current_suite = suite_name
+                # Initial suite selection (fallback to first filtered suite)
+                if not self.current_suite:
+                    if self.context._policy.filtered_suites:
+                        self.current_suite = self.context._policy.filtered_suites[0]
+                    else:
+                        self.current_suite = self.suites[0]["name"] # Fallback
                 
-                log(f"=== Activating Suite: {suite_name} (duration={duration}) ===")
+                suite_name = self.current_suite
+                duration = 3600.0 # Run indefinitely until policy changes it
+                
+                log(f"=== Activating Suite: {suite_name} ===")
 
                 # Coordinate with GCS: request GCS to start its proxy BEFORE starting local proxy
                 try:
@@ -1064,7 +896,7 @@ class DroneScheduler:
                 self.start_tunnel_for_suite(suite_name)
                 
                 # Record suite activation
-                self.context.record_suite_switch(suite_name, COOLDOWN_SWITCH_S)
+                self.context.record_suite_switch(suite_name, 5.0)
                 
                 # Wait for handshake to complete before counting duration
                 if self.wait_for_handshake_completion(timeout=10.0):
@@ -1078,7 +910,7 @@ class DroneScheduler:
                 start_run = time.time()
                 tick_count = 0
                 
-                while time.time() - start_run < duration:
+                while True: # Run until policy forces a switch
                     tick_count += 1
                     now_mono = time.monotonic()
                     
@@ -1100,15 +932,20 @@ class DroneScheduler:
                             success = self.execute_action(policy_out, self.current_suite)
                             if success:
                                 log(f"  Action executed successfully")
-                                # If we switched suites, update current
-                                if policy_out.target_suite:
+                                # If we switched suites, break inner loop to restart outer loop with new suite
+                                if policy_out.target_suite and policy_out.target_suite != self.current_suite:
                                     self.current_suite = policy_out.target_suite
+                                    break # Break inner loop, restart outer loop
+                                
+                                # If rekey (same suite), we also break to restart tunnel
+                                if policy_out.action == PolicyAction.REKEY:
+                                    break
                             else:
                                 log(f"  Action execution FAILED")
                         else:
                             # HOLD - optional verbose logging (every 10th tick)
                             if tick_count % 10 == 0:
-                                stats = self.telemetry.window.summarize()
+                                stats = self.telemetry.window.summarize(now_mono)
                                 log(f"[TICK {tick_count}] HOLD - suite={self.current_suite}, "
                                     f"samples={stats.get('count', 0)}, "
                                     f"gap_p95={stats.get('gap_p95_ms', 'N/A')}, "
@@ -1119,15 +956,9 @@ class DroneScheduler:
                     
                     time.sleep(TICK_INTERVAL_S)
 
-                # Duration complete - stop tunnel before switching
+                # Loop broken (switch or rekey) - stop tunnel
                 self.stop_current_tunnel()
-
-                count += 1
-                if self.args.max_suites and count >= int(self.args.max_suites):
-                    log(f"Reached max_suites ({self.args.max_suites}), stopping scheduler")
-                    break
-
-                time.sleep(2.0)
+                time.sleep(1.0)
                 
         except Exception as e:
             logging.error(f"Scheduler crash: {e}")

@@ -12,6 +12,7 @@ import json
 import threading
 import socket
 import logging
+import math
 from pathlib import Path
 from collections import deque, defaultdict
 from datetime import datetime, timezone
@@ -244,80 +245,71 @@ class GcsMetricsCollector:
             self.burst_gaps = sum(1 for _, g in self.gaps if g > BURST_GAP_THRESHOLD_MS)
 
     def get_snapshot(self):
-        now_mono = time.monotonic()
-        now_wall = time.time()
-        
+        now_mono_ns = time.monotonic_ns()
+        now_wall_ns = time.time_ns()
+
         with self.lock:
-            # Metrics Calculation
+            # Basic link metrics
             count = len(self.arrival_times)
             total_bytes = sum(s for _, s in self.arrival_times)
-            
-            rx_pps = count / WINDOW_S
-            rx_bps = total_bytes / WINDOW_S
-            
+
+            rx_pps = (count / WINDOW_S) if WINDOW_S > 0 else 0.0
+            rx_bps = (total_bytes / WINDOW_S) if WINDOW_S > 0 else 0.0
+
             silence_ms = 0.0
             if self.arrival_times:
-                silence_ms = (now_mono - self.arrival_times[-1][0]) * 1000.0
-            
-            gap_max_ms = 0.0
-            gap_p95_ms = 0.0
-            jitter_ms = 0.0
-            
-            if self.gaps:
-                gap_values = [g for _, g in self.gaps]
-                gap_max_ms = max(gap_values)
-                gap_values.sort()
-                idx = int(len(gap_values) * 0.95)
-                gap_p95_ms = gap_values[idx] if gap_values else 0.0
-                
-                if len(gap_values) > 1:
-                    mean_gap = sum(gap_values) / len(gap_values)
-                    jitter_ms = sum(abs(g - mean_gap) for g in gap_values) / len(gap_values)
+                silence_ms = (time.monotonic() - self.arrival_times[-1][0]) * 1000.0
 
-            # System Stats
-            cpu_pct = psutil.cpu_percent(interval=None) if psutil else 0.0
-            mem_pct = psutil.virtual_memory().percent if psutil else 0.0
-            cpu_freq = 0.0
-            if psutil and hasattr(psutil, 'cpu_freq'):
-                f = psutil.cpu_freq()
-                if f: cpu_freq = f.current
-            
-            # Process Health
-            mavproxy_alive = False
-            mavproxy_pid = 0
-            if self.mavproxy_proc:
-                mavproxy_alive = self.mavproxy_proc.is_running()
-                mavproxy_pid = self.mavproxy_proc.process.pid if self.mavproxy_proc.process else 0
-            
-            # Proxy Status
+            gap_max_ms = 0.0
+            gap_values = [g for _, g in self.gaps] if self.gaps else []
+            if gap_values:
+                gap_values_sorted = sorted(gap_values)
+                gap_max_ms = gap_values_sorted[-1]
+            else:
+                gap_values_sorted = []
+
+            def pct(vals, p):
+                if not vals:
+                    return 0.0
+                k = max(0, min(len(vals) - 1, int(math.ceil((p / 100.0) * len(vals)) - 1)))
+                return float(vals[k])
+
+            gap_p90_ms = round(pct(gap_values_sorted, 90), 1)
+            gap_p60_ms = round(pct(gap_values_sorted, 60), 1)
+
+            # Jitter as mean absolute deviation of gaps (if available)
+            jitter_ms = 0.0
+            if len(gap_values_sorted) > 1:
+                mean_gap = sum(gap_values_sorted) / len(gap_values_sorted)
+                jitter_ms = sum(abs(g - mean_gap) for g in gap_values_sorted) / len(gap_values_sorted)
+
+            # Blackout calculation: gaps larger than BLACKOUT_THRESHOLD_MS
+            BLACKOUT_THRESHOLD_MS = 1000.0
+            blackout_gaps = [g for g in gap_values_sorted if g >= BLACKOUT_THRESHOLD_MS]
+            blackout_count = len(blackout_gaps)
+            blackout_total_ms = round(sum(blackout_gaps), 1)
+
+            # Minimal MAV health
+            hb = self.mav_state.get('heartbeat')
+            hb_age_ms = None
+            if hb and 'last_mono' in hb:
+                hb_age_ms = (time.monotonic() - hb['last_mono']) * 1000.0
+
+            sys_status = self.mav_state.get('sys_status') or {}
+            voltage_mv = sys_status.get('voltage_battery_mv') if isinstance(sys_status, dict) else None
+
+            # Proxy status
             proxy_alive = False
             proxy_pid = 0
-            active_suite = None
             if self.proxy_manager:
-                proxy_alive = self.proxy_manager.is_running()
-                active_suite = self.proxy_manager.current_suite
-                # If ManagedProcess exposed PID, we'd use it. Assuming it does via .process
-                if self.proxy_manager.managed_proc and self.proxy_manager.managed_proc.process:
-                    proxy_pid = self.proxy_manager.managed_proc.process.pid
+                try:
+                    proxy_alive = self.proxy_manager.is_running()
+                    if self.proxy_manager.managed_proc and getattr(self.proxy_manager.managed_proc, 'process', None):
+                        proxy_pid = getattr(self.proxy_manager.managed_proc.process, 'pid', 0)
+                except Exception:
+                    proxy_alive = False
 
-            # MAVLink Rates
-            msg_rate_total = len(self.msg_timestamps) / WINDOW_S
-            # Critical: HEARTBEAT(0), SYS_STATUS(1), STATUSTEXT(253)
-            msg_rate_critical = (self.msg_rates[0] + self.msg_rates[1] + self.msg_rates[253]) / WINDOW_S
-            # High: ATTITUDE(30), VFR_HUD(74) - examples
-            msg_rate_high = (self.msg_rates[30] + self.msg_rates[74]) / WINDOW_S
-
-            # Heartbeat Age
-            hb = self.mav_state['heartbeat']
-            if hb:
-                hb['age_ms'] = (now_mono - hb['last_mono']) * 1000.0
-                # Remove internal field before export
-                hb_export = hb.copy()
-                del hb_export['last_mono']
-            else:
-                hb_export = None
-
-            snapshot = {
+            reduced = {
                 "schema": SCHEMA_NAME,
                 "schema_ver": SCHEMA_VER,
                 "sender": {
@@ -326,77 +318,39 @@ class GcsMetricsCollector:
                     "pid": self.pid
                 },
                 "t": {
-                    "wall_ms": now_wall * 1000.0,
-                    "mono_ms": now_mono * 1000.0,
+                    "wall_ns": now_wall_ns,
+                    "mono_ns": now_mono_ns,
                     "boot_id": self.boot_id
                 },
-                    "caps": {
-                        "pymavlink": mavutil is not None,
-                        "psutil": psutil is not None,
-                        "proxy_status_file": False, # Deprecated in favor of process check
-                    },
-                "state": {
-                    "gcs": {
-                        "mavproxy_alive": mavproxy_alive,
-                        "mavproxy_pid": mavproxy_pid,
-                        "qgc_alive": False, # Placeholder
-                        "collector_alive": True,
-                        "collector_last_tick_mono_ms": self.last_tick_mono * 1000.0,
-                        "collector_loop_lag_ms": self.loop_lag_ms
-                    },
-                    "suite": {
-                        "active_suite": active_suite,
-                        "suite_epoch": 0, # TODO: wire if available
-                        "pending_suite": None
-                    }
-                },
                 "metrics": {
-                    "sniff": {
-                        "bind": f"{self.mavlink_host}:{self.mavlink_port}",
+                    "link": {
                         "window_s": WINDOW_S,
                         "sample_count": count,
                         "rx_pps": round(rx_pps, 1),
                         "rx_bps": round(rx_bps, 1),
                         "silence_ms": round(silence_ms, 1),
                         "gap_max_ms": round(gap_max_ms, 1),
-                        "gap_p95_ms": round(gap_p95_ms, 1),
+                        "gap_p90_ms": gap_p90_ms,
+                        "gap_p60_ms": gap_p60_ms,
                         "jitter_ms": round(jitter_ms, 1),
-                        "burst_gap_count": self.burst_gaps,
-                        "burst_gap_threshold_ms": BURST_GAP_THRESHOLD_MS
-                    },
-                    "sys": {
-                        "cpu_pct": cpu_pct,
-                        "mem_pct": mem_pct,
-                        "cpu_freq_mhz": cpu_freq,
-                        "temp_c": 0.0 # Requires platform specific
+                        "blackout_count": blackout_count,
+                        "blackout_total_ms": blackout_total_ms
                     }
                 },
                 "mav": {
-                    "decode": self.mav_state['decode_stats'],
-                    "heartbeat": hb_export,
-                    "sys_status": self.mav_state['sys_status'],
-                    "radio_status": self.mav_state['radio_status'],
-                    "rates": {
-                        "window_s": WINDOW_S,
-                        "msg_rate_total": round(msg_rate_total, 1),
-                        "msg_rate_critical": round(msg_rate_critical, 1),
-                        "msg_rate_high": round(msg_rate_high, 1)
-                    },
-                    "failsafe": self.mav_state['failsafe']
+                    "heartbeat_age_ms": round(hb_age_ms, 1) if hb_age_ms is not None else None,
+                    "voltage_battery_mv": voltage_mv
                 },
-                "tunnel": {
+                "proxy": {
                     "proxy_alive": proxy_alive,
-                    "proxy_pid": proxy_pid,
-                    "status_file_age_ms": 0,
-                    "counters": None
-                },
-                "events": list(self.events) # Copy
+                    "proxy_pid": proxy_pid
+                }
             }
-            
-            # Clear one-shot events
+
+            # Clear one-shot events (we no longer export them by default)
             self.events.clear()
-            
-            return snapshot
+
+            return reduced
 
     def _run_loop(self):
         self._connect()

@@ -1,133 +1,19 @@
 """
 Scheduling policies for drone-side suite management.
 
-Policies consume DecisionContext summaries and return deterministic actions.
-All time values use monotonic clock to avoid wall-clock jumps.
+Implements a deterministic, safety-critical state machine for PQC suite selection.
+Consumes GCS telemetry (link) and Local telemetry (battery/thermal).
 """
 
-import random
+import json
 import time
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
-
-# =============================================================================
-# THRESHOLD CONSTANTS (tune here, not in code)
-# =============================================================================
-
-# Telemetry freshness: stale if age exceeds this (ms)
-TH_TELEMETRY_STALE_MS = 1500.0
-
-# Minimum samples in window for confidence
-TH_MIN_SAMPLES = 3
-
-# Link stability thresholds
-TH_GAP_P95_MS = 200.0        # p95 inter-arrival gap limit
-TH_SILENCE_MAX_MS = 300.0    # max silence before link_unstable
-TH_JITTER_MS = 50.0          # jitter threshold for stability
-
-# Receiver health thresholds
-TH_GCS_CPU_MEDIAN = 85.0     # median CPU too high -> receiver_stressed
-TH_GCS_CPU_P95 = 95.0        # p95 CPU too high -> severe_stress
-
-# Heartbeat / failsafe thresholds (from telemetry packet)
-TH_HEARTBEAT_AGE_MS = 2000.0 # MAVLink heartbeat age limit
-
-# Cooldown durations (seconds)
-COOLDOWN_SWITCH_S = 5.0      # after suite switch
-COOLDOWN_REKEY_S = 10.0      # after rekey
-COOLDOWN_DOWNGRADE_S = 8.0   # after downgrade
-
-# Dwell requirements for upgrade (seconds of stable link)
-DWELL_UPGRADE_S = 30.0       # stable duration required before upgrade
-DWELL_REKEY_S = 60.0         # stable duration required before proactive rekey
-
-# Confidence thresholds
-TH_CONFIDENCE_LOW = 0.5      # below this -> HOLD
-TH_CONFIDENCE_UPGRADE = 0.8  # above this -> allow upgrade
-
-
-# =============================================================================
-# ACTION ENUM
-# =============================================================================
-
-class PolicyAction(str, Enum):
-    HOLD = "HOLD"
-    DOWNGRADE = "DOWNGRADE"
-    UPGRADE = "UPGRADE"
-    REKEY = "REKEY"
-
-
-# =============================================================================
-# DECISION CONTEXT INPUT (immutable snapshot)
-# =============================================================================
-
-@dataclass(frozen=True)
-class DecisionInput:
-    """Immutable snapshot of system state for policy evaluation."""
-    mono_ms: float
-    
-    # Telemetry window stats
-    telemetry_valid: bool
-    telemetry_age_ms: float
-    sample_count: int
-    rx_pps_median: float
-    gap_p95_ms: float
-    silence_max_ms: float
-    jitter_ms: float
-    gcs_cpu_median: float
-    gcs_cpu_p95: float
-    telemetry_last_seq: int
-    
-    # Receiver health (from latest telemetry packet)
-    mavproxy_alive: bool = True
-    collector_alive: bool = True
-    
-    # Flight safety (from latest telemetry or local sensors)
-    heartbeat_age_ms: float = 0.0
-    failsafe_active: bool = False
-    armed: bool = False
-    armed_duration_s: float = 0.0
-    
-    # Synchronization (from telemetry epoch/suite fields)
-    remote_suite: Optional[str] = None
-    remote_epoch: int = 0
-    
-    # Current state
-    expected_suite: str = ""
-    current_tier: int = 0
-    local_epoch: int = 0
-    
-    # Cooldowns
-    last_switch_mono_ms: float = 0.0
-    cooldown_until_mono_ms: float = 0.0
-
-
-# =============================================================================
-# POLICY OUTPUT
-# =============================================================================
-
-@dataclass
-class PolicyOutput:
-    """Deterministic policy decision."""
-    action: PolicyAction
-    target_suite: Optional[str] = None
-    target_tier: Optional[int] = None
-    reasons: List[str] = field(default_factory=list)
-    confidence: float = 0.0
-    cooldown_remaining_ms: float = 0.0
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "action": self.action.value,
-            "target_suite": self.target_suite,
-            "target_tier": self.target_tier,
-            "reasons": self.reasons,
-            "confidence": round(self.confidence, 3),
-            "cooldown_remaining_ms": round(self.cooldown_remaining_ms, 1),
-        }
-
+from core.suites import list_suites
 
 # =============================================================================
 # SUITE TIER MAPPING
@@ -176,236 +62,263 @@ def get_suite_tier(suite_name: str) -> int:
     
     return level_tier + kem_tier + aead_tier
 
-
-def find_adjacent_suite(current_suite: str, suites: List[str], direction: int) -> Optional[str]:
-    """Find next suite in tier order. direction: -1 for downgrade, +1 for upgrade."""
-    if not suites:
-        return None
-    
-    current_tier = get_suite_tier(current_suite)
-    candidates: List[Tuple[int, str]] = []
-    
-    for s in suites:
-        tier = get_suite_tier(s)
-        if direction < 0 and tier < current_tier:
-            candidates.append((tier, s))
-        elif direction > 0 and tier > current_tier:
-            candidates.append((tier, s))
-    
-    if not candidates:
-        return None
-    
-    # Sort by tier and pick closest
-    candidates.sort(key=lambda x: abs(x[0] - current_tier))
-    return candidates[0][1]
-
-
 # =============================================================================
-# TELEMETRY-AWARE POLICY V1
+# CONFIGURATION LOADING
 # =============================================================================
 
-class TelemetryAwarePolicyV1:
-    """
-    Deterministic policy that consumes DecisionInput and produces PolicyOutput.
+SETTINGS_PATH = Path(__file__).parent.parent / "settings.json"
+
+def load_settings() -> Dict[str, Any]:
+    defaults = {
+        "mission_criticality": "medium",
+        "max_nist_level": "L5",
+        "allowed_aead": "aesgcm",
+        "battery": {"critical_mv": 14000, "low_mv": 14800, "warn_mv": 15200, "rate_warn_mv_per_min": 500},
+        "thermal": {"critical_c": 80.0, "warn_c": 70.0, "rate_warn_c_per_min": 5.0},
+        "link": {"min_pps": 5.0, "max_gap_ms": 1000.0, "max_blackout_count": 3},
+        "rekey": {"min_stable_s": 60.0, "max_per_hour": 5, "blacklist_ttl_s": 1800},
+        "hysteresis": {"downgrade_s": 5.0, "upgrade_s": 30.0}
+    }
+    try:
+        if SETTINGS_PATH.exists():
+            with open(SETTINGS_PATH, "r") as f:
+                user_cfg = json.load(f)
+                # Deep merge simple dicts
+                for k, v in user_cfg.items():
+                    if isinstance(v, dict) and k in defaults:
+                        defaults[k].update(v)
+                    else:
+                        defaults[k] = v
+    except Exception as e:
+        logging.error(f"Failed to load settings.json: {e}")
+    return defaults
+
+SETTINGS = load_settings()
+
+# =============================================================================
+# ACTION ENUM
+# =============================================================================
+
+class PolicyAction(str, Enum):
+    HOLD = "HOLD"
+    DOWNGRADE = "DOWNGRADE"
+    UPGRADE = "UPGRADE"
+    REKEY = "REKEY"
+    ROLLBACK = "ROLLBACK"
+
+# =============================================================================
+# DECISION CONTEXT INPUT (immutable snapshot)
+# =============================================================================
+
+@dataclass(frozen=True)
+class DecisionInput:
+    """Immutable snapshot of system state for policy evaluation."""
+    mono_ms: float
     
-    Invariant evaluation order (short-circuit on first HOLD):
-    A) Telemetry stale OR low confidence -> HOLD
-    B) Receiver not healthy (mavproxy_alive=False OR collector_alive=False) -> HOLD
-    C) Flight safety gate (heartbeat_age too high OR failsafe) -> HOLD
-    D) Desync (remote_suite/epoch mismatch) -> HOLD + reconcile hook
-    E) Cooldown active -> HOLD
+    # Link Telemetry (GCS -> Drone)
+    telemetry_valid: bool
+    telemetry_age_ms: float
+    sample_count: int
+    rx_pps_median: float
+    gap_p95_ms: float
+    silence_max_ms: float
+    jitter_ms: float
+    blackout_count: int
     
-    Then reactive:
-    F) Severe link degradation persisting -> DOWNGRADE (if possible)
+    # Local Telemetry (Drone Sensors)
+    battery_mv: int
+    battery_roc: float
+    temp_c: float
+    temp_roc: float
+    armed: bool
     
-    Then proactive:
-    G) Stable for DWELL_REKEY_S and conditions met -> REKEY
-    H) Stable for DWELL_UPGRADE_S and conditions met -> UPGRADE
-    
-    Otherwise HOLD.
-    """
-    
-    def __init__(self, suites: List[str]):
-        self.suites = list(suites)
-        self._stable_since_mono_ms: float = 0.0
-        self._link_degraded_since_mono_ms: float = 0.0
-    
+    # State
+    current_suite: str
+    local_epoch: int
+    last_switch_mono_ms: float
+    cooldown_until_mono_ms: float
+
+# =============================================================================
+# POLICY OUTPUT
+# =============================================================================
+
+@dataclass
+class PolicyOutput:
+    """Deterministic policy decision."""
+    action: PolicyAction
+    target_suite: Optional[str] = None
+    reasons: List[str] = field(default_factory=list)
+    confidence: float = 0.0
+    cooldown_remaining_ms: float = 0.0
+
+# =============================================================================
+# TELEMETRY-AWARE POLICY V2 (Robust)
+# =============================================================================
+
+class TelemetryAwarePolicyV2:
+    def __init__(self):
+        self.settings = SETTINGS
+        self.all_suites = list_suites()
+        self.filtered_suites = self._filter_suites()
+        
+        # State
+        self.blacklist: Dict[str, float] = {} # suite -> expiry_mono
+        self.rekey_timestamps: List[float] = [] # mono timestamps
+        self.hysteresis_start: Dict[str, float] = {} # condition -> start_mono
+        self.previous_suite: Optional[str] = None
+        
+        logging.info(f"Policy initialized with {len(self.filtered_suites)} suites (AEAD={self.settings['allowed_aead']})")
+
+    def _filter_suites(self) -> List[str]:
+        """Filter suites based on settings (AEAD, NIST level)."""
+        allowed_aead = self.settings.get("allowed_aead", "aesgcm").lower()
+        max_nist = self.settings.get("max_nist_level", "L5")
+        
+        # Map L1/L3/L5 to comparable ints
+        levels = {"L1": 1, "L3": 3, "L5": 5}
+        max_level_int = levels.get(max_nist, 5)
+        
+        candidates = []
+        for sid, cfg in self.all_suites.items():
+            # AEAD Filter
+            if allowed_aead not in cfg["aead_token"].lower():
+                continue
+            
+            # NIST Level Filter
+            lvl = cfg.get("nist_level", "L5")
+            if levels.get(lvl, 5) > max_level_int:
+                continue
+                
+            candidates.append(sid)
+            
+        # Sort by tier (complexity)
+        candidates.sort(key=get_suite_tier)
+        return candidates
+
+    def _is_blacklisted(self, suite: str, now_mono: float) -> bool:
+        if suite in self.blacklist:
+            if now_mono < self.blacklist[suite]:
+                return True
+            del self.blacklist[suite]
+        return False
+
+    def _add_blacklist(self, suite: str, now_mono: float):
+        ttl = self.settings["rekey"]["blacklist_ttl_s"]
+        self.blacklist[suite] = now_mono + ttl
+        logging.warning(f"Blacklisted {suite} for {ttl}s")
+
+    def _check_hysteresis(self, condition_key: str, active: bool, now_mono: float, duration_s: float) -> bool:
+        """Return True if condition has been active for duration_s."""
+        if not active:
+            self.hysteresis_start.pop(condition_key, None)
+            return False
+        
+        start = self.hysteresis_start.get(condition_key)
+        if start is None:
+            self.hysteresis_start[condition_key] = now_mono
+            return False
+        
+        return (now_mono - start) >= duration_s
+
+    def _find_suite(self, current: str, direction: int, now_mono: float) -> Optional[str]:
+        """Find adjacent suite in filtered pool, skipping blacklisted."""
+        if current not in self.filtered_suites:
+            # If current not in pool (e.g. config changed), pick closest valid
+            if not self.filtered_suites: return None
+            return self.filtered_suites[0] # Fallback to lowest
+            
+        idx = self.filtered_suites.index(current)
+        new_idx = idx + direction
+        
+        # Bounds check
+        if new_idx < 0 or new_idx >= len(self.filtered_suites):
+            return None
+            
+        candidate = self.filtered_suites[new_idx]
+        if self._is_blacklisted(candidate, now_mono):
+            # Try skipping one more? No, simple adjacent for now to avoid jumps
+            return None
+            
+        return candidate
+
     def evaluate(self, inp: DecisionInput) -> PolicyOutput:
-        """Evaluate policy against input snapshot. Pure function (no side effects)."""
-        reasons: List[str] = []
-        now_ms = inp.mono_ms
+        now_mono = inp.mono_ms / 1000.0
+        reasons = []
         
-        # Compute confidence from sample count
-        expected_samples = max(1, int(5.0 * 5))  # 5s window at ~5 Hz
-        confidence = min(1.0, inp.sample_count / expected_samples) if inp.telemetry_valid else 0.0
+        # 0. Update previous suite tracking
+        if self.previous_suite != inp.current_suite:
+            # If we just switched, keep track (unless it was a rekey of same)
+            pass 
+            
+        # 1. Safety Gates (Immediate HOLD)
+        if not inp.telemetry_valid or inp.telemetry_age_ms > 2000:
+            return PolicyOutput(PolicyAction.HOLD, reasons=["telemetry_stale"])
+            
+        # 2. Emergency Safety (Battery/Temp) -> FAST DOWNGRADE
+        batt_crit = inp.battery_mv < self.settings["battery"]["critical_mv"]
+        temp_crit = inp.temp_c > self.settings["thermal"]["critical_c"]
         
-        # Cooldown remaining
-        cooldown_remaining_ms = max(0.0, inp.cooldown_until_mono_ms - now_ms)
-        
-        def hold(reason: str) -> PolicyOutput:
-            reasons.append(reason)
-            return PolicyOutput(
-                action=PolicyAction.HOLD,
-                reasons=reasons,
-                confidence=confidence,
-                cooldown_remaining_ms=cooldown_remaining_ms,
-            )
-        
-        # --- A) Telemetry freshness gate ---
-        if not inp.telemetry_valid or inp.telemetry_age_ms < 0:
-            return hold("telemetry_invalid")
-        
-        if inp.telemetry_age_ms > TH_TELEMETRY_STALE_MS:
-            return hold("telemetry_stale")
-        
-        if inp.sample_count < TH_MIN_SAMPLES:
-            return hold("insufficient_samples")
-        
-        if confidence < TH_CONFIDENCE_LOW:
-            return hold("low_confidence")
-        
-        # --- B) Receiver health gate ---
-        if not inp.mavproxy_alive:
-            return hold("mavproxy_dead")
-        
-        if not inp.collector_alive:
-            return hold("collector_dead")
-        
-        # --- C) Flight safety gate ---
-        if inp.heartbeat_age_ms > TH_HEARTBEAT_AGE_MS:
-            return hold("heartbeat_stale")
-        
-        if inp.failsafe_active:
-            return hold("failsafe_active")
-        
-        # --- D) Desync gate ---
-        if inp.remote_suite and inp.remote_suite != inp.expected_suite:
-            reasons.append("suite_desync")
-            return PolicyOutput(
-                action=PolicyAction.HOLD,
-                reasons=reasons + [f"remote={inp.remote_suite},local={inp.expected_suite}"],
-                confidence=confidence,
-                cooldown_remaining_ms=cooldown_remaining_ms,
-            )
-        
-        if inp.remote_epoch != 0 and inp.remote_epoch != inp.local_epoch:
-            reasons.append("epoch_desync")
-            return PolicyOutput(
-                action=PolicyAction.HOLD,
-                reasons=reasons + [f"remote_epoch={inp.remote_epoch},local={inp.local_epoch}"],
-                confidence=confidence,
-                cooldown_remaining_ms=cooldown_remaining_ms,
-            )
-        
-        # --- E) Cooldown gate ---
-        if cooldown_remaining_ms > 0:
-            return hold("cooldown_active")
-        
-        # --- Assess link quality ---
-        link_stable = (
-            inp.gap_p95_ms <= TH_GAP_P95_MS and
-            inp.silence_max_ms <= TH_SILENCE_MAX_MS and
-            inp.jitter_ms <= TH_JITTER_MS
+        if (batt_crit or temp_crit) and inp.current_suite != self.filtered_suites[0]:
+            # Emergency: jump to lowest tier immediately
+            target = self.filtered_suites[0]
+            return PolicyOutput(PolicyAction.DOWNGRADE, target, reasons=["safety_critical"])
+
+        # 3. Link Failure -> ROLLBACK/BLACKLIST
+        # If blackout persists shortly after a switch, assume suite fault
+        time_since_switch = (inp.mono_ms - inp.last_switch_mono_ms) / 1000.0
+        if time_since_switch < 30.0 and inp.blackout_count > self.settings["link"]["max_blackout_count"]:
+            self._add_blacklist(inp.current_suite, now_mono)
+            # Try to go back to previous or downgrade
+            target = self._find_suite(inp.current_suite, -1, now_mono)
+            if target:
+                return PolicyOutput(PolicyAction.DOWNGRADE, target, reasons=["blackout_rollback"])
+
+        # 4. Cooldown Gate
+        if inp.cooldown_until_mono_ms > inp.mono_ms:
+            return PolicyOutput(PolicyAction.HOLD, reasons=["cooldown"])
+
+        # 5. Link Degradation -> DOWNGRADE (with Hysteresis)
+        link_bad = (
+            inp.gap_p95_ms > self.settings["link"]["max_gap_ms"] or
+            inp.rx_pps_median < self.settings["link"]["min_pps"]
         )
         
-        receiver_ok = inp.gcs_cpu_median < TH_GCS_CPU_MEDIAN
-        severe_stress = inp.gcs_cpu_p95 >= TH_GCS_CPU_P95
+        if self._check_hysteresis("link_bad", link_bad, now_mono, self.settings["hysteresis"]["downgrade_s"]):
+            target = self._find_suite(inp.current_suite, -1, now_mono)
+            if target:
+                return PolicyOutput(PolicyAction.DOWNGRADE, target, reasons=["link_degraded_persistent"])
+
+        # 6. Thermal/Battery Warning -> DOWNGRADE (with Hysteresis)
+        # Check rates
+        temp_rising = inp.temp_roc > self.settings["thermal"]["rate_warn_c_per_min"]
+        batt_falling = inp.battery_roc < -self.settings["battery"]["rate_warn_mv_per_min"] # negative slope
         
-        # --- F) Reactive downgrade ---
-        if not link_stable or severe_stress:
-            # Check if degradation is persistent (would need tracking over time)
-            # For now, immediate downgrade if severe
-            if severe_stress or inp.silence_max_ms > TH_SILENCE_MAX_MS * 1.5:
-                target = find_adjacent_suite(inp.expected_suite, self.suites, direction=-1)
-                if target:
-                    return PolicyOutput(
-                        action=PolicyAction.DOWNGRADE,
-                        target_suite=target,
-                        target_tier=get_suite_tier(target),
-                        reasons=["link_degraded", f"cpu_p95={inp.gcs_cpu_p95:.1f}", f"silence={inp.silence_max_ms:.0f}ms"],
-                        confidence=confidence,
-                        cooldown_remaining_ms=0.0,
-                    )
-                else:
-                    return hold("degraded_no_lower_tier")
+        stress = temp_rising or batt_falling or (inp.temp_c > self.settings["thermal"]["warn_c"])
         
-        # --- G) Proactive rekey (rare) ---
-        # Rekey if stable for a long time, not armed or armed stable
-        stable_duration_ms = now_ms - inp.last_switch_mono_ms
-        if stable_duration_ms > DWELL_REKEY_S * 1000.0:
-            if link_stable and receiver_ok and confidence >= TH_CONFIDENCE_UPGRADE:
-                if not inp.armed or inp.armed_duration_s > 60.0:
-                    return PolicyOutput(
-                        action=PolicyAction.REKEY,
-                        target_suite=inp.expected_suite,  # same suite
-                        reasons=["proactive_rekey", f"stable_for={stable_duration_ms/1000:.0f}s"],
-                        confidence=confidence,
-                        cooldown_remaining_ms=0.0,
-                    )
-        
-        # --- H) Proactive upgrade (very conservative) ---
-        if stable_duration_ms > DWELL_UPGRADE_S * 1000.0:
-            if link_stable and receiver_ok and confidence >= TH_CONFIDENCE_UPGRADE:
-                if not inp.armed:  # only upgrade when disarmed
-                    target = find_adjacent_suite(inp.expected_suite, self.suites, direction=+1)
-                    if target:
-                        return PolicyOutput(
-                            action=PolicyAction.UPGRADE,
-                            target_suite=target,
-                            target_tier=get_suite_tier(target),
-                            reasons=["stable_upgrade", f"stable_for={stable_duration_ms/1000:.0f}s"],
-                            confidence=confidence,
-                            cooldown_remaining_ms=0.0,
-                        )
-        
-        # --- Default: HOLD (all is well) ---
-        return PolicyOutput(
-            action=PolicyAction.HOLD,
-            reasons=["nominal"],
-            confidence=confidence,
-            cooldown_remaining_ms=cooldown_remaining_ms,
-        )
+        if self._check_hysteresis("stress", stress, now_mono, self.settings["hysteresis"]["downgrade_s"]):
+             target = self._find_suite(inp.current_suite, -1, now_mono)
+             if target:
+                 return PolicyOutput(PolicyAction.DOWNGRADE, target, reasons=["thermal_battery_stress"])
 
+        # 7. Proactive Rekey / Upgrade
+        # Only if stable for long time
+        stable_time = (inp.mono_ms - inp.last_switch_mono_ms) / 1000.0
+        if stable_time > self.settings["rekey"]["min_stable_s"]:
+            # Check rekey limit
+            hour_ago = now_mono - 3600
+            self.rekey_timestamps = [t for t in self.rekey_timestamps if t > hour_ago]
+            
+            if len(self.rekey_timestamps) < self.settings["rekey"]["max_per_hour"]:
+                # Can rekey
+                self.rekey_timestamps.append(now_mono)
+                return PolicyOutput(PolicyAction.REKEY, inp.current_suite, reasons=["proactive_rekey"])
+                
+        # 8. Upgrade (Very Conservative)
+        # Only if disarmed, very stable, and no stress
+        if not inp.armed and not stress and not link_bad:
+             if self._check_hysteresis("upgrade_ok", True, now_mono, self.settings["hysteresis"]["upgrade_s"]):
+                 target = self._find_suite(inp.current_suite, 1, now_mono)
+                 if target:
+                     return PolicyOutput(PolicyAction.UPGRADE, target, reasons=["stable_upgrade"])
 
-# =============================================================================
-# LEGACY POLICIES (backward compatibility)
-# =============================================================================
-
-class SchedulingPolicy:
-    """Base class for all scheduling logic."""
-    def __init__(self, suites):
-        self.suites = list(suites)
-        self.current_index = -1
-
-    def next_suite(self):
-        """Returns the next suite name to run."""
-        raise NotImplementedError("Must implement next_suite")
-
-    def get_duration(self):
-        """Returns duration in seconds for the current run."""
-        return 10.0  # Default
-
-
-class LinearLoopPolicy(SchedulingPolicy):
-    """Cycles through suites 0 to N, then restarts."""
-    def next_suite(self):
-        self.current_index = (self.current_index + 1) % len(self.suites)
-        return self.suites[self.current_index]
-
-
-class RandomPolicy(SchedulingPolicy):
-    """Picks a random suite every time."""
-    def next_suite(self):
-        return random.choice(self.suites)
-
-
-class ManualOverridePolicy(SchedulingPolicy):
-    """Runs a specific index repeatedly."""
-    def __init__(self, suites, fixed_index=0):
-        super().__init__(suites)
-        self.fixed_index = fixed_index
-
-    def next_suite(self):
-        safe_index = self.fixed_index % len(self.suites)
-        return self.suites[safe_index]
-
+        return PolicyOutput(PolicyAction.HOLD, reasons=["nominal"])

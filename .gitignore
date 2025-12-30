@@ -29,3 +29,7 @@ logs/
 # Explicitly ignore large telemetry file
 logs/gcs_telemetry/gcs_telemetry_v1.jsonl
 
+# Ignore MAV logs
+*.tlog
+*.tlog.raw
+

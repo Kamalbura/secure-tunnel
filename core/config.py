@@ -22,8 +22,8 @@ _GCS_HOST_LAN = "192.168.0.102"    # GCS Windows LAN IP (from ipconfig)
 _GCS_HOST_TAILSCALE = "100.106.181.122"
 
 # Default to LAN hosts for operational runs (Tailscale kept for SSH only)
-_DEFAULT_DRONE_HOST = _DRONE_HOST_LAN
-_DEFAULT_GCS_HOST = _GCS_HOST_LAN
+_DEFAULT_DRONE_HOST = _DRONE_HOST_TAILSCALE
+_DEFAULT_GCS_HOST = _GCS_HOST_TAILSCALE
 
 # Environment-sourced default credential to avoid embedding lab passwords in source control.
 _LAB_PASSWORD_DEFAULT = os.getenv("PQC_LAB_PASSWORD", "uavpi")

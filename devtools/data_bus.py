@@ -13,6 +13,8 @@ This bus does NOT modify any production behavior.
 It only observes and records data for visualization.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import threading
@@ -22,7 +24,10 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from devtools.obs_schema import ObsSnapshot
 
 logger = logging.getLogger("devtools.data_bus")
 
@@ -461,3 +466,114 @@ class DataBus:
             self._policy_history.clear()
             self._events.clear()
             self._update_count = 0
+    
+    # =========================================================================
+    # OBSERVABILITY PLANE INTEGRATION
+    # =========================================================================
+    
+    def update_from_obs_snapshot(self, snapshot: "ObsSnapshot", node_key: str = "") -> None:
+        """
+        Update local state from a remote OBS snapshot.
+        
+        This is called by ObsReceiver when a snapshot arrives from a remote node.
+        The snapshot data is merged into local state with node identification.
+        
+        Args:
+            snapshot: Remote ObsSnapshot object
+            node_key: Node identifier (e.g., "drone:drone-01")
+        """
+        # Import here to avoid circular dependency
+        from .obs_schema import ObsSnapshot
+        
+        if not isinstance(snapshot, ObsSnapshot):
+            return
+        
+        # Build node-prefixed key for identification
+        if not node_key:
+            node_key = f"{snapshot.node}:{snapshot.node_id}"
+        
+        with self._lock:
+            now = time.monotonic()
+            
+            # Update battery from snapshot
+            if snapshot.battery:
+                b = snapshot.battery
+                stress = StressLevel.LOW
+                try:
+                    stress = StressLevel(b.stress_level)
+                except ValueError:
+                    pass
+                
+                self._battery = BatteryState(
+                    timestamp_mono=now,
+                    voltage_mv=b.voltage_mv,
+                    percentage=b.percentage,
+                    rate_mv_per_sec=b.rate_mv_per_sec,
+                    stress_level=stress,
+                    source=f"obs:{node_key}",
+                    simulation_mode=b.simulation_mode,
+                    is_simulated=b.is_simulated,
+                )
+                self._battery_history.append(self._battery)
+            
+            # Update telemetry from snapshot
+            if snapshot.telemetry:
+                t = snapshot.telemetry
+                self._telemetry = TelemetryState(
+                    timestamp_mono=now,
+                    rx_pps=t.rx_pps,
+                    gap_p95_ms=t.gap_p95_ms,
+                    blackout_count=t.blackout_count,
+                    jitter_ms=t.jitter_ms,
+                    telemetry_age_ms=t.telemetry_age_ms,
+                    sample_count=t.sample_count,
+                )
+                self._telemetry_history.append(self._telemetry)
+            
+            # Update policy from snapshot
+            if snapshot.policy:
+                p = snapshot.policy
+                
+                # Detect suite change for timeline event
+                old_suite = self._policy.current_suite
+                if old_suite and old_suite != p.current_suite:
+                    self._add_event(
+                        "suite_switch",
+                        f"{old_suite} → {p.current_suite} ({node_key})",
+                        {"from": old_suite, "to": p.current_suite, "node": node_key}
+                    )
+                
+                self._policy = PolicyState(
+                    timestamp_mono=now,
+                    current_suite=p.current_suite,
+                    current_action=p.current_action,
+                    target_suite=p.target_suite,
+                    reasons=p.reasons or [],
+                    confidence=p.confidence,
+                    cooldown_remaining_ms=p.cooldown_remaining_ms,
+                    local_epoch=p.local_epoch,
+                    armed=p.armed,
+                )
+                self._policy_history.append(self._policy)
+            
+            # Update proxy from snapshot
+            if snapshot.proxy:
+                x = snapshot.proxy
+                self._proxy = ProxyState(
+                    timestamp_mono=now,
+                    encrypted_pps=x.encrypted_pps,
+                    plaintext_pps=x.plaintext_pps,
+                    replay_drops=x.replay_drops,
+                    handshake_status=x.handshake_status,
+                    bytes_encrypted=x.bytes_encrypted,
+                    bytes_decrypted=x.bytes_decrypted,
+                )
+            
+            self._update_count += 1
+        
+        # Notify subscribers (outside lock)
+        self._notify("battery", self._battery)
+        self._notify("telemetry", self._telemetry)
+        self._notify("policy", self._policy)
+        self._notify("proxy", self._proxy)
+        self._notify("obs_snapshot", snapshot)

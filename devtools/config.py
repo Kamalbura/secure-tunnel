@@ -71,11 +71,64 @@ class GuiConfig:
 
 
 @dataclass
+class ObservabilityPlaneConfig:
+    """
+    Observability Plane configuration.
+    
+    SSH Port Forwarding Setup:
+      # On laptop, forward drone's OBS port:
+      ssh -L 59001:localhost:59001 user@drone-pi
+      
+      # On laptop, forward GCS's OBS port (if GCS is remote):
+      ssh -L 59002:localhost:59002 user@gcs-host
+    
+    Ports:
+      - drone_port: UDP port for drone snapshots (default 59001)
+      - gcs_port: UDP port for GCS snapshots (default 59002)
+      
+    Node Identity:
+      - node_id: Unique identifier for this node (defaults to hostname)
+    """
+    enabled: bool = False
+    
+    # Node identity
+    node_id: str = ""  # Empty = use hostname
+    
+    # UDP ports (localhost only for SSH forwarding)
+    drone_port: int = 59001
+    gcs_port: int = 59002
+    listen_host: str = "127.0.0.1"  # SECURITY: localhost only
+    
+    # Emitter settings
+    emit_interval_ms: float = 200.0  # 5 Hz default
+    emit_on_change: bool = True      # Also emit on state change
+    
+    # Receiver settings (for dashboard)
+    receive_drone: bool = True       # Listen for drone snapshots
+    receive_gcs: bool = True         # Listen for GCS snapshots
+    
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "ObservabilityPlaneConfig":
+        return cls(
+            enabled=d.get("enabled", False),
+            node_id=d.get("node_id", ""),
+            drone_port=d.get("drone_port", 59001),
+            gcs_port=d.get("gcs_port", 59002),
+            listen_host=d.get("listen_host", "127.0.0.1"),
+            emit_interval_ms=d.get("emit_interval_ms", 200.0),
+            emit_on_change=d.get("emit_on_change", True),
+            receive_drone=d.get("receive_drone", True),
+            receive_gcs=d.get("receive_gcs", True),
+        )
+
+
+@dataclass
 class DevToolsConfig:
     """Root dev tools configuration."""
     enabled: bool = False
     battery_simulation: BatterySimConfig = field(default_factory=BatterySimConfig)
     gui: GuiConfig = field(default_factory=GuiConfig)
+    observability_plane: ObservabilityPlaneConfig = field(default_factory=ObservabilityPlaneConfig)
     
     # Data bus settings
     bus_history_size: int = 1000  # Samples to retain
@@ -88,6 +141,7 @@ class DevToolsConfig:
             enabled=d.get("enabled", False),
             battery_simulation=BatterySimConfig.from_dict(d.get("battery_simulation", {})),
             gui=GuiConfig.from_dict(d.get("gui", {})),
+            observability_plane=ObservabilityPlaneConfig.from_dict(d.get("observability_plane", {})),
             bus_history_size=d.get("bus_history_size", 1000),
             bus_log_enabled=d.get("bus_log_enabled", False),
             bus_log_path=d.get("bus_log_path"),
@@ -168,6 +222,17 @@ def save_devtools_config(config: DevToolsConfig) -> bool:
                 "window_height": config.gui.window_height,
                 "timeline_points": config.gui.timeline_points,
                 "graph_update_hz": config.gui.graph_update_hz,
+            },
+            "observability_plane": {
+                "enabled": config.observability_plane.enabled,
+                "node_id": config.observability_plane.node_id,
+                "drone_port": config.observability_plane.drone_port,
+                "gcs_port": config.observability_plane.gcs_port,
+                "listen_host": config.observability_plane.listen_host,
+                "emit_interval_ms": config.observability_plane.emit_interval_ms,
+                "emit_on_change": config.observability_plane.emit_on_change,
+                "receive_drone": config.observability_plane.receive_drone,
+                "receive_gcs": config.observability_plane.receive_gcs,
             },
             "bus_history_size": config.bus_history_size,
             "bus_log_enabled": config.bus_log_enabled,

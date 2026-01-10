@@ -12,7 +12,21 @@ Architecture:
     ├── battery_sim.py        # Battery provider abstraction + simulation modes
     ├── battery_bridge.py     # Non-invasive injection bridge for LocalMonitor
     ├── dashboard.py          # Tkinter GUI dashboard
+    ├── obs_schema.py         # Observability Plane schema (OBS snapshot format)
+    ├── obs_emitter.py        # Fire-and-forget UDP emitter (drone/GCS side)
+    ├── obs_receiver.py       # UDP receiver + DataBus feeder (dashboard side)
+    ├── integration.py        # Scheduler integration layer
     └── launcher.py           # Entry point for dev mode
+
+Observability Plane (OBS_PLANE):
+    A FOURTH, temporary, DEV-ONLY plane that:
+    - Exists ONLY when explicitly enabled
+    - Runs alongside existing planes without interfering
+    - Works over SSH for laptop-based analysis
+    - Supports BOTH Drone (Raspberry Pi) and GCS (Laptop)
+    - Feeds a live Tkinter dashboard and offline analysis tools
+    
+    This plane is observational only — it MUST NOT influence decisions.
 
 Safety Guarantees:
     1. All features controlled via settings.json["dev_tools"]["enabled"]
@@ -20,6 +34,7 @@ Safety Guarantees:
     3. Production scheduler/policy logic is NEVER modified
     4. GUI cannot affect policy decisions
     5. Battery simulation only active when explicitly enabled
+    6. OBS plane is SNAPSHOT-ONLY (no commands, no RPCs, no state mutation)
 
 Usage:
     # In settings.json:
@@ -27,7 +42,8 @@ Usage:
         "dev_tools": {
             "enabled": true,
             "battery_simulation": {"enabled": true, "default_mode": "stable"},
-            "gui": {"enabled": true, "refresh_hz": 5}
+            "gui": {"enabled": true, "refresh_hz": 5},
+            "observability_plane": {"enabled": true, "drone_port": 59001, "gcs_port": 59002}
         }
     }
 """
@@ -42,8 +58,10 @@ if TYPE_CHECKING:
     from devtools.data_bus import DataBus
     from devtools.battery_sim import BatteryProvider
     from devtools.dashboard import DevDashboard
+    from devtools.obs_emitter import ObsEmitter
+    from devtools.obs_receiver import ObsReceiver, MultiReceiver
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = [
     "is_enabled",
     "get_config",
@@ -51,6 +69,9 @@ __all__ = [
     "get_battery_provider",
     "start_dashboard",
     "stop_all",
+    "create_obs_emitter",
+    "create_obs_receiver",
+    "create_multi_receiver",
 ]
 
 # Module-level singletons (lazy init)
@@ -58,6 +79,7 @@ _config: Optional["DevToolsConfig"] = None
 _data_bus: Optional["DataBus"] = None
 _battery_provider: Optional["BatteryProvider"] = None
 _dashboard: Optional["DevDashboard"] = None
+_obs_receiver: Optional["MultiReceiver"] = None
 _initialized: bool = False
 
 logger = logging.getLogger("devtools")
@@ -184,9 +206,16 @@ def stop_all() -> None:
     
     Safe to call even if dev tools are disabled.
     """
-    global _dashboard, _data_bus, _battery_provider, _initialized
+    global _dashboard, _data_bus, _battery_provider, _obs_receiver, _initialized
     
     logger.info("Stopping dev tools...")
+    
+    if _obs_receiver is not None:
+        try:
+            _obs_receiver.stop()
+        except Exception as e:
+            logger.warning(f"OBS receiver stop error: {e}")
+        _obs_receiver = None
     
     if _dashboard is not None:
         try:
@@ -239,6 +268,10 @@ def initialize() -> bool:
         if config.gui.enabled:
             start_dashboard()
         
+        # Start OBS receivers if enabled (for dashboard side)
+        if config.observability_plane.enabled:
+            _start_obs_receivers(config)
+        
         _initialized = True
         logger.info("Dev tools initialization complete")
         return True
@@ -246,3 +279,167 @@ def initialize() -> bool:
     except Exception as e:
         logger.error(f"Dev tools initialization failed: {e}")
         return False
+
+
+# =========================================================================
+# Observability Plane Functions
+# =========================================================================
+
+def create_obs_emitter(
+    node_type: str = "drone",
+    node_id: str = ""
+) -> "ObsEmitter":
+    """
+    Create an OBS emitter for sending snapshots.
+    
+    This is used by drone/GCS schedulers to emit state snapshots.
+    The emitter sends UDP datagrams to localhost, intended for SSH forwarding.
+    
+    Args:
+        node_type: "drone" or "gcs"
+        node_id: Unique node identifier (defaults to hostname)
+    
+    Returns:
+        ObsEmitter instance (already started)
+    
+    Raises:
+        RuntimeError: If dev tools are disabled or OBS plane not enabled
+    """
+    if not is_enabled():
+        raise RuntimeError("Dev tools are disabled")
+    
+    config = _load_config()
+    if not config.observability_plane.enabled:
+        raise RuntimeError("Observability plane is disabled in configuration")
+    
+    from devtools.obs_emitter import ObsEmitter
+    from devtools.obs_schema import NodeType
+    
+    if node_type.lower() == "gcs":
+        nt = NodeType.GCS
+        port = config.observability_plane.gcs_port
+    else:
+        nt = NodeType.DRONE
+        port = config.observability_plane.drone_port
+    
+    emitter = ObsEmitter(
+        node=nt,
+        node_id=node_id or config.observability_plane.node_id,
+        target_host="127.0.0.1",
+        target_port=port,
+        enabled=True,
+    )
+    emitter.start()
+    
+    logger.info(f"Created OBS emitter: {node_type} on port {port}")
+    return emitter
+
+
+def create_obs_receiver(
+    port: int,
+    listen_host: str = "127.0.0.1"
+) -> "ObsReceiver":
+    """
+    Create an OBS receiver for receiving snapshots.
+    
+    This is used by the dashboard to receive remote snapshots.
+    
+    Args:
+        port: UDP port to listen on
+        listen_host: IP to listen on (should be localhost)
+    
+    Returns:
+        ObsReceiver instance (not yet started)
+    
+    Raises:
+        RuntimeError: If dev tools are disabled
+    """
+    if not is_enabled():
+        raise RuntimeError("Dev tools are disabled")
+    
+    from devtools.obs_receiver import ObsReceiver
+    
+    receiver = ObsReceiver(
+        listen_host=listen_host,
+        listen_port=port,
+    )
+    
+    logger.info(f"Created OBS receiver on {listen_host}:{port}")
+    return receiver
+
+
+def create_multi_receiver() -> "MultiReceiver":
+    """
+    Create a multi-port OBS receiver for both drone and GCS.
+    
+    Uses ports from configuration.
+    
+    Returns:
+        MultiReceiver instance (not yet started)
+    
+    Raises:
+        RuntimeError: If dev tools or OBS plane are disabled
+    """
+    if not is_enabled():
+        raise RuntimeError("Dev tools are disabled")
+    
+    config = _load_config()
+    if not config.observability_plane.enabled:
+        raise RuntimeError("Observability plane is disabled")
+    
+    from devtools.obs_receiver import MultiReceiver
+    
+    ports = {}
+    if config.observability_plane.receive_drone:
+        ports["drone"] = config.observability_plane.drone_port
+    if config.observability_plane.receive_gcs:
+        ports["gcs"] = config.observability_plane.gcs_port
+    
+    receiver = MultiReceiver(
+        ports=ports,
+        listen_host=config.observability_plane.listen_host,
+    )
+    
+    logger.info(f"Created multi-receiver for ports: {ports}")
+    return receiver
+
+
+def _start_obs_receivers(config: "DevToolsConfig") -> None:
+    """
+    Start OBS receivers and connect them to the data bus.
+    
+    Internal function called during initialization.
+    """
+    global _obs_receiver
+    
+    if _obs_receiver is not None:
+        return
+    
+    from devtools.obs_receiver import MultiReceiver
+    
+    ports = {}
+    if config.observability_plane.receive_drone:
+        ports["drone"] = config.observability_plane.drone_port
+    if config.observability_plane.receive_gcs:
+        ports["gcs"] = config.observability_plane.gcs_port
+    
+    if not ports:
+        logger.info("No OBS receivers configured")
+        return
+    
+    _obs_receiver = MultiReceiver(
+        ports=ports,
+        listen_host=config.observability_plane.listen_host,
+    )
+    
+    # Connect to data bus
+    data_bus = get_data_bus()
+    _obs_receiver.add_callback(lambda snap: data_bus.update_from_obs_snapshot(snap))
+    
+    # Start receivers
+    results = _obs_receiver.start()
+    for name, success in results.items():
+        if success:
+            logger.info(f"OBS receiver '{name}' started on port {ports[name]}")
+        else:
+            logger.warning(f"OBS receiver '{name}' failed to start")

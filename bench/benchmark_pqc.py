@@ -44,6 +44,115 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # =============================================================================
+# OQS Compatibility Layer
+# =============================================================================
+# oqs-python has different import structures depending on version/installation:
+#   - Some installs: from oqs.oqs import KeyEncapsulation, Signature
+#   - Some installs: from oqs import KeyEncapsulation, Signature  
+#   - Some installs: import oqs; oqs.KeyEncapsulation
+
+_OQS_KEM_CLASS = None
+_OQS_SIG_CLASS = None
+_OQS_ENABLED_KEMS_FUNC = None
+_OQS_ENABLED_SIGS_FUNC = None
+
+def _init_oqs_compat():
+    """Initialize OQS compatibility layer."""
+    global _OQS_KEM_CLASS, _OQS_SIG_CLASS, _OQS_ENABLED_KEMS_FUNC, _OQS_ENABLED_SIGS_FUNC
+    
+    if _OQS_KEM_CLASS is not None:
+        return  # Already initialized
+    
+    # Try different import styles
+    import_errors = []
+    
+    # Style 1: from oqs.oqs import ... (some pip installs)
+    try:
+        from oqs.oqs import KeyEncapsulation, Signature
+        _OQS_KEM_CLASS = KeyEncapsulation
+        _OQS_SIG_CLASS = Signature
+        try:
+            from oqs.oqs import get_enabled_KEM_mechanisms
+            _OQS_ENABLED_KEMS_FUNC = get_enabled_KEM_mechanisms
+        except ImportError:
+            from oqs.oqs import get_enabled_kem_mechanisms
+            _OQS_ENABLED_KEMS_FUNC = get_enabled_kem_mechanisms
+        try:
+            from oqs.oqs import get_enabled_sig_mechanisms
+            _OQS_ENABLED_SIGS_FUNC = get_enabled_sig_mechanisms
+        except ImportError:
+            from oqs.oqs import get_enabled_SIG_mechanisms
+            _OQS_ENABLED_SIGS_FUNC = get_enabled_SIG_mechanisms
+        return
+    except ImportError as e:
+        import_errors.append(f"oqs.oqs: {e}")
+    
+    # Style 2: from oqs import ... (some venv/conda installs)
+    try:
+        from oqs import KeyEncapsulation, Signature
+        _OQS_KEM_CLASS = KeyEncapsulation
+        _OQS_SIG_CLASS = Signature
+        try:
+            from oqs import get_enabled_KEM_mechanisms
+            _OQS_ENABLED_KEMS_FUNC = get_enabled_KEM_mechanisms
+        except ImportError:
+            from oqs import get_enabled_kem_mechanisms
+            _OQS_ENABLED_KEMS_FUNC = get_enabled_kem_mechanisms
+        try:
+            from oqs import get_enabled_sig_mechanisms
+            _OQS_ENABLED_SIGS_FUNC = get_enabled_sig_mechanisms
+        except ImportError:
+            from oqs import get_enabled_SIG_mechanisms
+            _OQS_ENABLED_SIGS_FUNC = get_enabled_SIG_mechanisms
+        return
+    except ImportError as e:
+        import_errors.append(f"oqs: {e}")
+    
+    # Style 3: import oqs; oqs.X (attribute access)
+    try:
+        import oqs
+        _OQS_KEM_CLASS = oqs.KeyEncapsulation
+        _OQS_SIG_CLASS = oqs.Signature
+        if hasattr(oqs, 'get_enabled_KEM_mechanisms'):
+            _OQS_ENABLED_KEMS_FUNC = oqs.get_enabled_KEM_mechanisms
+        else:
+            _OQS_ENABLED_KEMS_FUNC = oqs.get_enabled_kem_mechanisms
+        if hasattr(oqs, 'get_enabled_sig_mechanisms'):
+            _OQS_ENABLED_SIGS_FUNC = oqs.get_enabled_sig_mechanisms
+        else:
+            _OQS_ENABLED_SIGS_FUNC = oqs.get_enabled_SIG_mechanisms
+        return
+    except (ImportError, AttributeError) as e:
+        import_errors.append(f"oqs module: {e}")
+    
+    raise ImportError(f"Could not import OQS library. Tried: {'; '.join(import_errors)}")
+
+
+def get_oqs_kem_class():
+    """Return KeyEncapsulation class."""
+    _init_oqs_compat()
+    return _OQS_KEM_CLASS
+
+
+def get_oqs_sig_class():
+    """Return Signature class."""
+    _init_oqs_compat()
+    return _OQS_SIG_CLASS
+
+
+def get_enabled_kems_func():
+    """Return function to get enabled KEM mechanisms."""
+    _init_oqs_compat()
+    return _OQS_ENABLED_KEMS_FUNC
+
+
+def get_enabled_sigs_func():
+    """Return function to get enabled signature mechanisms."""
+    _init_oqs_compat()
+    return _OQS_ENABLED_SIGS_FUNC
+
+
+# =============================================================================
 # Configuration Constants
 # =============================================================================
 
@@ -479,7 +588,7 @@ def benchmark_kem(
     env_info: EnvironmentInfo,
 ) -> List[BenchmarkResult]:
     """Benchmark a single KEM algorithm."""
-    from oqs.oqs import KeyEncapsulation
+    KeyEncapsulation = get_oqs_kem_class()
     
     oqs_name = kem_info["oqs_name"]
     results = []
@@ -693,7 +802,7 @@ def benchmark_signature(
     env_info: EnvironmentInfo,
 ) -> List[BenchmarkResult]:
     """Benchmark a single signature algorithm."""
-    from oqs.oqs import Signature
+    Signature = get_oqs_sig_class()
     
     oqs_name = sig_info["oqs_name"]
     results = []
@@ -1077,7 +1186,7 @@ def benchmark_suite_handshake(
     env_info: EnvironmentInfo,
 ) -> List[BenchmarkResult]:
     """Benchmark full handshake for a suite."""
-    from oqs.oqs import Signature
+    Signature = get_oqs_sig_class()
     from core.handshake import (
         build_server_hello,
         parse_and_verify_server_hello,

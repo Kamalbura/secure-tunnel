@@ -8,11 +8,23 @@ from typing import Dict, Optional
 from core.config import CONFIG
 from core.suites import get_suite
 from core.logging_utils import get_logger
+
+# OQS compatibility layer - try different import styles
+KeyEncapsulation = None
+Signature = None
 try:
     from oqs.oqs import KeyEncapsulation, Signature
-except Exception:
-    KeyEncapsulation = None  # type: ignore
-    Signature = None  # type: ignore
+except (ImportError, ModuleNotFoundError):
+    try:
+        from oqs import KeyEncapsulation, Signature
+    except (ImportError, ModuleNotFoundError):
+        try:
+            import oqs
+            KeyEncapsulation = oqs.KeyEncapsulation
+            Signature = oqs.Signature
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            pass
+
 from core.exceptions import HandshakeError, HandshakeFormatError, HandshakeVerifyError
 
 logger = get_logger("pqc")
@@ -419,7 +431,16 @@ def server_gcs_handshake(conn, suite, gcs_sig_secret, *, timeout: float = 10.0):
 
     Requires a ready oqs.Signature object (with generated key pair). Fails fast if not.
     """
-    from oqs.oqs import Signature
+    # OQS compatibility - get Signature class
+    _Signature = None
+    try:
+        from oqs.oqs import Signature as _Signature
+    except (ImportError, ModuleNotFoundError):
+        try:
+            from oqs import Signature as _Signature
+        except (ImportError, ModuleNotFoundError):
+            import oqs
+            _Signature = oqs.Signature
     import struct
 
     try:
@@ -427,7 +448,7 @@ def server_gcs_handshake(conn, suite, gcs_sig_secret, *, timeout: float = 10.0):
     except Exception:
         conn.settimeout(10.0)
 
-    if not isinstance(gcs_sig_secret, Signature):
+    if _Signature is not None and not isinstance(gcs_sig_secret, _Signature):
         raise ValueError("gcs_sig_secret must be an oqs.Signature object with a loaded keypair")
 
     suite_id = suite.get("suite_id") if isinstance(suite, dict) else None

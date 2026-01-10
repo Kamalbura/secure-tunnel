@@ -57,6 +57,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 
+# Virtual environment path (default for Raspberry Pi setup)
+VENV_PATH="${HOME}/cenv"
+
 echo "=============================================="
 echo "PQC BENCHMARK RUNNER"
 echo "=============================================="
@@ -66,9 +69,17 @@ echo "  Iterations:   ${ITERATIONS}"
 echo "  Output:       ${OUTPUT_DIR}"
 echo "  CPU Core:     ${CPU_CORE}"
 echo "  Project Dir:  ${PROJECT_DIR}"
+echo "  VEnv Path:    ${VENV_PATH}"
 echo ""
 
 cd "${PROJECT_DIR}"
+
+# Activate virtual environment if it exists
+if [[ -f "${VENV_PATH}/bin/activate" ]]; then
+    echo "Activating virtual environment: ${VENV_PATH}"
+    source "${VENV_PATH}/bin/activate"
+    echo ""
+fi
 
 # Environment preparation
 if [[ ${SKIP_PREP} -eq 0 ]]; then
@@ -91,7 +102,18 @@ echo ""
 
 # Check OQS
 echo "Checking oqs-python..."
-${PYTHON_CMD} -c "import oqs; print(f'oqs version: {oqs.oqs_version()}')" || {
+${PYTHON_CMD} -c "
+try:
+    from oqs import oqs_version
+    print(f'oqs version: {oqs_version()}')
+except ImportError:
+    try:
+        from oqs.oqs import oqs_version
+        print(f'oqs version: {oqs_version()}')
+    except ImportError:
+        import oqs
+        print(f'oqs version: {oqs.oqs_version()}')
+" || {
     echo "[ERROR] oqs-python not available"
     exit 1
 }

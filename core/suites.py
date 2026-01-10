@@ -677,25 +677,73 @@ def get_suite(suite_id: str) -> Dict:
 
 
 def _safe_get_enabled_kem_mechanisms() -> Iterable[str]:
+    # Try different import styles for oqs-python compatibility
+    # Style 1: from oqs.oqs import ...
     try:
-        from oqs.oqs import get_enabled_KEM_mechanisms as kem_loader  # type: ignore[attr-defined]
-    except ImportError:
-        from oqs.oqs import get_enabled_kem_mechanisms as kem_loader  # type: ignore[attr-defined]
-    except AttributeError:
-        from oqs.oqs import get_enabled_kem_mechanisms as kem_loader  # type: ignore[attr-defined]
-
-    return kem_loader()
+        try:
+            from oqs.oqs import get_enabled_KEM_mechanisms as kem_loader
+        except ImportError:
+            from oqs.oqs import get_enabled_kem_mechanisms as kem_loader
+        return kem_loader()
+    except (ImportError, ModuleNotFoundError):
+        pass
+    
+    # Style 2: from oqs import ...
+    try:
+        try:
+            from oqs import get_enabled_KEM_mechanisms as kem_loader
+        except ImportError:
+            from oqs import get_enabled_kem_mechanisms as kem_loader
+        return kem_loader()
+    except (ImportError, ModuleNotFoundError):
+        pass
+    
+    # Style 3: import oqs; oqs.X
+    try:
+        import oqs
+        if hasattr(oqs, 'get_enabled_KEM_mechanisms'):
+            return oqs.get_enabled_KEM_mechanisms()
+        else:
+            return oqs.get_enabled_kem_mechanisms()
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        pass
+    
+    return []
 
 
 def _safe_get_enabled_sig_mechanisms() -> Iterable[str]:
+    # Try different import styles for oqs-python compatibility
+    # Style 1: from oqs.oqs import ...
     try:
-        from oqs.oqs import get_enabled_sig_mechanisms as sig_loader  # type: ignore[attr-defined]
-    except ImportError:
-        from oqs.oqs import get_enabled_sig_mechanisms as sig_loader  # type: ignore[attr-defined]
-    except AttributeError:
-        from oqs.oqs import get_enabled_sig_mechanisms as sig_loader  # type: ignore[attr-defined]
-
-    return sig_loader()
+        try:
+            from oqs.oqs import get_enabled_sig_mechanisms as sig_loader
+        except ImportError:
+            from oqs.oqs import get_enabled_SIG_mechanisms as sig_loader
+        return sig_loader()
+    except (ImportError, ModuleNotFoundError):
+        pass
+    
+    # Style 2: from oqs import ...
+    try:
+        try:
+            from oqs import get_enabled_sig_mechanisms as sig_loader
+        except ImportError:
+            from oqs import get_enabled_SIG_mechanisms as sig_loader
+        return sig_loader()
+    except (ImportError, ModuleNotFoundError):
+        pass
+    
+    # Style 3: import oqs; oqs.X
+    try:
+        import oqs
+        if hasattr(oqs, 'get_enabled_sig_mechanisms'):
+            return oqs.get_enabled_sig_mechanisms()
+        else:
+            return oqs.get_enabled_SIG_mechanisms()
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        pass
+    
+    return []
 
 
 def enabled_kems() -> Tuple[str, ...]:

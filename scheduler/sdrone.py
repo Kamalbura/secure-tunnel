@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """Simplified Drone Scheduler - Runs drone proxy with UDP echo for all suites.
 
 This scheduler:
@@ -16,9 +17,6 @@ No benchmarking, no power monitoring - just robust PQC tunnel operation.
 # --------------------
 LOCAL_CONTROL_HOST = None  # e.g. "127.0.0.1" or None to use config/env
 LOCAL_CONTROL_PORT = None  # e.g. 48080 or None to use config
-
-
-from __future__ import annotations
 
 import sys
 from pathlib import Path

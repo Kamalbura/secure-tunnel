@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """Simplified GCS Scheduler - Runs all PQC suites with high-throughput traffic.
 
 This scheduler:
@@ -20,9 +21,6 @@ LOCAL_DURATION_S = 10.0
 LOCAL_PAYLOAD_BYTES = 1200
 LOCAL_SUITES = None  # e.g. ['cs-mlkem768-aesgcm-mldsa65'] or None to run all
 LOCAL_MAX_SUITES = None  # e.g. 2 to limit number of suites
-
-
-from __future__ import annotations
 
 import sys
 from pathlib import Path

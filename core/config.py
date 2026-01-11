@@ -326,6 +326,64 @@ CONFIG = {
     # Allow plaintext host bindings to be non-loopback by default so LAN runners work
     # without env overrides. Set to False to force loopback-only bindings.
     "ALLOW_NON_LOOPBACK_PLAINTEXT": True,
+
+    # ==========================================================================
+    # BENCHMARK PIPELINE CONFIGURATION
+    # ==========================================================================
+    # Unified settings for bench/benchmark_power_perf.py and analysis tools.
+    # These settings configure INA219 power monitoring, perf integration, and
+    # the benchmark execution parameters.
+    "BENCHMARK": {
+        # Default iterations per operation (override with -n/--iterations)
+        "default_iterations": 200,
+        # Quick test iterations for development/validation runs
+        "quick_iterations": 5,
+        
+        # INA219 Power Monitoring
+        "power": {
+            "enabled": True,
+            "sample_hz": 1000,           # 1kHz sampling rate (verified)
+            "warmup_ms": 50,             # Warmup period before operation
+            "cooldown_ms": 50,           # Cooldown period after operation
+            "i2c_bus": 1,                # I2C bus number
+            "i2c_address": 0x40,         # INA219 address
+            "shunt_ohm": 0.1,            # Shunt resistor value
+        },
+        
+        # Linux perf counters
+        "perf": {
+            "enabled": True,
+            "counters": [
+                "cycles",
+                "instructions",
+                "cache-misses",
+                "branch-misses",
+            ],
+        },
+        
+        # Output configuration
+        "output": {
+            "base_dir": "bench_results_power",   # Default output directory
+            "analysis_dir": "power_analysis",    # Analysis output directory
+            "save_raw_samples": False,           # Save individual power samples (large)
+            "json_indent": 2,                    # JSON formatting
+        },
+        
+        # Analysis and reporting
+        "analysis": {
+            "plot_dpi": 300,
+            "plot_format": "png",
+            "report_format": "markdown",         # markdown, pdf, or both
+        },
+        
+        # Algorithms to include (None = all available)
+        "include_kems": None,
+        "include_sigs": None,
+        "include_aeads": None,
+        
+        # AEAD payload sizes for throughput analysis
+        "aead_payload_sizes": [64, 256, 1024, 4096],
+    },
 }
 
 

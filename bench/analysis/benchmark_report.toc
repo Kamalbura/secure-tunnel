@@ -1,0 +1,31 @@
+\contentsline {section}{\numberline {1}Experimental Setup}{2}{section.1}%
+\contentsline {subsection}{\numberline {1.1}Hardware Platform}{2}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}Software Environment}{2}{subsection.1.2}%
+\contentsline {subsection}{\numberline {1.3}Repository State}{2}{subsection.1.3}%
+\contentsline {section}{\numberline {2}Benchmark Methodology}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Measurement Approach}{2}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Iteration Configuration}{3}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Operations Measured}{3}{subsection.2.3}%
+\contentsline {section}{\numberline {3}Data Summary}{3}{section.3}%
+\contentsline {subsection}{\numberline {3.1}File Inventory}{3}{subsection.3.1}%
+\contentsline {section}{\numberline {4}KEM Benchmark Results}{4}{section.4}%
+\contentsline {subsection}{\numberline {4.1}ML-KEM (NIST FIPS 203)}{4}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Classic McEliece}{4}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}HQC}{5}{subsection.4.3}%
+\contentsline {section}{\numberline {5}Signature Benchmark Results}{5}{section.5}%
+\contentsline {subsection}{\numberline {5.1}ML-DSA (NIST FIPS 204)}{5}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Falcon}{6}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}SPHINCS+}{6}{subsection.5.3}%
+\contentsline {section}{\numberline {6}AEAD Benchmark Results}{6}{section.6}%
+\contentsline {section}{\numberline {7}Full Handshake Results}{7}{section.7}%
+\contentsline {subsection}{\numberline {7.1}NIST Level 1 Suites}{7}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}NIST Level 5 Suites}{7}{subsection.7.2}%
+\contentsline {section}{\numberline {8}Size Metrics}{8}{section.8}%
+\contentsline {subsection}{\numberline {8.1}KEM Key and Ciphertext Sizes}{8}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Signature Key and Signature Sizes}{8}{subsection.8.2}%
+\contentsline {section}{\numberline {9}Figures}{9}{section.9}%
+\contentsline {subsection}{\numberline {9.1}KEM Timing Distributions}{9}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}Signature Timing Distributions}{12}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}Comparison Charts}{15}{subsection.9.3}%
+\contentsline {section}{\numberline {10}NIST Level Comparison}{17}{section.10}%
+\contentsline {section}{\numberline {11}Data Sources}{18}{section.11}%

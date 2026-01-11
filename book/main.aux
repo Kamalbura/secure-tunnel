@@ -1,0 +1,151 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {part}{I\hspace  {1em}System Overview}{1}{part.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {1}Scope and Objectives}{2}{chapter.1}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {1.1}Purpose and Non-goals}{2}{section.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {1.2}Architecture at a Glance}{2}{section.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {1.3}Threat Model and Assumptions}{2}{section.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {2}Configuration Surface}{3}{chapter.2}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\newlabel{chap:config}{{2}{3}{Configuration Surface}{chapter.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2.1}Global Defaults (core/config.py, CONFIG)}{3}{section.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.2}Validation Logic (validate\_config)}{3}{section.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.3}Environment Overrides (_apply\_env\_overrides)}{3}{section.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.4}Operational Profiles}{3}{section.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.5}Port Map}{3}{section.2.5}\protected@file@percent }
+\gdef \LT@i {\LT@entry 
+    {3}{164.21124pt}\LT@entry 
+    {3}{179.80899pt}\LT@entry 
+    {1}{239.62204pt}}
+\@writefile{toc}{\contentsline {part}{II\hspace  {1em}Cryptographic Pipeline}{5}{part.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {3}Suite Registry and Selection}{6}{chapter.3}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {3.1}Registry Structure (core/suites.py)}{6}{section.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.2}Suite Composition (build\_suite\_id, \_compose\_suite)}{6}{section.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.3}Runtime Filtering (available\_aead\_tokens, enabled\_sigs)}{6}{section.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.4}Header ID Mapping (header\_ids\_for\_suite)}{6}{section.3.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.5}Tables}{7}{section.3.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {4}Handshake Protocol}{8}{chapter.4}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\newlabel{chap:handshake}{{4}{8}{Handshake Protocol}{chapter.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4.1}Key Roles}{8}{section.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.2}ServerHello Construction (build\_server\_hello)}{8}{section.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.3}ServerHello Verification (parse\_and\_verify\_server\_hello)}{8}{section.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.4}PSK Auth Tag (\_drone\_psk\_bytes)}{8}{section.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.5}Client Encapsulation (client\_encapsulate)}{8}{section.4.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.6}Server Decapsulation (server\_decapsulate)}{9}{section.4.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.7}Key Derivation (derive\_transport\_keys)}{9}{section.4.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.8}Full Flows (server\_gcs\_handshake, client\_drone\_handshake)}{9}{section.4.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.9}Message Formats}{9}{section.4.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {5}AEAD Framing and Replay Protection}{10}{chapter.5}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {5.1}Header Format and Epochs}{10}{section.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.2}Nonce Construction (\_build\_nonce)}{10}{section.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.3}Token Support (\_canonicalize\_aead\_token, \_instantiate\_aead)}{10}{section.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.4}Sender State Machine (Sender.encrypt, bump\_epoch)}{10}{section.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.5}Receiver State Machine (Receiver.decrypt, \_check\_replay)}{10}{section.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.6}Error Semantics}{11}{section.5.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.7}Tables}{11}{section.5.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {6}Control Plane State Machine}{12}{chapter.6}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {6.1}Data Structures (ControlState, ControlResult)}{12}{section.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6.2}Coordinator Role (set\_coordinator\_role, is\_coordinator)}{12}{section.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6.3}Prepare/Commit Flow (request\_prepare, handle\_control)}{12}{section.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6.4}Outbox Handling (enqueue\_json)}{12}{section.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6.5}Metrics and Stats}{12}{section.6.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {7}TCP Control Server (Optional)}{13}{chapter.7}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {7.1}Server Lifecycle (ControlTcpServer.start/stop)}{13}{section.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7.2}Authorization (_is\_allowed\_peer, _is\_allowed\_rekey\_peer)}{13}{section.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7.3}Command Set (ping, status, rekey)}{13}{section.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7.4}Factory Helpers (start\_control\_server\_if\_enabled)}{13}{section.7.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {8}Proxy Runtime (Selector-Based)}{14}{chapter.8}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {8.1}Process Layout}{14}{section.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.2}Handshake Invocation (_perform\_handshake)}{14}{section.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.3}Socket Wiring (_setup\_sockets)}{14}{section.8.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.4}AEAD Context Construction (_build\_sender\_receiver)}{14}{section.8.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.5}Packet Flow (main loop)}{14}{section.8.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.6}Counters (ProxyCounters)}{15}{section.8.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.7}Manual Control (_launch\_manual\_console)}{15}{section.8.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.8}TCP Control Integration}{15}{section.8.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.9}Error Handling}{15}{section.8.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {9}Process Lifecycle and Logging}{16}{chapter.9}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {9.1}ManagedProcess}{16}{section.9.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9.2}Registry Cleanup (kill\_all\_managed\_processes)}{16}{section.9.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9.3}Logging Utilities}{16}{section.9.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9.4}Exception Taxonomy}{16}{section.9.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9.5}CLI Entry (core/run\_proxy.py)}{16}{section.9.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {part}{III\hspace  {1em}Schedulers, Telemetry, and Policy}{17}{part.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {10}Drone Scheduler (Controller)}{18}{chapter.10}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {10.1}Telemetry Intake (TelemetryListener)}{18}{section.10.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.2}Decision Context (DecisionContext)}{18}{section.10.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.3}Policy Evaluation (TelemetryAwarePolicyV2)}{18}{section.10.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.4}Action Execution (execute\_action)}{18}{section.10.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.5}Echo Path (UdpEchoServer)}{18}{section.10.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.6}Proxy Management (DroneProxyManager)}{18}{section.10.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.7}Main Loop (run\_scheduler)}{19}{section.10.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.8}Tables}{19}{section.10.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {11}GCS Scheduler (Follower)}{20}{chapter.11}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {11.1}Control Server (ControlServer)}{20}{section.11.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11.2}Proxy Management (GcsProxyManager)}{20}{section.11.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11.3}Telemetry Sender}{20}{section.11.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11.4}MAVProxy Lifecycle (start\_persistent\_mavproxy)}{20}{section.11.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11.5}Cleanup and Main}{20}{section.11.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {12}Policy Engine (Telemetry-Aware)}{21}{chapter.12}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {12.1}Settings (load\_settings)}{21}{section.12.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.2}Decision Input/Output (DecisionInput, PolicyOutput)}{21}{section.12.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.3}Scoring Logic (TelemetryAwarePolicyV2.evaluate)}{21}{section.12.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.4}Suite Tiering (get\_suite\_tier)}{21}{section.12.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.5}Rekey Accounting (record\_rekey)}{21}{section.12.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {13}Telemetry Collection and Windows}{22}{chapter.13}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {13.1}GCS Metrics Collector (GcsMetricsCollector)}{22}{section.13.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13.2}Local Monitor (LocalMonitor)}{22}{section.13.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13.3}Sliding Window (TelemetryWindow)}{22}{section.13.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13.4}Tables}{22}{section.13.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {part}{IV\hspace  {1em}Power and Monitoring}{23}{part.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {14}Power Monitoring Backends}{24}{chapter.14}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {14.1}Interfaces (PowerMonitor, PowerSummary, PowerSample)}{24}{section.14.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14.2}INA219 Backend (Ina219PowerMonitor)}{24}{section.14.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14.3}Raspberry Pi 5 hwmon (Rpi5PowerMonitor)}{24}{section.14.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14.4}Pi PMIC (Rpi5PmicPowerMonitor)}{24}{section.14.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14.5}Factory (create\_power\_monitor)}{24}{section.14.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14.6}Tables}{24}{section.14.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {part}{V\hspace  {1em}Appendices}{25}{part.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {15}Command-Line Interfaces}{26}{chapter.15}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {15.1}core/run\_proxy.py}{26}{section.15.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.1.1}init-identity}{26}{subsection.15.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.1.2}gcs}{26}{subsection.15.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.1.3}drone}{26}{subsection.15.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15.2}Scheduler Entrypoints}{26}{section.15.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {16}Open Questions and Design Gaps}{27}{chapter.16}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {16.1}Design Intent Unclear}{27}{section.16.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {16.2}Future Work}{27}{section.16.2}\protected@file@percent }
+\gdef \@abspage@last{29}

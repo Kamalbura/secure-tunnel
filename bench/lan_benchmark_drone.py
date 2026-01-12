@@ -838,6 +838,8 @@ class DroneBenchmarkController:
 # =============================================================================
 
 def main():
+    global GCS_LAN_IP
+    
     parser = argparse.ArgumentParser(description="Drone LAN Benchmark Controller")
     parser.add_argument("--run-id", default=None, help="Run ID (default: timestamp)")
     parser.add_argument("--max-suites", type=int, default=None,
@@ -848,7 +850,6 @@ def main():
     args = parser.parse_args()
     
     # Override GCS host if specified
-    global GCS_LAN_IP
     if args.gcs_host:
         GCS_LAN_IP = args.gcs_host
     

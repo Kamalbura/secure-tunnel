@@ -39,7 +39,7 @@ GCS_LAN_IP = "192.168.0.101"
 DRONE_LAN_IP = "192.168.0.105"
 
 # Paths
-DRONE_PROJECT_PATH = "~/pqc-uav-research"
+DRONE_PROJECT_PATH = "~/secure-tunnel"
 DRONE_VENV = "cenv"
 
 # =============================================================================

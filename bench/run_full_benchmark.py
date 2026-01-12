@@ -249,12 +249,16 @@ class UdpEchoServer:
 # GCS Control Client (Drone -> GCS commands)
 # =============================================================================
 
+# Global override for GCS host (set via command line)
+_GCS_HOST_OVERRIDE = None
+
 def send_gcs_command(cmd: str, **params) -> dict:
     """Send command to GCS benchmark server."""
+    target_host = _GCS_HOST_OVERRIDE or GCS_HOST
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(30.0)
-        sock.connect((GCS_HOST, GCS_CONTROL_PORT))
+        sock.connect((target_host, GCS_CONTROL_PORT))
         
         request = {"cmd": cmd, **params}
         sock.sendall(json.dumps(request).encode() + b"\n")
@@ -820,6 +824,8 @@ class DroneBenchmarkController:
 # =============================================================================
 
 def main():
+    global _GCS_HOST_OVERRIDE
+    
     parser = argparse.ArgumentParser(description="Full PQC Benchmark Runner")
     parser.add_argument("--role", choices=["gcs", "drone"], required=True,
                         help="Role: gcs (server) or drone (controller)")
@@ -829,7 +835,13 @@ def main():
                         help="Maximum number of suites to benchmark")
     parser.add_argument("--suite", default=None,
                         help="Single suite to benchmark (for testing)")
+    parser.add_argument("--gcs-host", default=None,
+                        help="Override GCS host IP (e.g., for Tailscale)")
     args = parser.parse_args()
+    
+    # Set GCS host override
+    if args.gcs_host:
+        _GCS_HOST_OVERRIDE = args.gcs_host
     
     # Generate run ID
     run_id = args.run_id or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")

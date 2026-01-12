@@ -1,0 +1,105 @@
+\contentsline {section}{\numberline {1}Executive Summary}{6}{section.1}%
+\contentsline {subsection}{\numberline {1.1}Benchmark Overview}{6}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}Key Findings}{6}{subsection.1.2}%
+\contentsline {subsection}{\numberline {1.3}Recommendations}{6}{subsection.1.3}%
+\contentsline {section}{\numberline {2}AEAD Algorithm Analysis}{6}{section.2}%
+\contentsline {subsection}{\numberline {2.1}AES-256-GCM Analysis}{8}{subsection.2.1}%
+\contentsline {subsubsection}{\numberline {2.1.1}Statistical Summary}{8}{subsubsection.2.1.1}%
+\contentsline {subsubsection}{\numberline {2.1.2}Suites Ranked by Performance}{8}{subsubsection.2.1.2}%
+\contentsline {subsection}{\numberline {2.2}ChaCha20-Poly1305 Analysis}{8}{subsection.2.2}%
+\contentsline {subsubsection}{\numberline {2.2.1}Statistical Summary}{8}{subsubsection.2.2.1}%
+\contentsline {subsubsection}{\numberline {2.2.2}Suites Ranked by Performance}{8}{subsubsection.2.2.2}%
+\contentsline {subsection}{\numberline {2.3}ASCON-128a Analysis}{8}{subsection.2.3}%
+\contentsline {subsubsection}{\numberline {2.3.1}Statistical Summary}{9}{subsubsection.2.3.1}%
+\contentsline {subsubsection}{\numberline {2.3.2}Suites Ranked by Performance}{9}{subsubsection.2.3.2}%
+\contentsline {section}{\numberline {3}NIST Security Level Analysis}{9}{section.3}%
+\contentsline {subsection}{\numberline {3.1}NIST L1 Security Level Analysis}{10}{subsection.3.1}%
+\contentsline {subsubsection}{\numberline {3.1.1}Performance Distribution}{10}{subsubsection.3.1.1}%
+\contentsline {subsubsection}{\numberline {3.1.2}Algorithm Coverage}{10}{subsubsection.3.1.2}%
+\contentsline {subsection}{\numberline {3.2}NIST L3 Security Level Analysis}{10}{subsection.3.2}%
+\contentsline {subsubsection}{\numberline {3.2.1}Performance Distribution}{10}{subsubsection.3.2.1}%
+\contentsline {subsubsection}{\numberline {3.2.2}Algorithm Coverage}{11}{subsubsection.3.2.2}%
+\contentsline {subsection}{\numberline {3.3}NIST L5 Security Level Analysis}{11}{subsection.3.3}%
+\contentsline {subsubsection}{\numberline {3.3.1}Performance Distribution}{11}{subsubsection.3.3.1}%
+\contentsline {subsubsection}{\numberline {3.3.2}Algorithm Coverage}{11}{subsubsection.3.3.2}%
+\contentsline {section}{\numberline {4}Algorithm Deep Dive}{12}{section.4}%
+\contentsline {subsection}{\numberline {4.1}KEM Performance Analysis}{12}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Signature Performance Analysis}{13}{subsection.4.2}%
+\contentsline {section}{\numberline {5}Cross-Algorithm Comparison}{14}{section.5}%
+\contentsline {section}{\numberline {6}Individual Suite Profiles}{15}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Suite 1: ML-KEM-512 + Falcon-512}{16}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Suite 2: ML-KEM-512 + ML-DSA-44}{17}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}Suite 3: ML-KEM-512 + ML-DSA-44}{18}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}Suite 4: ML-KEM-1024 + ML-DSA-87}{19}{subsection.6.4}%
+\contentsline {subsection}{\numberline {6.5}Suite 5: ML-KEM-512 + Falcon-512}{20}{subsection.6.5}%
+\contentsline {subsection}{\numberline {6.6}Suite 6: ML-KEM-1024 + ML-DSA-87}{21}{subsection.6.6}%
+\contentsline {subsection}{\numberline {6.7}Suite 7: ML-KEM-768 + ML-DSA-65}{22}{subsection.6.7}%
+\contentsline {subsection}{\numberline {6.8}Suite 8: ML-KEM-1024 + Falcon-1024}{23}{subsection.6.8}%
+\contentsline {subsection}{\numberline {6.9}Suite 9: ML-KEM-768 + ML-DSA-65}{24}{subsection.6.9}%
+\contentsline {subsection}{\numberline {6.10}Suite 10: ML-KEM-512 + Falcon-512}{25}{subsection.6.10}%
+\contentsline {subsection}{\numberline {6.11}Suite 11: ML-KEM-1024 + ML-DSA-87}{26}{subsection.6.11}%
+\contentsline {subsection}{\numberline {6.12}Suite 12: ML-KEM-512 + ML-DSA-44}{27}{subsection.6.12}%
+\contentsline {subsection}{\numberline {6.13}Suite 13: ML-KEM-768 + ML-DSA-65}{28}{subsection.6.13}%
+\contentsline {subsection}{\numberline {6.14}Suite 14: ML-KEM-1024 + Falcon-1024}{29}{subsection.6.14}%
+\contentsline {subsection}{\numberline {6.15}Suite 15: ML-KEM-1024 + Falcon-1024}{30}{subsection.6.15}%
+\contentsline {subsection}{\numberline {6.16}Suite 16: HQC-128 + ML-DSA-44}{31}{subsection.6.16}%
+\contentsline {subsection}{\numberline {6.17}Suite 17: HQC-128 + Falcon-512}{32}{subsection.6.17}%
+\contentsline {subsection}{\numberline {6.18}Suite 18: HQC-128 + ML-DSA-44}{33}{subsection.6.18}%
+\contentsline {subsection}{\numberline {6.19}Suite 19: HQC-128 + ML-DSA-44}{34}{subsection.6.19}%
+\contentsline {subsection}{\numberline {6.20}Suite 20: HQC-128 + Falcon-512}{35}{subsection.6.20}%
+\contentsline {subsection}{\numberline {6.21}Suite 21: HQC-128 + Falcon-512}{36}{subsection.6.21}%
+\contentsline {subsection}{\numberline {6.22}Suite 22: CMcE-348864 + ML-DSA-44}{37}{subsection.6.22}%
+\contentsline {subsection}{\numberline {6.23}Suite 23: CMcE-348864 + Falcon-512}{38}{subsection.6.23}%
+\contentsline {subsection}{\numberline {6.24}Suite 24: HQC-192 + ML-DSA-65}{39}{subsection.6.24}%
+\contentsline {subsection}{\numberline {6.25}Suite 25: HQC-192 + ML-DSA-65}{40}{subsection.6.25}%
+\contentsline {subsection}{\numberline {6.26}Suite 26: CMcE-348864 + Falcon-512}{41}{subsection.6.26}%
+\contentsline {subsection}{\numberline {6.27}Suite 27: HQC-192 + ML-DSA-65}{42}{subsection.6.27}%
+\contentsline {subsection}{\numberline {6.28}Suite 28: CMcE-348864 + Falcon-512}{43}{subsection.6.28}%
+\contentsline {subsection}{\numberline {6.29}Suite 29: CMcE-460896 + ML-DSA-65}{44}{subsection.6.29}%
+\contentsline {subsection}{\numberline {6.30}Suite 30: CMcE-348864 + ML-DSA-44}{45}{subsection.6.30}%
+\contentsline {subsection}{\numberline {6.31}Suite 31: HQC-256 + Falcon-1024}{46}{subsection.6.31}%
+\contentsline {subsection}{\numberline {6.32}Suite 32: HQC-256 + ML-DSA-87}{47}{subsection.6.32}%
+\contentsline {subsection}{\numberline {6.33}Suite 33: HQC-256 + Falcon-1024}{48}{subsection.6.33}%
+\contentsline {subsection}{\numberline {6.34}Suite 34: HQC-256 + ML-DSA-87}{49}{subsection.6.34}%
+\contentsline {subsection}{\numberline {6.35}Suite 35: HQC-256 + ML-DSA-87}{50}{subsection.6.35}%
+\contentsline {subsection}{\numberline {6.36}Suite 36: CMcE-460896 + ML-DSA-65}{51}{subsection.6.36}%
+\contentsline {subsection}{\numberline {6.37}Suite 37: HQC-256 + Falcon-1024}{52}{subsection.6.37}%
+\contentsline {subsection}{\numberline {6.38}Suite 38: CMcE-348864 + ML-DSA-44}{53}{subsection.6.38}%
+\contentsline {subsection}{\numberline {6.39}Suite 39: CMcE-8192128 + Falcon-1024}{54}{subsection.6.39}%
+\contentsline {subsection}{\numberline {6.40}Suite 40: ML-KEM-512 + SPX-128s}{55}{subsection.6.40}%
+\contentsline {subsection}{\numberline {6.41}Suite 41: ML-KEM-512 + SPX-128s}{56}{subsection.6.41}%
+\contentsline {subsection}{\numberline {6.42}Suite 42: HQC-128 + SPX-128s}{57}{subsection.6.42}%
+\contentsline {subsection}{\numberline {6.43}Suite 43: HQC-128 + SPX-128s}{58}{subsection.6.43}%
+\contentsline {subsection}{\numberline {6.44}Suite 44: ML-KEM-512 + SPX-128s}{59}{subsection.6.44}%
+\contentsline {subsection}{\numberline {6.45}Suite 45: CMcE-348864 + SPX-128s}{60}{subsection.6.45}%
+\contentsline {subsection}{\numberline {6.46}Suite 46: CMcE-348864 + SPX-128s}{61}{subsection.6.46}%
+\contentsline {subsection}{\numberline {6.47}Suite 47: HQC-128 + SPX-128s}{62}{subsection.6.47}%
+\contentsline {subsection}{\numberline {6.48}Suite 48: CMcE-8192128 + Falcon-1024}{63}{subsection.6.48}%
+\contentsline {subsection}{\numberline {6.49}Suite 49: CMcE-460896 + ML-DSA-65}{64}{subsection.6.49}%
+\contentsline {subsection}{\numberline {6.50}Suite 50: CMcE-348864 + SPX-128s}{65}{subsection.6.50}%
+\contentsline {subsection}{\numberline {6.51}Suite 51: ML-KEM-1024 + SPX-256s}{66}{subsection.6.51}%
+\contentsline {subsection}{\numberline {6.52}Suite 52: CMcE-8192128 + Falcon-1024}{67}{subsection.6.52}%
+\contentsline {subsection}{\numberline {6.53}Suite 53: ML-KEM-1024 + SPX-256s}{68}{subsection.6.53}%
+\contentsline {subsection}{\numberline {6.54}Suite 54: ML-KEM-1024 + SPX-256s}{69}{subsection.6.54}%
+\contentsline {subsection}{\numberline {6.55}Suite 55: CMcE-8192128 + ML-DSA-87}{70}{subsection.6.55}%
+\contentsline {subsection}{\numberline {6.56}Suite 56: ML-KEM-768 + SPX-192s}{71}{subsection.6.56}%
+\contentsline {subsection}{\numberline {6.57}Suite 57: CMcE-8192128 + ML-DSA-87}{72}{subsection.6.57}%
+\contentsline {subsection}{\numberline {6.58}Suite 58: ML-KEM-768 + SPX-192s}{73}{subsection.6.58}%
+\contentsline {subsection}{\numberline {6.59}Suite 59: HQC-256 + SPX-256s}{74}{subsection.6.59}%
+\contentsline {subsection}{\numberline {6.60}Suite 60: HQC-192 + SPX-192s}{75}{subsection.6.60}%
+\contentsline {subsection}{\numberline {6.61}Suite 61: HQC-192 + SPX-192s}{76}{subsection.6.61}%
+\contentsline {subsection}{\numberline {6.62}Suite 62: HQC-256 + SPX-256s}{77}{subsection.6.62}%
+\contentsline {subsection}{\numberline {6.63}Suite 63: ML-KEM-768 + SPX-192s}{78}{subsection.6.63}%
+\contentsline {subsection}{\numberline {6.64}Suite 64: CMcE-8192128 + ML-DSA-87}{79}{subsection.6.64}%
+\contentsline {subsection}{\numberline {6.65}Suite 65: HQC-256 + SPX-256s}{80}{subsection.6.65}%
+\contentsline {subsection}{\numberline {6.66}Suite 66: HQC-192 + SPX-192s}{81}{subsection.6.66}%
+\contentsline {subsection}{\numberline {6.67}Suite 67: CMcE-8192128 + SPX-256s}{82}{subsection.6.67}%
+\contentsline {subsection}{\numberline {6.68}Suite 68: CMcE-8192128 + SPX-256s}{83}{subsection.6.68}%
+\contentsline {subsection}{\numberline {6.69}Suite 69: CMcE-460896 + SPX-192s}{84}{subsection.6.69}%
+\contentsline {subsection}{\numberline {6.70}Suite 70: CMcE-460896 + SPX-192s}{85}{subsection.6.70}%
+\contentsline {subsection}{\numberline {6.71}Suite 71: CMcE-8192128 + SPX-256s}{86}{subsection.6.71}%
+\contentsline {section}{\numberline {A}Complete Results Table}{86}{appendix.A}%
+\contentsline {section}{\numberline {B}Methodology}{88}{appendix.B}%
+\contentsline {subsection}{\numberline {B.1}Test Environment}{88}{subsection.B.1}%
+\contentsline {subsection}{\numberline {B.2}Measurement Protocol}{88}{subsection.B.2}%
+\contentsline {subsection}{\numberline {B.3}Metrics Captured}{88}{subsection.B.3}%

@@ -504,8 +504,22 @@ def main() -> int:
     if LOCAL_PAYLOAD_BYTES is not None:
         args.payload = int(LOCAL_PAYLOAD_BYTES)
 
-    # If LOCAL_SUITES provided, use it. Otherwise, optionally cap with LOCAL_MAX_SUITES
-    if LOCAL_SUITES:
+    # Determine suites to run: CLI args take priority
+    if args.suite:
+        # Single suite from --suite
+        if args.suite in available_suites:
+            suites_to_run = [args.suite]
+        else:
+            log(f"ERROR: Suite {args.suite} not available (no keys)")
+            return 1
+    elif args.suites:
+        # Multiple suites from --suites (comma-separated)
+        requested = [s.strip() for s in args.suites.split(",")]
+        suites_to_run = [s for s in requested if s in available_suites]
+        if not suites_to_run:
+            log(f"ERROR: None of the requested suites are available")
+            return 1
+    elif LOCAL_SUITES:
         suites_to_run = [s for s in LOCAL_SUITES if s in available_suites]
         if not suites_to_run:
             log("ERROR: None of the LOCAL_SUITES are available")

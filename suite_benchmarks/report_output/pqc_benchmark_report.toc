@@ -1,0 +1,20 @@
+\contentsline {section}{\numberline {1}Introduction}{2}{section.1}%
+\contentsline {subsection}{\numberline {1.1}Test Environment}{2}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}Algorithm Coverage}{2}{subsection.1.2}%
+\contentsline {section}{\numberline {2}Results Summary}{3}{section.2}%
+\contentsline {section}{\numberline {3}Performance Analysis}{4}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Handshake Performance by KEM Family}{4}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Handshake Performance by Signature Algorithm}{4}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Performance by NIST Security Level}{5}{subsection.3.3}%
+\contentsline {subsection}{\numberline {3.4}AEAD Cipher Comparison}{5}{subsection.3.4}%
+\contentsline {subsection}{\numberline {3.5}Combined Analysis: KEM x Signature Matrix}{7}{subsection.3.5}%
+\contentsline {section}{\numberline {4}Cryptographic Artifact Analysis}{8}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Key and Signature Sizes}{8}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Primitive Operation Timing}{8}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}Size vs. Performance Tradeoff}{8}{subsection.4.3}%
+\contentsline {section}{\numberline {5}Recommendations for UAV Systems}{10}{section.5}%
+\contentsline {subsection}{\numberline {5.1}High-Performance Requirements}{10}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Bandwidth-Constrained Networks}{10}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Maximum Security Requirements}{10}{subsection.5.3}%
+\contentsline {section}{\numberline {6}Conclusion}{10}{section.6}%
+\contentsline {section}{\numberline {A}Raw Data}{10}{appendix.A}%

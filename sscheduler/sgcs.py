@@ -39,6 +39,14 @@ from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
 from sscheduler.gcs_metrics import GcsMetricsCollector
 
+# Import MetricsAggregator for comprehensive metrics collection
+try:
+    from core.metrics_aggregator import MetricsAggregator
+    HAS_METRICS_AGGREGATOR = True
+except ImportError:
+    HAS_METRICS_AGGREGATOR = False
+    MetricsAggregator = None
+
 # Extract config values (single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
 GCS_HOST = str(CONFIG.get("GCS_HOST"))
@@ -106,6 +114,9 @@ def wait_for_tcp_port(port: int, timeout: float = 5.0) -> bool:
 # GCS Proxy Management
 # ============================================================
 
+# Status file for GCS proxy (for data plane metrics)
+GCS_STATUS_FILE = Path(__file__).parent.parent / "logs" / "gcs_status.json"
+
 class GcsProxyManager:
     """Manages GCS proxy subprocess"""
     
@@ -130,10 +141,18 @@ class GcsProxyManager:
             log(f"Missing key: {gcs_key}")
             return False
         
+        # Clear old status file before starting proxy
+        try:
+            if GCS_STATUS_FILE.exists():
+                GCS_STATUS_FILE.unlink()
+        except Exception:
+            pass
+        
         cmd = [
             sys.executable, "-m", "core.run_proxy", "gcs",
             "--suite", suite_name,
             "--gcs-secret-file", str(gcs_key),
+            "--status-file", str(GCS_STATUS_FILE),
             "--quiet"
         ]
         
@@ -226,6 +245,21 @@ class ControlServer:
             proxy_manager=self.proxy,
             log_dir=Path(__file__).parent.parent / "logs" / "gcs_telemetry"
         )
+        
+        # Comprehensive Metrics Aggregator (GCS side)
+        self.metrics_aggregator = None
+        if HAS_METRICS_AGGREGATOR:
+            try:
+                self.metrics_aggregator = MetricsAggregator(
+                    role="gcs",
+                    output_dir=str(Path(__file__).parent.parent / "logs" / "benchmarks" / "comprehensive")
+                )
+                log("MetricsAggregator initialized for comprehensive metrics")
+            except Exception as e:
+                log(f"MetricsAggregator init failed: {e}")
+        
+        # Track current suite for metrics
+        self.current_suite = None
 
     def start_persistent_mavproxy(self):
         """Start a persistent mavproxy subprocess for the lifetime of the scheduler.
@@ -432,16 +466,56 @@ class ControlServer:
         elif cmd == "start_proxy":
             # Drone tells GCS to start proxy only (no traffic yet)
             suite = request.get("suite")
+            run_id = request.get("run_id")
             
             if not suite:
                 return {"status": "error", "message": "missing suite"}
             
             log(f"Start proxy requested for suite: {suite}")
+
+            # Keep GCS metrics run_id aligned with drone benchmark run_id (if provided)
+            if run_id and self.metrics_aggregator:
+                try:
+                    self.metrics_aggregator.set_run_id(str(run_id))
+                except Exception:
+                    pass
+            
+            # Finalize metrics for previous suite (if any)
+            if self.metrics_aggregator and self.current_suite:
+                try:
+                    self.metrics_aggregator.finalize_suite()
+                except Exception:
+                    pass
+            
+            # Get suite config and start comprehensive metrics collection
+            suite_config = get_suite(suite) or {}
+            if self.metrics_aggregator:
+                try:
+                    self.metrics_aggregator.start_suite(suite, suite_config)
+                    self.metrics_aggregator.record_handshake_start()
+                except Exception as e:
+                    log(f"Metrics start failed: {e}")
             
             # Start GCS proxy
             if not self.proxy.start(suite):
+                if self.metrics_aggregator:
+                    try:
+                        self.metrics_aggregator.record_handshake_end(success=False, failure_reason="proxy_start_failed")
+                        self.metrics_aggregator.finalize_suite()
+                        self.metrics_aggregator.save_suite_metrics()
+                    except Exception:
+                        pass
                 return {"status": "error", "message": "proxy_start_failed"}
 
+            self.current_suite = suite
+            
+            # Record successful proxy start (handshake will complete after drone connects)
+            if self.metrics_aggregator:
+                try:
+                    self.metrics_aggregator.record_handshake_end(success=True)
+                except Exception:
+                    pass
+            
             # Persistent MAVProxy should already be running; just acknowledge
             log("Proxy started; persistent MAVProxy assumed running")
             return {"status": "ok", "message": "proxy_started"}
@@ -454,7 +528,41 @@ class ControlServer:
         elif cmd == "prepare_rekey":
             # Drone tells GCS to prepare for rekey (stop proxy)
             log("Prepare rekey: stopping proxy...")
+            
+            # Finalize and save comprehensive metrics before switching suite
+            if self.metrics_aggregator and self.current_suite:
+                try:
+                    # Read data plane metrics from GCS proxy status file (allow brief wait for status writer)
+                    counters = {}
+                    if GCS_STATUS_FILE.exists():
+                        for _ in range(3):
+                            try:
+                                with open(GCS_STATUS_FILE, "r") as f:
+                                    status_data = json.load(f)
+                                candidate = status_data.get("counters", {})
+                                counters = candidate or counters
+                                if candidate:
+                                    break
+                            except Exception:
+                                pass
+                            time.sleep(1.0)
+                        if counters:
+                            self.metrics_aggregator.record_data_plane_metrics(counters)
+                            log(
+                                "  Data plane: enc_in=%s, ptx_out=%s" %
+                                (counters.get("enc_in", 0), counters.get("ptx_out", 0))
+                            )
+                    
+                    comprehensive = self.metrics_aggregator.finalize_suite()
+                    if comprehensive:
+                        output_path = self.metrics_aggregator.save_suite_metrics(comprehensive)
+                        if output_path:
+                            log(f"Comprehensive metrics saved: {output_path}")
+                except Exception as e:
+                    log(f"Metrics finalize failed: {e}")
+            
             self.proxy.stop()
+            self.current_suite = None
             
             # DO NOT stop persistent MAVProxy here. It should keep running.
             # if self.mavproxy_proc: ...

@@ -77,14 +77,28 @@ class MetricsAnalyzer:
             
             try:
                 data = json.loads(jf.read_text())
-                if "metrics" in data:
-                    self.metrics_data.append(data)
-                    # Try to reconstruct ComprehensiveSuiteMetrics
-                    try:
-                        m = ComprehensiveSuiteMetrics.from_dict(data["metrics"])
-                        self.suite_metrics.append(m)
-                    except Exception:
-                        pass
+
+                # Accept both formats:
+                # 1) Wrapped: {"metrics": {...}}
+                # 2) Direct:  {...} (asdict(ComprehensiveSuiteMetrics))
+                metrics_dict = None
+                if isinstance(data, dict) and "metrics" in data and isinstance(data.get("metrics"), dict):
+                    metrics_dict = data["metrics"]
+                elif isinstance(data, dict) and "run_context" in data:
+                    metrics_dict = data
+
+                if metrics_dict is None:
+                    continue
+
+                wrapped = {"metrics": metrics_dict}
+                self.metrics_data.append(wrapped)
+
+                # Try to reconstruct ComprehensiveSuiteMetrics
+                try:
+                    m = ComprehensiveSuiteMetrics.from_dict(metrics_dict)
+                    self.suite_metrics.append(m)
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"Warning: Could not load {jf.name}: {e}")
         
@@ -125,7 +139,7 @@ class MetricsAnalyzer:
             "I. MAVProxy Drone": "mavproxy_drone",
             "J. MAVProxy GCS": "mavproxy_gcs",
             "K. MAVLink Integrity": "mavlink_integrity",
-            "L. Flight Controller": "flight_controller",
+            "L. Flight Controller": "fc_telemetry",
             "M. Control Plane": "control_plane",
             "N. System Drone": "system_drone",
             "O. System GCS": "system_gcs",

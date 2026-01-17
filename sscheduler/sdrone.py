@@ -874,17 +874,87 @@ class DroneScheduler:
         count = 0
         
         try:
+            # Bounded run mode: when operator requests a specific suite set, run for args.duration and exit.
+            bounded = bool(getattr(self.args, "suite", None)) or getattr(self.args, "max_suites", None) is not None
+
+            suite_names: List[str] = []
+            try:
+                # Normalized extraction: prefer suite dicts (expected) but tolerate legacy list-of-strings.
+                if self.suites and isinstance(self.suites[0], dict):
+                    suite_names = [s["name"] for s in self.suites]
+                else:
+                    suite_names = [str(s) for s in self.suites]
+            except Exception:
+                suite_names = []
+
+            if getattr(self.args, "suite", None):
+                suite_names = [self.args.suite]
+
+            if bounded:
+                if not suite_names:
+                    raise RuntimeError("No suites selected for bounded run")
+
+                log(f"Bounded run: suites={suite_names}, duration={self.args.duration}s")
+                for suite_name in suite_names:
+                    log(f"=== Activating Suite: {suite_name} ===")
+
+                    # Coordinate with GCS: request GCS to start its proxy BEFORE starting local proxy
+                    try:
+                        log(f"Telling GCS to start proxy for {suite_name}...")
+                        resp = self.gcs_client.send_command("start_proxy", {"suite": suite_name})
+                        if resp.get("status") != "ok":
+                            logging.error(f"GCS rejected start_proxy: {resp}")
+                            continue
+                        log(f"GCS acknowledged start_proxy for {suite_name}")
+                    except Exception as e:
+                        logging.error(f"Failed to command GCS: {e}")
+                        continue
+
+                    # Now start local crypto tunnel (drone proxy)
+                    self.start_tunnel_for_suite(suite_name)
+
+                    # Record suite activation
+                    try:
+                        self.context.record_suite_switch(suite_name, 5.0)
+                    except Exception:
+                        pass
+
+                    # Wait for handshake to complete before counting duration
+                    if self.wait_for_handshake_completion(timeout=10.0):
+                        log(f"Handshake complete for {suite_name}")
+                    else:
+                        log(f"Warning: Handshake timed out for {suite_name}")
+
+                    start_run = time.time()
+                    tick_count = 0
+                    while time.time() - start_run < float(self.args.duration):
+                        tick_count += 1
+                        if tick_count % 5 == 0:
+                            now_mono = time.monotonic()
+                            stats = self.telemetry.window.summarize(now_mono)
+                            log(
+                                f"[TICK {tick_count}] RUNNING - suite={suite_name}, "
+                                f"samples={stats.get('count', 0)}, "
+                                f"gap_p95={stats.get('gap_p95_ms', 'N/A')}"
+                            )
+                        time.sleep(TICK_INTERVAL_S)
+
+                    self.stop_current_tunnel()
+                    time.sleep(1.0)
+
+                log("Bounded run complete")
+                return
+
+            # Default: policy-driven infinite loop.
             while True:
                 # Initial suite selection (fallback to first filtered suite)
                 if not self.current_suite:
                     if self.context._policy.filtered_suites:
                         self.current_suite = self.context._policy.filtered_suites[0]
                     else:
-                        self.current_suite = self.suites[0]["name"] # Fallback
-                
+                        self.current_suite = self.suites[0]["name"]  # Fallback
+
                 suite_name = self.current_suite
-                duration = 3600.0 # Run indefinitely until policy changes it
-                
                 log(f"=== Activating Suite: {suite_name} ===")
 
                 # Coordinate with GCS: request GCS to start its proxy BEFORE starting local proxy
@@ -904,10 +974,10 @@ class DroneScheduler:
 
                 # Now start local crypto tunnel (drone proxy)
                 self.start_tunnel_for_suite(suite_name)
-                
+
                 # Record suite activation
                 self.context.record_suite_switch(suite_name, 5.0)
-                
+
                 # Wait for handshake to complete before counting duration
                 if self.wait_for_handshake_completion(timeout=10.0):
                     log(f"Handshake complete for {suite_name}")
@@ -917,27 +987,26 @@ class DroneScheduler:
                 # ============================================
                 # POLICY-DRIVEN MONITORING LOOP
                 # ============================================
-                start_run = time.time()
                 tick_count = 0
-                
-                while True: # Run until policy forces a switch
+
+                while True:  # Run until policy forces a switch
                     tick_count += 1
                     now_mono = time.monotonic()
-                    
+
                     # 1. Evaluate telemetry-aware policy
                     try:
                         policy_out = self.context.evaluate_policy(self.current_suite)
                         decision = self.context.decide(self.current_suite)
-                        
+
                         # 2. Log decision context (every tick)
                         self._log_decision(decision)
-                        
+
                         # 3. Execute action if not HOLD
                         if policy_out.action != PolicyAction.HOLD:
                             log(f"[TICK {tick_count}] Policy action: {policy_out.action.value} -> {policy_out.target_suite}")
                             log(f"  Reasons: {policy_out.reasons}")
                             log(f"  Confidence: {policy_out.confidence:.2f}")
-                            
+
                             # Execute the action
                             success = self.execute_action(policy_out, self.current_suite)
                             if success:
@@ -945,8 +1014,8 @@ class DroneScheduler:
                                 # If we switched suites, break inner loop to restart outer loop with new suite
                                 if policy_out.target_suite and policy_out.target_suite != self.current_suite:
                                     self.current_suite = policy_out.target_suite
-                                    break # Break inner loop, restart outer loop
-                                
+                                    break  # Break inner loop, restart outer loop
+
                                 # If rekey (same suite), we also break to restart tunnel
                                 if policy_out.action == PolicyAction.REKEY:
                                     break
@@ -956,14 +1025,16 @@ class DroneScheduler:
                             # HOLD - optional verbose logging (every 10th tick)
                             if tick_count % 10 == 0:
                                 stats = self.telemetry.window.summarize(now_mono)
-                                log(f"[TICK {tick_count}] HOLD - suite={self.current_suite}, "
+                                log(
+                                    f"[TICK {tick_count}] HOLD - suite={self.current_suite}, "
                                     f"samples={stats.get('count', 0)}, "
                                     f"gap_p95={stats.get('gap_p95_ms', 'N/A')}, "
-                                    f"conf={policy_out.confidence:.2f}")
-                    
+                                    f"conf={policy_out.confidence:.2f}"
+                                )
+
                     except Exception as e:
                         logging.warning(f"Policy evaluation error: {e}")
-                    
+
                     time.sleep(TICK_INTERVAL_S)
 
                 # Loop broken (switch or rekey) - stop tunnel
@@ -1021,7 +1092,7 @@ def main():
         log(f"  {k}: {v}")
     log(f"Duration: {args.duration}s per suite, Rate: {args.rate} Mbps")
     
-    # Determine suites to run
+    # Determine suites to run (names)
     if args.suite:
         suites_to_run = [args.suite]
     elif args.nist_level:
@@ -1034,6 +1105,15 @@ def main():
 
     if args.max_suites:
         suites_to_run = suites_to_run[:args.max_suites]
+
+    # Convert selected suite names into the dict format expected by DroneScheduler/DecisionContext.
+    selected_suite_dicts = [s for s in SUITES if s.get("name") in set(suites_to_run)]
+    if not selected_suite_dicts and suites_to_run:
+        # As a fallback, attempt to load suite definitions directly.
+        for name in suites_to_run:
+            cfg = get_suite(name)
+            if cfg:
+                selected_suite_dicts.append({"name": name, **cfg})
 
     # Register cleanup on exit
     atexit.register(cleanup_environment)
@@ -1054,7 +1134,7 @@ def main():
     cleanup_environment()
 
     # Initialize components
-    scheduler = DroneScheduler(args, suites_to_run)
+    scheduler = DroneScheduler(args, selected_suite_dicts)
     # configure logging
     logging.basicConfig(level=logging.INFO)
     scheduler.run_scheduler()

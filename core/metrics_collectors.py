@@ -227,32 +227,52 @@ class SystemCollector(BaseCollector):
         
         if HAS_PSUTIL:
             try:
-                # CPU
-                metrics["cpu_percent"] = psutil.cpu_percent(interval=None)
-                self._cpu_samples.append(metrics["cpu_percent"])
-                if len(self._cpu_samples) > self._sample_window:
-                    self._cpu_samples.pop(0)
-                
-                freq = psutil.cpu_freq()
-                if freq:
-                    metrics["cpu_freq_mhz"] = freq.current
-                
-                # Memory
+                try:
+                    metrics["cpu_percent"] = psutil.cpu_percent(interval=None)
+                    self._cpu_samples.append(metrics["cpu_percent"])
+                    if len(self._cpu_samples) > self._sample_window:
+                        self._cpu_samples.pop(0)
+                except Exception as e:
+                    metrics["cpu_error"] = str(e)
+
+                try:
+                    freq = psutil.cpu_freq()
+                    if freq:
+                        metrics["cpu_freq_mhz"] = freq.current
+                except Exception as e:
+                    metrics["cpu_freq_error"] = str(e)
+
                 proc = psutil.Process()
-                mem_info = proc.memory_info()
-                metrics["memory_rss_mb"] = mem_info.rss / (1024 * 1024)
-                metrics["memory_vms_mb"] = mem_info.vms / (1024 * 1024)
-                metrics["memory_percent"] = proc.memory_percent()
-                metrics["thread_count"] = proc.num_threads()
-                
-                # System-wide memory
-                vm = psutil.virtual_memory()
-                metrics["system_memory_percent"] = vm.percent
-                metrics["system_memory_available_mb"] = vm.available / (1024 * 1024)
-                
-                # Uptime
-                metrics["uptime_s"] = time.time() - psutil.boot_time()
-                
+
+                try:
+                    mem_info = proc.memory_info()
+                    metrics["memory_rss_mb"] = mem_info.rss / (1024 * 1024)
+                    metrics["memory_vms_mb"] = mem_info.vms / (1024 * 1024)
+                except Exception as e:
+                    metrics["memory_info_error"] = str(e)
+
+                try:
+                    metrics["memory_percent"] = proc.memory_percent()
+                except Exception as e:
+                    metrics["memory_percent_error"] = str(e)
+
+                try:
+                    metrics["thread_count"] = proc.num_threads()
+                except Exception as e:
+                    metrics["thread_count_error"] = str(e)
+
+                try:
+                    vm = psutil.virtual_memory()
+                    metrics["system_memory_percent"] = vm.percent
+                    metrics["system_memory_available_mb"] = vm.available / (1024 * 1024)
+                except Exception as e:
+                    metrics["system_memory_error"] = str(e)
+
+                try:
+                    metrics["uptime_s"] = max(0.0, time.time() - psutil.boot_time())
+                except Exception as e:
+                    metrics["uptime_error"] = str(e)
+
             except Exception as e:
                 metrics["error"] = str(e)
         
@@ -334,6 +354,8 @@ class PowerCollector(BaseCollector):
         super().__init__("power")
         self.backend = backend
         self._ina219 = None
+        self._ina_busnum: Optional[int] = None
+        self._ina_address: int = 0x40
         self._sampling = False
         self._samples: List[Dict[str, float]] = []
         self._sample_thread: Optional[threading.Thread] = None
@@ -355,10 +377,35 @@ class PowerCollector(BaseCollector):
         # Check for INA219
         try:
             from ina219 import INA219
-            # Try to open I2C
-            ina = INA219(shunt_ohms=0.1, address=0x40)
-            ina.configure()
-            return "ina219"
+            # Raspberry Pi stacks vary; explicitly probe common bus numbers.
+            bus_candidates = []
+            env_bus = os.environ.get("INA219_BUSNUM")
+            if env_bus:
+                try:
+                    bus_candidates.append(int(env_bus))
+                except Exception:
+                    pass
+            bus_candidates.extend([1, 0, 20, 21])
+
+            env_addr = os.environ.get("INA219_ADDRESS")
+            addr_candidates = []
+            if env_addr:
+                try:
+                    addr_candidates.append(int(env_addr, 0))
+                except Exception:
+                    pass
+            addr_candidates.extend([0x40])
+
+            for busnum in bus_candidates:
+                for addr in addr_candidates:
+                    try:
+                        ina = INA219(shunt_ohms=0.1, address=addr, busnum=busnum)
+                        ina.configure()
+                        self._ina_busnum = busnum
+                        self._ina_address = addr
+                        return "ina219"
+                    except Exception:
+                        continue
         except Exception:
             pass
         
@@ -380,10 +427,16 @@ class PowerCollector(BaseCollector):
         """Initialize INA219 sensor."""
         try:
             from ina219 import INA219, DeviceRangeError
+            busnum = self._ina_busnum
+            if busnum is None:
+                # Fallback to common Pi bus if detection didn't run or failed.
+                busnum = 1
+            addr = self._ina_address or 0x40
             self._ina219 = INA219(
                 shunt_ohms=0.1,
                 max_expected_amps=3.0,
-                address=0x40
+                address=addr,
+                busnum=busnum,
             )
             self._ina219.configure(
                 voltage_range=self._ina219.RANGE_16V,

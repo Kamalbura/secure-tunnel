@@ -38,6 +38,14 @@ from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
 from sscheduler.benchmark_policy import BenchmarkPolicy, BenchmarkAction, get_suite_count
 
+# Import MetricsAggregator for comprehensive metrics collection
+try:
+    from core.metrics_aggregator import MetricsAggregator
+    HAS_METRICS_AGGREGATOR = True
+except ImportError:
+    HAS_METRICS_AGGREGATOR = False
+    MetricsAggregator = None
+
 # Extract config values
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
 GCS_HOST = str(CONFIG.get("GCS_HOST"))
@@ -218,15 +226,22 @@ def read_handshake_status(timeout: float = 45.0) -> Dict[str, Any]:
 # MAVProxy Manager
 # =============================================================================
 
+# Sniff port for MAVLink metrics collector (different from proxy port to avoid conflict)
+MAVLINK_SNIFF_PORT = 47005
+
 def start_mavproxy(mav_master: str) -> Optional[ManagedProcess]:
     """Start persistent MAVProxy for drone."""
     python_exe = sys.executable
-    out_arg = f"udp:127.0.0.1:{DRONE_PLAIN_TX_PORT}"
+    # Primary output to proxy for encryption/forwarding
+    out_proxy = f"udp:127.0.0.1:{DRONE_PLAIN_TX_PORT}"
+    # Secondary output for MAVLink metrics sniffing
+    out_sniff = f"udp:127.0.0.1:{MAVLINK_SNIFF_PORT}"
     
     cmd = [
         python_exe, "-m", "MAVProxy.mavproxy",
         f"--master={mav_master}",
-        f"--out={out_arg}",
+        f"--out={out_proxy}",
+        f"--out={out_sniff}",
         "--nowait",
         "--daemon",
     ]
@@ -280,6 +295,19 @@ class BenchmarkScheduler:
         # Results tracking
         self.results_file = LOGS_DIR / f"benchmark_{self.policy.run_id}.jsonl"
         self.summary_file = LOGS_DIR / f"benchmark_summary_{self.policy.run_id}.json"
+        
+        # Initialize comprehensive metrics aggregator (drone side)
+        self.metrics_aggregator = None
+        if HAS_METRICS_AGGREGATOR:
+            try:
+                self.metrics_aggregator = MetricsAggregator(
+                    role="drone",
+                    output_dir=str(LOGS_DIR / "comprehensive")
+                )
+                self.metrics_aggregator.set_run_id(self.policy.run_id)
+                log("MetricsAggregator initialized for comprehensive metrics")
+            except Exception as e:
+                log(f"MetricsAggregator init failed: {e}", "WARN")
     
     def run(self):
         """Run the benchmark."""
@@ -346,11 +374,16 @@ class BenchmarkScheduler:
                 
                 if output.action == BenchmarkAction.COMPLETE:
                     log("Benchmark complete!")
+                    # Finalize last suite metrics before returning
+                    self._finalize_metrics(success=True)
                     return
                 
                 if output.action == BenchmarkAction.NEXT_SUITE:
                     progress = output.progress_pct
                     log(f"[{progress:.1f}%] Switching to {output.target_suite}")
+                    
+                    # Finalize metrics AFTER interval wait (data plane has accumulated)
+                    self._finalize_metrics(success=True)
                     
                     # Stop current proxy
                     self.proxy.stop()
@@ -367,6 +400,17 @@ class BenchmarkScheduler:
         """Activate a suite on both drone and GCS."""
         log(f"Activating suite: {suite_name}")
         
+        # Get suite config for metrics
+        suite_config = self.policy.all_suites.get(suite_name, {})
+        
+        # Start comprehensive metrics collection
+        if self.metrics_aggregator:
+            try:
+                self.metrics_aggregator.start_suite(suite_name, suite_config)
+                self.metrics_aggregator.record_handshake_start()
+            except Exception as e:
+                log(f"Metrics start failed: {e}", "WARN")
+        
         # Clear old status file to avoid reading stale data
         status_file = LOGS_DIR / "drone_status.json"
         try:
@@ -376,9 +420,10 @@ class BenchmarkScheduler:
             pass
         
         # Tell GCS to start proxy
-        resp = send_gcs_command("start_proxy", suite=suite_name)
+        resp = send_gcs_command("start_proxy", suite=suite_name, run_id=self.policy.run_id)
         if resp.get("status") != "ok":
             log(f"GCS rejected: {resp}", "ERROR")
+            self._finalize_metrics(success=False, error="gcs_rejected")
             return False
         
         log(f"  GCS proxy started, starting drone proxy...")
@@ -386,6 +431,7 @@ class BenchmarkScheduler:
         # Start drone proxy
         if not self.proxy.start(suite_name):
             log("Drone proxy failed to start", "ERROR")
+            self._finalize_metrics(success=False, error="proxy_start_failed")
             return False
         
         log(f"  Drone proxy started, waiting for handshake...")
@@ -399,13 +445,63 @@ class BenchmarkScheduler:
             handshake_ms = metrics.get("rekey_ms", 0)
             log(f"  Handshake OK: {handshake_ms:.1f}ms")
             
+            # Record crypto primitives in aggregator
+            if self.metrics_aggregator:
+                try:
+                    self.metrics_aggregator.record_handshake_end(success=True)
+                    self.metrics_aggregator.record_crypto_primitives(metrics)
+                except Exception as e:
+                    log(f"Metrics record failed: {e}", "WARN")
+            
             # Log to results file
             self._log_result(suite_name, metrics, success=True)
+            
+            # NOTE: _finalize_metrics() is called AFTER the interval wait, in _run_loop
+            # when NEXT_SUITE is triggered, so data plane metrics can accumulate
             return True
         else:
             log(f"  Handshake timeout/failed", "WARN")
             self._log_result(suite_name, {}, success=False, error="handshake_timeout")
+            self._finalize_metrics(success=False, error="handshake_timeout")
             return False
+    
+    def _finalize_metrics(self, success: bool, error: str = ""):
+        """Finalize and save comprehensive metrics for current suite."""
+        if not self.metrics_aggregator:
+            return
+        try:
+            # Read data plane metrics from proxy status file (allow a brief window for the status writer to run)
+            status_file = LOGS_DIR / "drone_status.json"
+            counters: Dict[str, Any] = {}
+            if status_file.exists():
+                for _ in range(3):  # up to ~3s total
+                    try:
+                        with open(status_file, "r") as f:
+                            status_data = json.load(f)
+                        candidate = status_data.get("counters", {})
+                        counters = candidate or counters
+                        # Break early if counters are present and non-empty
+                        if candidate:
+                            break
+                    except Exception:
+                        pass
+                    time.sleep(1.0)
+            if counters:
+                self.metrics_aggregator.record_data_plane_metrics(counters)
+                log(
+                    "  Data plane: ptx_in=%s, enc_out=%s" %
+                    (counters.get("ptx_in", 0), counters.get("enc_out", 0))
+                )
+            
+            self.metrics_aggregator.record_handshake_end(success=success, failure_reason=error)
+            comprehensive = self.metrics_aggregator.finalize_suite()
+            if comprehensive:
+                # Export to JSON
+                output_path = self.metrics_aggregator.save_suite_metrics(comprehensive)
+                if output_path:
+                    log(f"  Comprehensive metrics saved: {output_path}")
+        except Exception as e:
+            log(f"Metrics finalize failed: {e}", "WARN")
     
     def _log_result(self, suite_name: str, metrics: Dict, success: bool, error: str = ""):
         """Log result to JSONL file."""

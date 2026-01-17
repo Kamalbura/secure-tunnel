@@ -1,6 +1,0 @@
-[2025-12-20T18:03:51Z] START suite=cs-mlkem1024-ascon128a-mldsa87 pass=0 mode=constant duration=10.00s
-[2025-12-20T18:03:51Z] ACTIVATE_FAILURE suite=cs-mlkem1024-ascon128a-mldsa87 error=GCS proxy is not running; cannot continue
-[2025-12-20T18:09:51Z] START suite=cs-mlkem1024-ascon128a-mldsa87 pass=1 mode=constant duration=10.00s
-[2025-12-20T18:09:51Z] ACTIVATE_FAILURE suite=cs-mlkem1024-ascon128a-mldsa87 error=GCS proxy is not running; cannot continue
-[2025-12-20T18:15:52Z] START suite=cs-mlkem1024-ascon128a-mldsa87 pass=2 mode=constant duration=10.00s
-[2025-12-20T18:15:52Z] ACTIVATE_FAILURE suite=cs-mlkem1024-ascon128a-mldsa87 error=GCS proxy is not running; cannot continue

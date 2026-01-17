@@ -56,6 +56,14 @@ from core.metrics_collectors import (
     LatencyTracker,
 )
 
+# Import MAVLink collector (optional)
+try:
+    from core.mavlink_collector import MavLinkMetricsCollector
+    HAS_MAVLINK_COLLECTOR = True
+except ImportError:
+    HAS_MAVLINK_COLLECTOR = False
+    MavLinkMetricsCollector = None
+
 
 class MetricsAggregator:
     """
@@ -93,6 +101,12 @@ class MetricsAggregator:
             self.power_collector = PowerCollector(backend="auto")
         else:
             self.power_collector = None
+        
+        # MAVLink collector (both sides)
+        if HAS_MAVLINK_COLLECTOR:
+            self.mavlink_collector = MavLinkMetricsCollector(role=self.role)
+        else:
+            self.mavlink_collector = None
         
         # Current metrics object
         self._current_metrics: Optional[ComprehensiveSuiteMetrics] = None
@@ -200,7 +214,18 @@ class MetricsAggregator:
         
         # Start power sampling (drone only)
         if self.power_collector and self.power_collector.backend != "none":
-            self.power_collector.start_sampling(rate_hz=100.0)
+            self.power_collector.start_sampling(rate_hz=1000.0)
+        
+        # Start MAVLink sniffing
+        if self.mavlink_collector:
+            # GCS sniffs on 14552 (MAVProxy telemetry output duplicate)
+            # Drone sniffs on 47005 (MAVProxy secondary output for sniffing)
+            # NOTE: Drone proxy binds 47003, so we use separate 47005 to avoid conflict
+            sniff_port = 14552 if self.role == "gcs" else 47005
+            try:
+                self.mavlink_collector.start_sniffing(port=sniff_port)
+            except Exception:
+                pass  # Port may already be in use
         
         self._suite_index += 1
         return m
@@ -266,10 +291,18 @@ class MetricsAggregator:
             cp.sig_verify_ns = primitives["sig_verify_ns"]
             cp.signature_verify_time_ms = primitives["sig_verify_ns"] / 1_000_000
         
-        # Also accept ms values directly
-        for key in ["kem_keygen_ms", "kem_encaps_ms", "kem_decaps_ms", "sig_sign_ms", "sig_verify_ms"]:
-            if key in primitives:
-                setattr(cp, key.replace("_ms", "_time_ms"), primitives[key])
+        # Also accept ms values directly (map to correct schema field names)
+        ms_field_map = {
+            "kem_keygen_ms": "kem_keygen_time_ms",
+            "kem_encaps_ms": "kem_encapsulation_time_ms",
+            "kem_decaps_ms": "kem_decapsulation_time_ms",
+            "kem_decap_ms": "kem_decapsulation_time_ms",  # alternate name
+            "sig_sign_ms": "signature_sign_time_ms",
+            "sig_verify_ms": "signature_verify_time_ms",
+        }
+        for src_key, dst_field in ms_field_map.items():
+            if src_key in primitives and primitives[src_key]:
+                setattr(cp, dst_field, float(primitives[src_key]))
         
         # Artifact sizes
         cp.pub_key_size_bytes = primitives.get("pub_key_size_bytes", 0)
@@ -294,6 +327,7 @@ class MetricsAggregator:
             - ptx_in, ptx_out, enc_in, enc_out
             - drop_replay, drop_auth, drop_header
             - bytes_in, bytes_out
+            - primitive_metrics (nested AEAD timing)
         """
         if not self._current_metrics:
             return
@@ -321,11 +355,17 @@ class MetricsAggregator:
         dp.bytes_sent = counters.get("bytes_out", 0)
         dp.bytes_received = counters.get("bytes_in", 0)
         
-        # AEAD timing
-        dp.aead_encrypt_avg_ns = counters.get("aead_encrypt_avg_ns", 0)
-        dp.aead_decrypt_avg_ns = counters.get("aead_decrypt_avg_ns", 0)
-        dp.aead_encrypt_count = counters.get("aead_encrypt_count", 0)
-        dp.aead_decrypt_count = counters.get("aead_decrypt_count", 0)
+        # AEAD timing from primitive_metrics (nested structure)
+        prim = counters.get("primitive_metrics", {})
+        enc_stats = prim.get("aead_encrypt", {})
+        dec_stats = prim.get("aead_decrypt_ok", {})
+        
+        if enc_stats.get("count", 0) > 0:
+            dp.aead_encrypt_count = enc_stats["count"]
+            dp.aead_encrypt_avg_ns = enc_stats.get("total_ns", 0) // enc_stats["count"]
+        if dec_stats.get("count", 0) > 0:
+            dp.aead_decrypt_count = dec_stats["count"]
+            dp.aead_decrypt_avg_ns = dec_stats.get("total_ns", 0) // dec_stats["count"]
     
     def record_latency_sample(self, latency_ms: float):
         """Record a latency sample."""
@@ -443,7 +483,7 @@ class MetricsAggregator:
         if power_samples:
             energy_stats = self.power_collector.get_energy_stats(power_samples)
             m.power_energy.power_sensor_type = self.power_collector.backend
-            m.power_energy.power_sampling_rate_hz = 100.0
+            m.power_energy.power_sampling_rate_hz = 1000.0
             m.power_energy.power_avg_w = energy_stats["power_avg_w"]
             m.power_energy.power_peak_w = energy_stats["power_peak_w"]
             m.power_energy.energy_total_j = energy_stats["energy_total_j"]
@@ -452,6 +492,21 @@ class MetricsAggregator:
             if m.handshake.handshake_total_duration_ms > 0:
                 hs_duration_s = m.handshake.handshake_total_duration_ms / 1000.0
                 m.power_energy.energy_per_handshake_j = m.power_energy.power_avg_w * hs_duration_s
+        
+        # I/J. MAVLink metrics
+        if self.mavlink_collector:
+            try:
+                mavlink_metrics = self.mavlink_collector.stop()
+                
+                if self.role == "gcs":
+                    self.mavlink_collector.populate_schema_metrics(m.mavproxy_gcs, "gcs")
+                else:
+                    self.mavlink_collector.populate_schema_metrics(m.mavproxy_drone, "drone")
+                
+                # K. MAVLink integrity
+                self.mavlink_collector.populate_mavlink_integrity(m.mavlink_integrity)
+            except Exception:
+                pass
         
         # Q. Observability
         m.observability.log_sample_count = len(self._system_samples)
@@ -571,6 +626,41 @@ class MetricsAggregator:
                     "memory_rss_mb": m.system_gcs.memory_rss_mb,
                 },
             }
+    
+    def save_suite_metrics(self, metrics: ComprehensiveSuiteMetrics = None) -> Optional[str]:
+        """
+        Save suite metrics to JSON file.
+        
+        Args:
+            metrics: ComprehensiveSuiteMetrics to save (or use current if None)
+        
+        Returns:
+            Path to saved file, or None on failure
+        """
+        m = metrics or self._current_metrics
+        if not m:
+            return None
+        
+        try:
+            from dataclasses import asdict
+            
+            # Create filename
+            suite_id = m.run_context.suite_id or "unknown"
+            run_id = self._run_id or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            filename = f"{suite_id}_{run_id}_{self.role}.json"
+            output_path = self.output_dir / filename
+            
+            # Convert to dict
+            data = asdict(m)
+            
+            # Write to file
+            with open(output_path, "w") as f:
+                json.dump(data, f, indent=2, default=str)
+            
+            return str(output_path)
+        except Exception as e:
+            print(f"Failed to save suite metrics: {e}")
+            return None
 
 
 # =============================================================================

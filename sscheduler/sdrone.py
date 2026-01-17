@@ -43,6 +43,7 @@ from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
 from sscheduler.local_mon import LocalMonitor
+from sscheduler.control_security import get_drone_psk, compute_response
 from sscheduler.policy import (
     TelemetryAwarePolicyV2,
     DecisionInput,
@@ -156,7 +157,12 @@ class TelemetryListener:
                     continue
                 
                 try:
-                    packet = json.loads(data.decode('utf-8'))
+                    # Robust decode: handle potential trailing garbage or encoding issues
+                    packet_str = data.decode('utf-8', errors='ignore').strip()
+                    if not packet_str:
+                        continue
+
+                    packet = json.loads(packet_str)
                     
                     # Schema Validation
                     if packet.get("schema") != self.SCHEMA:
@@ -174,7 +180,9 @@ class TelemetryListener:
                         # Feed sliding window
                         try:
                             self.window.add(now_mono, packet)
-                        except Exception:
+                        except Exception as e:
+                            # Avoid crashing listener on window logic error
+                            logging.debug(f"Window add error: {e}")
                             pass
                     
                     # Best-effort logging
@@ -184,9 +192,14 @@ class TelemetryListener:
                     pass
             except socket.timeout:
                 continue
+            except OSError as e:
+                # Handle socket closed or network down
+                if self.running:
+                    log(f"Telemetry socket error: {e}")
+                    time.sleep(1.0)
             except Exception as e:
                 if self.running:
-                    log(f"Telemetry error: {e}")
+                    log(f"Telemetry unexpected error: {e}")
 
     def _write_log(self, now_mono, sender_ip, packet):
         try:
@@ -459,12 +472,39 @@ class UdpEchoServer:
 # ============================================================
 
 def send_gcs_command(cmd: str, **params) -> dict:
-    """Send command to GCS control server"""
+    """Send command to GCS control server with HMAC authentication"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(30.0)
         sock.connect((GCS_CONTROL_HOST, GCS_CONTROL_PORT))
         
+        # 1. Authentication Handshake
+        # Read challenge
+        challenge_hex = b""
+        start_time = time.time()
+        while time.time() - start_time < 5.0:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            challenge_hex += chunk
+            if b"\n" in challenge_hex:
+                break
+
+        challenge_hex = challenge_hex.strip()
+        if not challenge_hex:
+            raise ConnectionError("No challenge received from GCS")
+
+        try:
+            challenge = bytes.fromhex(challenge_hex.decode())
+        except ValueError:
+            raise ConnectionError(f"Invalid challenge format: {challenge_hex}")
+
+        # Compute and send response
+        psk = get_drone_psk()
+        response = compute_response(challenge, psk)
+        sock.sendall(response.encode() + b"\n")
+
+        # 2. Send Command
         request = {"cmd": cmd, **params}
         sock.sendall(json.dumps(request).encode() + b"\n")
         
@@ -478,6 +518,8 @@ def send_gcs_command(cmd: str, **params) -> dict:
                 break
         
         sock.close()
+        if not response:
+             raise ConnectionError("Empty response from GCS")
         return json.loads(response.decode().strip())
     except Exception as e:
         return {"status": "error", "message": str(e)}

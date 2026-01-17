@@ -38,6 +38,7 @@ from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
 from sscheduler.gcs_metrics import GcsMetricsCollector
+from sscheduler.control_security import get_drone_psk, create_challenge, verify_response
 
 # Import MetricsAggregator for comprehensive metrics collection
 try:
@@ -394,6 +395,32 @@ class ControlServer:
 
     def _handle_client(self, client, addr):
         try:
+            # 1. Authentication Handshake
+            psk = get_drone_psk()
+            challenge = create_challenge()
+
+            # Send challenge (hex encoded)
+            client.sendall(challenge.hex().encode() + b"\n")
+
+            # Read response
+            response_data = b""
+            start_time = time.time()
+            while time.time() - start_time < 5.0:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                response_data += chunk
+                if b"\n" in response_data:
+                    break
+
+            client_response = response_data.decode().strip()
+
+            if not verify_response(challenge, client_response, psk):
+                log(f"Authentication failed for {addr}")
+                client.close()
+                return
+
+            # 2. Command Processing
             data = b""
             while True:
                 chunk = client.recv(4096)

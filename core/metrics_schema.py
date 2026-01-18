@@ -259,29 +259,52 @@ class MavProxyDroneMetrics:
 
 
 # =============================================================================
-# J. MAVPROXY APPLICATION LAYER — GCS SIDE
+# J. MAVPROXY APPLICATION LAYER — GCS SIDE (PRUNED)
+# =============================================================================
+# POLICY REALIGNMENT (2026-01-18):
+# GCS MAVProxy metrics pruned to VALIDATION-ONLY subset.
+#
+# RETAINED (validation/integrity):
+#   - mavproxy_gcs_total_msgs_received: Cross-side correlation
+#   - mavproxy_gcs_seq_gap_count: MAVLink integrity
+#
+# REMOVED (non-essential):
+#   - msg_type_counts histogram
+#   - heartbeat_interval_ms statistics
+#   - heartbeat_loss_count
+#   - stream_rate_hz
+#   - cmd_ack_* latency tracking
 # =============================================================================
 
 @dataclass
 class MavProxyGcsMetrics:
-    """MAVProxy metrics from the GCS side."""
-    mavproxy_gcs_start_time: float = 0.0
-    mavproxy_gcs_end_time: float = 0.0
-    mavproxy_gcs_tx_pps: float = 0.0
-    mavproxy_gcs_rx_pps: float = 0.0
-    mavproxy_gcs_total_msgs_sent: int = 0
+    """
+    MAVProxy metrics from the GCS side.
+    
+    POLICY REALIGNMENT: Pruned to validation-only metrics.
+    GCS deep introspection removed as non-policy-relevant.
+    """
+    # VALIDATION metrics (retained)
     mavproxy_gcs_total_msgs_received: int = 0
-    mavproxy_gcs_msg_type_counts: Dict[str, int] = field(default_factory=dict)
-    mavproxy_gcs_heartbeat_interval_ms: float = 0.0
-    mavproxy_gcs_heartbeat_loss_count: int = 0
     mavproxy_gcs_seq_gap_count: int = 0
-    mavproxy_gcs_reconnect_count: int = 0
-    mavproxy_gcs_cmd_sent_count: int = 0
-    mavproxy_gcs_cmd_ack_received_count: int = 0
-    mavproxy_gcs_cmd_ack_latency_avg_ms: float = 0.0
-    mavproxy_gcs_cmd_ack_latency_p95_ms: float = 0.0
-    mavproxy_gcs_stream_rate_hz: float = 0.0
-    mavproxy_gcs_log_path: str = ""
+    
+    # DEPRECATED fields below - retained for schema compatibility
+    # These are NO LONGER COLLECTED
+    mavproxy_gcs_start_time: float = 0.0  # timing context only
+    mavproxy_gcs_end_time: float = 0.0  # timing context only
+    mavproxy_gcs_tx_pps: float = 0.0  # DEPRECATED
+    mavproxy_gcs_rx_pps: float = 0.0  # DEPRECATED
+    mavproxy_gcs_total_msgs_sent: int = 0  # DEPRECATED
+    mavproxy_gcs_msg_type_counts: Dict[str, int] = field(default_factory=dict)  # DEPRECATED
+    mavproxy_gcs_heartbeat_interval_ms: float = 0.0  # DEPRECATED
+    mavproxy_gcs_heartbeat_loss_count: int = 0  # DEPRECATED
+    mavproxy_gcs_reconnect_count: int = 0  # DEPRECATED
+    mavproxy_gcs_cmd_sent_count: int = 0  # DEPRECATED
+    mavproxy_gcs_cmd_ack_received_count: int = 0  # DEPRECATED
+    mavproxy_gcs_cmd_ack_latency_avg_ms: float = 0.0  # DEPRECATED
+    mavproxy_gcs_cmd_ack_latency_p95_ms: float = 0.0  # DEPRECATED
+    mavproxy_gcs_stream_rate_hz: float = 0.0  # DEPRECATED
+    mavproxy_gcs_log_path: str = ""  # DEPRECATED
 
 
 # =============================================================================
@@ -377,22 +400,40 @@ class SystemResourcesDrone:
 
 
 # =============================================================================
-# O. SYSTEM RESOURCES — GCS
+# O. SYSTEM RESOURCES — GCS (DEPRECATED)
+# =============================================================================
+# POLICY REALIGNMENT (2026-01-18):
+# GCS system resource metrics are NO LONGER COLLECTED.
+# 
+# Justification:
+#   - GCS is a non-constrained observer system
+#   - GCS CPU/memory does NOT influence policy decisions
+#   - GCS resources do NOT affect suite ranking or crypto selection
+#   - Collecting these adds overhead without policy value
+#
+# This dataclass is RETAINED for schema compatibility but fields
+# will remain at default values. Do NOT reintroduce collection
+# without explicit policy justification.
 # =============================================================================
 
 @dataclass
 class SystemResourcesGcs:
-    """System resource metrics from the GCS."""
-    cpu_usage_avg_percent: float = 0.0
-    cpu_usage_peak_percent: float = 0.0
-    cpu_freq_mhz: float = 0.0
-    memory_rss_mb: float = 0.0
-    memory_vms_mb: float = 0.0
-    thread_count: int = 0
+    """
+    DEPRECATED: GCS system resource metrics.
+    
+    These metrics are NO LONGER COLLECTED per policy realignment.
+    GCS is non-constrained; only drone-side resources influence policy.
+    """
+    cpu_usage_avg_percent: float = 0.0  # DEPRECATED - not collected
+    cpu_usage_peak_percent: float = 0.0  # DEPRECATED - not collected
+    cpu_freq_mhz: float = 0.0  # DEPRECATED - not collected
+    memory_rss_mb: float = 0.0  # DEPRECATED - not collected
+    memory_vms_mb: float = 0.0  # DEPRECATED - not collected
+    thread_count: int = 0  # DEPRECATED - not collected
     
     # Extended system info
-    uptime_s: float = 0.0
-    disk_usage_percent: float = 0.0
+    uptime_s: float = 0.0  # DEPRECATED - not collected
+    disk_usage_percent: float = 0.0  # DEPRECATED - not collected
 
 
 # =============================================================================

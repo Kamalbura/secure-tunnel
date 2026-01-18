@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""
+Benchmark Drone Scheduler - sscheduler/sdrone_bench.py
+"Operation Chronos": Scientific Instrumentation Layer.
+
+Directives:
+1. Hardcoded Policy: Deterministic 10s cycle.
+2. Sensor Fusion: Inject JSON (Power+Avionics+Crypto) to Tunnel.
+3. Controller: Drone drives the benchmark.
+"""
+
+import os
+import sys
+import time
+import json
+import socket
+import signal
+import threading
+import logging
+import atexit
+from pathlib import Path
+from collections import deque
+from typing import List, Dict, Any, Optional
+
+# Add parent to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from core.config import CONFIG
+from core.suites import list_suites
+from core.clock_sync import ClockSync
+from core.power_monitor import create_power_monitor
+from core.run_proxy import DroneProxyManager
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+GCS_HOST = str(CONFIG.get("GCS_HOST", "192.168.0.100"))
+GCS_CONTROL_PORT = int(CONFIG.get("GCS_CONTROL_PORT", 48080))
+DRONE_PLAIN_TX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_TX", 47003))
+
+LOGS_DIR = Path(__file__).parent.parent / "logs" / "benchmarks"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] [sdrone-bench] %(message)s',
+    datefmt='%Y-%m-%dT%H:%M:%SZ'
+)
+
+def log(msg):
+    logging.info(msg)
+
+# =============================================================================
+# Deterministic Rotator (The Brain)
+# =============================================================================
+
+class DeterministicRotator:
+    """
+    Hardcoded benchmarking logic.
+    Switches suites exactly every cycle_interval seconds.
+    """
+    def __init__(self, cycle_interval: float = 10.0):
+        self.cycle_interval = cycle_interval
+        # Determinstic list of suites (alphabetical)
+        self.suites = sorted(list(list_suites().keys()))
+        self.start_time = time.time()
+        
+    def get_target_suite(self) -> str:
+        """Calculate which suite should be active right now."""
+        now = time.time()
+        elapsed = now - self.start_time
+        slot = int(elapsed / self.cycle_interval)
+        index = slot % len(self.suites)
+        return self.suites[index]
+
+    def get_time_remaining(self) -> float:
+        """Seconds until next switch."""
+        now = time.time()
+        elapsed = now - self.start_time
+        phase = elapsed % self.cycle_interval
+        return self.cycle_interval - phase
+
+# =============================================================================
+# GCS Client
+# =============================================================================
+
+def send_gcs_command(cmd: str, **params) -> dict:
+    """Simple blocking RPC to GCS."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5.0)
+        sock.connect((GCS_HOST, GCS_CONTROL_PORT))
+        
+        req = {"cmd": cmd, **params}
+        sock.sendall(json.dumps(req).encode() + b"\n")
+        
+        data = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk: break
+            data += chunk
+            if b"\n" in data: break
+            
+        return json.loads(data.decode())
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# =============================================================================
+# Benchmark Scheduler
+# =============================================================================
+
+class BenchDroneScheduler:
+    def __init__(self):
+        self.running = True
+        self.rotator = DeterministicRotator(cycle_interval=10.0)
+        self.current_suite = None
+        self.proxy = DroneProxyManager()
+        
+        # Chronos Components
+        self.clock_sync = ClockSync()
+        self.power_mon = create_power_monitor(output_dir=LOGS_DIR)
+        
+        # Telemetry Injection Socket
+        self.tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.tx_addr = ("127.0.0.1", DRONE_PLAIN_TX_PORT)
+        
+        # Mock connection 
+        self.gcs_ready = False
+
+    def run(self):
+        log("=== OPERATION CHRONOS: BENCHMARK STARTED ===")
+        log(f"Cycle Interval: {self.rotator.cycle_interval}s")
+        log(f"Suites: {len(self.rotator.suites)}")
+        
+        # 1. Sync Clock
+        if not self.clock_sync.is_synced():
+            log("Waiting for Clock Sync...")
+            # Ideally we'd sync here, but for now we rely on OS NTP or previous sync
+            # self.clock_sync.sync() 
+            pass
+
+        # 2. Start Sensor Fusion Loop
+        threading.Thread(target=self._sensor_fusion_loop, daemon=True).start()
+        
+        # 3. Main Policy Loop
+        while self.running:
+            target_suite = self.rotator.get_target_suite()
+            
+            if target_suite != self.current_suite:
+                self._switch_suite(target_suite)
+                
+            time.sleep(0.1)
+
+    def _switch_suite(self, suite_name: str):
+        log(f">> SWITCHING TO: {suite_name}")
+        
+        # 1. Stop local proxy
+        self.proxy.stop()
+        
+        # 2. Tell GCS to Prepare
+        resp = send_gcs_command("prepare_rekey")
+        if resp.get("status") != "ok":
+            log(f"WARN: GCS rekey failed: {resp}")
+            
+        # 3. Tell GCS to Start Proxy
+        resp = send_gcs_command("start_proxy", suite=suite_name)
+        if resp.get("status") != "ok":
+            log(f"ERROR: GCS start_proxy failed: {resp}")
+            # Wait and retry? For benchmark, we might skip
+            pass
+            
+        # 4. Start Local Proxy
+        if self.proxy.start(suite_name):
+            self.current_suite = suite_name
+            log(f"✅ Active: {suite_name}")
+        else:
+            log(f"❌ Failed to start local proxy for {suite_name}")
+
+    def _sensor_fusion_loop(self):
+        """10Hz Data Injection."""
+        log("Sensor Fusion Loop Active")
+        while self.running:
+            try:
+                # 1. Gather Data
+                pwr = self.power_mon.read_metrics() if self.power_mon else {}
+                ts = time.time() # Use local valid time
+                
+                # 2. Build Packet
+                packet = {
+                    "type": "chronos_fusion",
+                    "ts": ts,
+                    "suite": self.current_suite,
+                    "bat_v": pwr.get("bus_v", 0.0),
+                    "bat_i": pwr.get("current_mA", 0.0),
+                    "seq": int(ts * 10) # Pseudo seq
+                }
+                
+                # 3. Inject to Tunnel
+                data = json.dumps(packet).encode()
+                self.tx_sock.sendto(data, self.tx_addr)
+                
+            except Exception as e:
+                log(f"Fusion Error: {e}")
+                
+            time.sleep(0.1) # 10Hz
+
+    def stop(self):
+        self.running = False
+        self.proxy.stop()
+        if self.power_mon:
+            self.power_mon.stop()
+
+def cleanup():
+    # pkill sdrone?
+    pass
+
+if __name__ == "__main__":
+    scheduler = BenchDroneScheduler()
+    try:
+        scheduler.run()
+    except KeyboardInterrupt:
+        log("Stopping...")
+        scheduler.stop()

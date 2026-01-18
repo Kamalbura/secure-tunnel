@@ -1,189 +1,697 @@
 #!/usr/bin/env python3
 """
-Benchmark GCS Scheduler - sscheduler/sgcs_bench.py
-"Operation Chronos": Scientific Instrumentation Layer.
+GCS Benchmark Server - sscheduler/sgcs_bench.py
+"Operation Chronos v2": Comprehensive E2E MAVProxy Benchmark
 
-Directives:
-1. Telemetry Listener: Intercept JSON packets (UDP 47002).
-2. Logger: Write latency/jitter to benchmarks/comprehensive_session.jsonl.
-3. Controller: Accept commands from Drone.
+This script runs on the GCS (Windows) machine and:
+1. Listens for commands from drone on TCP 48080
+2. Starts/stops crypto proxies per suite
+3. Generates traffic through the tunnel
+4. Collects GCS-side metrics (CPU, memory, MAVLink)
+5. Returns metrics to drone for consolidation
+
+Usage:
+    python -m sscheduler.sgcs_bench [--port 48080]
+
+Network:
+    - LAN: 192.168.0.100 (GCS) <-> 192.168.0.105 (Drone)
+    - Control: TCP 48080 (listens)
+    - Plaintext: UDP 47001/47002
+    - MAVLink: UDP 14550/14552
 """
 
 import os
 import sys
 import time
 import json
+import uuid
 import socket
+import signal
+import argparse
 import threading
+import subprocess
+import statistics
 import logging
+import platform
 from pathlib import Path
-from collections import deque
-from typing import Dict, Any
+from datetime import datetime, timezone
+from dataclasses import asdict
+from typing import Dict, List, Any, Optional, Tuple
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.config import CONFIG
-from core.run_proxy import GcsProxyManager
-from core.suites import get_suite
+from core.suites import get_suite, list_suites
+from core.process import ManagedProcess
+# NOTE: GCS system resource metrics removed per POLICY REALIGNMENT
+# GCS is non-constrained observer; only validation metrics retained
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
+DRONE_HOST = str(CONFIG.get("DRONE_HOST", "192.168.0.105"))
+GCS_HOST = str(CONFIG.get("GCS_HOST", "192.168.0.100"))
 GCS_CONTROL_HOST = str(CONFIG.get("GCS_CONTROL_BIND_HOST", "0.0.0.0"))
 GCS_CONTROL_PORT = int(CONFIG.get("GCS_CONTROL_PORT", 48080))
-GCS_PLAIN_RX_PORT = int(CONFIG.get("GCS_PLAINTEXT_RX", 47002))
 
-LOGS_DIR = Path(__file__).parent.parent / "logs" / "benchmarks"
+GCS_PLAIN_TX_PORT = int(CONFIG.get("GCS_PLAINTEXT_TX", 47001))
+GCS_PLAIN_RX_PORT = int(CONFIG.get("GCS_PLAINTEXT_RX", 47002))
+DRONE_PLAIN_RX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_RX", 47004))
+
+MAVLINK_SNIFF_PORT = 14552  # MAVProxy output for telemetry sniffing
+
+SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
+ROOT = Path(__file__).parent.parent
+LOGS_DIR = ROOT / "logs" / "benchmarks"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
-SESSION_LOG = LOGS_DIR / "comprehensive_session.jsonl"
+
+PAYLOAD_SIZE = 1200
+DEFAULT_RATE_MBPS = 110.0
+
+# =============================================================================
+# Logging Setup
+# =============================================================================
 
 logging.basicConfig(
     level=logging.INFO,
-    format='[%(asctime)s] [sgcs-bench] %(message)s',
+    format='[%(asctime)s] [sgcs-bench] %(levelname)s: %(message)s',
     datefmt='%Y-%m-%dT%H:%M:%SZ'
 )
+logger = logging.getLogger("sgcs_bench")
 
-def log(msg):
-    logging.info(msg)
+def log(msg: str, level: str = "INFO"):
+    getattr(logger, level.lower(), logger.info)(msg)
 
 # =============================================================================
-# JSON Telemetry Listener (The Scientist)
+# Environment Info
 # =============================================================================
 
-class JsonChronosListener:
-    def __init__(self, port: int, output_file: Path):
-        self.port = port
-        self.output_file = output_file
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(("0.0.0.0", port))
-        self.running = True
-        self.packet_count = 0
+def get_kernel_version() -> str:
+    """Get kernel/OS version."""
+    try:
+        return platform.platform()
+    except Exception:
+        return "unknown"
+
+def get_python_env() -> str:
+    """Get Python environment info."""
+    return f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
+# =============================================================================
+# GCS System Metrics - REMOVED PER POLICY REALIGNMENT
+# =============================================================================
+# Justification: GCS is non-constrained. CPU/memory/thread metrics do NOT
+# influence policy decisions, suite ranking, or scheduler choices.
+# Collecting them adds overhead without policy value.
+# =============================================================================
+# REMOVED METRICS:
+#   - cpu_avg_percent
+#   - cpu_peak_percent  
+#   - memory_rss_mb
+#   - thread_count
+# =============================================================================
+
+# =============================================================================
+# MAVLink Metrics Collector (GCS side)
+# =============================================================================
+
+class GcsMavLinkCollector:
+    """
+    Collects MAVLink validation metrics on GCS side via pymavlink.
+    
+    POLICY REALIGNMENT: Only validation-critical metrics retained:
+      - total_msgs_received: Cross-side correlation
+      - seq_gap_count: MAVLink integrity validation
+    
+    REMOVED (non-essential):
+      - msg_type_counts histogram
+      - heartbeat_interval_ms statistics
+    """
+    
+    def __init__(self, listen_port: int = MAVLINK_SNIFF_PORT):
+        self.listen_port = listen_port
+        self._conn = None
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
         
-    def run(self):
-        log(f"Chronos Listener sniffing on UDP {self.port}...")
-        with open(self.output_file, "a") as f:
-            while self.running:
-                try:
-                    data, addr = self.sock.recvfrom(4096)
-                    recv_ts = time.time()
-                    
-                    try:
-                        packet = json.loads(data.decode("utf-8"))
-                        
-                        # Calculate Metrics
-                        sent_ts = packet.get("ts", recv_ts)
-                        latency_ms = (recv_ts - sent_ts) * 1000.0
-                        
-                        # Augment
-                        packet["recv_ts"] = recv_ts
-                        packet["latency_ms"] = latency_ms
-                        
-                        # Write to Disk
-                        f.write(json.dumps(packet) + "\n")
-                        f.flush()
-                        
-                        self.packet_count += 1
-                        if self.packet_count % 10 == 0:
-                            log(f"RX: {self.packet_count} | Latency: {latency_ms:.2f}ms | Suite: {packet.get('suite')}")
-                            
-                    except json.JSONDecodeError:
-                        log("WARN: Received non-JSON packet")
-                        
-                except Exception as e:
-                    if self.running:
-                        log(f"Listener Error: {e}")
+        # VALIDATION-ONLY counters
+        self._total_rx = 0
+        self._seq_gaps = 0
+        self._last_seq: Dict[int, int] = {}
+        
+        self._mavutil = None
+        try:
+            from pymavlink import mavutil
+            self._mavutil = mavutil
+        except ImportError:
+            log("[MAVLINK] pymavlink not available")
+    
+    def start(self):
+        """Start listening for MAVLink messages."""
+        if not self._mavutil:
+            return False
+        
+        try:
+            self._conn = self._mavutil.mavlink_connection(
+                f"udpin:0.0.0.0:{self.listen_port}",
+                source_system=255
+            )
+            self._running = True
+            self._thread = threading.Thread(target=self._listen_loop, daemon=True)
+            self._thread.start()
+            log(f"[MAVLINK] Listening on UDP {self.listen_port}")
+            return True
+        except Exception as e:
+            log(f"[MAVLINK] Failed to start: {e}")
+            return False
+    
+    def _listen_loop(self):
+        while self._running:
+            try:
+                msg = self._conn.recv_match(blocking=True, timeout=1.0)
+                if msg:
+                    self._process_message(msg)
+            except Exception:
+                if self._running:
+                    pass
+    
+    def _process_message(self, msg):
+        """Process MAVLink message - validation metrics only."""
+        with self._lock:
+            self._total_rx += 1
+            
+            # Sequence gap detection for integrity validation
+            if hasattr(msg, '_header'):
+                sysid = msg._header.srcSystem
+                seq = msg._header.seq
+                if sysid in self._last_seq:
+                    expected = (self._last_seq[sysid] + 1) % 256
+                    if seq != expected:
+                        self._seq_gaps += 1
+                self._last_seq[sysid] = seq
+    
+    def stop(self) -> Dict[str, Any]:
+        """Stop and return validation metrics only."""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        
+        with self._lock:
+            # VALIDATION-ONLY output
+            return {
+                "total_msgs_received": self._total_rx,
+                "seq_gap_count": self._seq_gaps,
+            }
+    
+    def reset(self):
+        """Reset counters for new suite."""
+        with self._lock:
+            self._total_rx = 0
+            self._seq_gaps = 0
+            self._last_seq = {}
 
-    def stop(self):
+# =============================================================================
+# Traffic Generator
+# =============================================================================
+
+class TrafficGenerator:
+    """Generates UDP traffic from GCS to drone through the tunnel."""
+    
+    def __init__(self, rate_mbps: float = DEFAULT_RATE_MBPS):
+        self.rate_mbps = rate_mbps
+        self.tx_sock: Optional[socket.socket] = None
+        self.rx_sock: Optional[socket.socket] = None
         self.running = False
-        self.sock.close()
-
-# =============================================================================
-# Control Server (The Servant)
-# =============================================================================
-
-class ControlServer:
-    def __init__(self, proxy: GcsProxyManager):
-        self.proxy = proxy
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((GCS_CONTROL_HOST, GCS_CONTROL_PORT))
-        self.sock.listen(5)
-        self.running = True
+        self.complete = False
         
-    def run(self):
-        log(f"Control Server listening on {GCS_CONTROL_PORT}")
+        self._lock = threading.Lock()
+        self._tx_count = 0
+        self._rx_count = 0
+        self._tx_bytes = 0
+        self._rx_bytes = 0
+        self._latencies: List[float] = []
+    
+    def start(self, duration: float):
+        """Start traffic generation in background."""
+        self.tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.tx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+        
+        self.rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+        self.rx_sock.bind((GCS_HOST, GCS_PLAIN_RX_PORT))
+        self.rx_sock.settimeout(1.0)
+        
+        self.running = True
+        self.complete = False
+        self._tx_count = 0
+        self._rx_count = 0
+        self._tx_bytes = 0
+        self._rx_bytes = 0
+        self._latencies = []
+        
+        # Start receiver thread
+        self.rx_thread = threading.Thread(target=self._receive_loop, daemon=True)
+        self.rx_thread.start()
+        
+        # Start sender thread
+        self.tx_thread = threading.Thread(target=self._send_loop, args=(duration,), daemon=True)
+        self.tx_thread.start()
+        
+        log(f"Traffic started: {self.rate_mbps} Mbps for {duration}s")
+    
+    def _send_loop(self, duration: float):
+        """Send packets at target rate with embedded timestamps."""
+        packets_per_sec = (self.rate_mbps * 1_000_000) / (8 * PAYLOAD_SIZE)
+        interval = 1.0 / packets_per_sec
+        batch_size = max(1, int(packets_per_sec / 100))
+        batch_interval = interval * batch_size
+        
+        start_time = time.time()
+        end_time = start_time + duration
+        seq = 0
+        
+        while time.time() < end_time and self.running:
+            batch_start = time.time()
+            
+            for _ in range(batch_size):
+                try:
+                    # Build packet with timestamp
+                    ts_ns = time.time_ns()
+                    packet = {
+                        "ts_ns": ts_ns,
+                        "seq": seq,
+                        "pad": "X" * (PAYLOAD_SIZE - 100),
+                    }
+                    data = json.dumps(packet).encode()
+                    
+                    # Send to drone's plaintext RX port
+                    self.tx_sock.sendto(data, (DRONE_HOST, DRONE_PLAIN_RX_PORT))
+                    
+                    with self._lock:
+                        self._tx_count += 1
+                        self._tx_bytes += len(data)
+                    
+                    seq += 1
+                except Exception:
+                    pass
+            
+            # Rate limiting
+            elapsed = time.time() - batch_start
+            if elapsed < batch_interval:
+                time.sleep(batch_interval - elapsed)
+        
+        self.complete = True
+        log(f"Traffic complete: TX={self._tx_count}, RX={self._rx_count}")
+    
+    def _receive_loop(self):
+        """Receive echo responses."""
         while self.running:
             try:
-                client, addr = self.sock.accept()
-                threading.Thread(target=self._handle_client, args=(client,), daemon=True).start()
-            except Exception as e:
-                if self.running:
-                    log(f"Accept Error: {e}")
+                data, addr = self.rx_sock.recvfrom(65535)
+                recv_ts = time.time_ns()
+                
+                with self._lock:
+                    self._rx_count += 1
+                    self._rx_bytes += len(data)
+                
+                # Extract send timestamp for latency
+                try:
+                    pkt = json.loads(data.decode("utf-8"))
+                    if "ts_ns" in pkt:
+                        rtt_ms = (recv_ts - pkt["ts_ns"]) / 1_000_000
+                        with self._lock:
+                            self._latencies.append(rtt_ms)
+                except Exception:
+                    pass
                     
-    def _handle_client(self, client):
-        try:
-            data = b""
-            while True:
-                chunk = client.recv(4096)
-                if not chunk: break
-                data += chunk
-                if b"\n" in data: break
-            
-            req = json.loads(data.decode())
-            resp = self._process_command(req)
-            client.sendall(json.dumps(resp).encode() + b"\n")
-            
-        except Exception as e:
-            log(f"Client Error: {e}")
-        finally:
-            client.close()
-
-    def _process_command(self, req: dict) -> dict:
-        cmd = req.get("cmd")
-        
-        if cmd == "start_proxy":
-            suite = req.get("suite")
-            log(f"CMD: start_proxy({suite})")
-            if self.proxy.start(suite):
-                return {"status": "ok"}
-            return {"status": "error"}
-            
-        elif cmd == "prepare_rekey":
-            log("CMD: prepare_rekey")
-            self.proxy.stop()
-            return {"status": "ok"}
-            
-        return {"status": "error", "message": "unknown_cmd"}
-
+            except socket.timeout:
+                continue
+            except Exception:
+                if self.running:
+                    pass
+    
+    def get_stats(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "tx_count": self._tx_count,
+                "rx_count": self._rx_count,
+                "tx_bytes": self._tx_bytes,
+                "rx_bytes": self._rx_bytes,
+                "latencies": self._latencies.copy(),
+                "complete": self.complete,
+            }
+    
     def stop(self):
         self.running = False
-        self.sock.close()
+        if hasattr(self, 'tx_thread'):
+            self.tx_thread.join(timeout=2.0)
+        if hasattr(self, 'rx_thread'):
+            self.rx_thread.join(timeout=2.0)
+        if self.tx_sock:
+            self.tx_sock.close()
+        if self.rx_sock:
+            self.rx_sock.close()
+    
+    def is_complete(self) -> bool:
+        return self.complete
 
 # =============================================================================
-# Main
+# GCS Proxy Manager
 # =============================================================================
 
-if __name__ == "__main__":
-    # Clean env
-    # (Simplified for bench)
+class GcsProxyManager:
+    """Manages GCS proxy subprocess."""
     
-    proxy = GcsProxyManager()
-    server = ControlServer(proxy)
-    listener = JsonChronosListener(GCS_PLAIN_RX_PORT, SESSION_LOG)
+    def __init__(self, logs_dir: Path):
+        self.logs_dir = logs_dir
+        self.managed_proc: Optional[ManagedProcess] = None
+        self.current_suite: Optional[str] = None
+        self._log_handle = None
     
-    t_server = threading.Thread(target=server.run, daemon=True)
-    t_listener = threading.Thread(target=listener.run, daemon=True)
+    def start(self, suite_name: str) -> bool:
+        """Start proxy with given suite."""
+        if self.managed_proc and self.managed_proc.is_running():
+            self.stop()
+        
+        suite = get_suite(suite_name)
+        if not suite:
+            log(f"Unknown suite: {suite_name}")
+            return False
+        
+        secret_dir = SECRETS_DIR / suite_name
+        gcs_key = secret_dir / "gcs_signing.key"
+        
+        if not gcs_key.exists():
+            log(f"Missing key: {gcs_key}")
+            return False
+        
+        cmd = [
+            sys.executable, "-m", "core.run_proxy", "gcs",
+            "--suite", suite_name,
+            "--gcs-secret-file", str(gcs_key),
+            "--quiet",
+            "--status-file", str(self.logs_dir / "gcs_status.json")
+        ]
+        
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        log_path = self.logs_dir / f"gcs_proxy_{suite_name}_{timestamp}.log"
+        self._log_handle = open(log_path, "w", encoding="utf-8")
+        
+        self.managed_proc = ManagedProcess(
+            cmd=cmd,
+            name=f"gcs-proxy-{suite_name}",
+            stdout=self._log_handle,
+            stderr=subprocess.STDOUT
+        )
+        
+        if self.managed_proc.start():
+            self.current_suite = suite_name
+            time.sleep(2.0)
+            if not self.managed_proc.is_running():
+                log(f"Proxy exited early for {suite_name}")
+                return False
+            log(f"GCS proxy started for {suite_name}")
+            return True
+        return False
     
-    t_server.start()
-    t_listener.start()
+    def stop(self):
+        """Stop proxy."""
+        if self.managed_proc:
+            self.managed_proc.stop()
+            self.managed_proc = None
+            self.current_suite = None
+        if self._log_handle:
+            self._log_handle.close()
+            self._log_handle = None
     
+    def is_running(self) -> bool:
+        return self.managed_proc is not None and self.managed_proc.is_running()
+
+# =============================================================================
+# Control Server
+# =============================================================================
+
+class GcsBenchmarkServer:
+    """
+    GCS benchmark server - listens for drone commands.
+    
+    Commands:
+        ping: Check if server is ready
+        get_info: Return GCS environment info
+        prepare_rekey: Stop current proxy
+        start_proxy: Start proxy for suite
+        start_traffic: Start traffic generation
+        stop_suite: Stop suite and return metrics
+        shutdown: Graceful shutdown
+    """
+    
+    def __init__(self, logs_dir: Path, run_id: str):
+        self.logs_dir = logs_dir
+        self.run_id = run_id
+        
+        # Components
+        self.proxy = GcsProxyManager(logs_dir)
+        self.traffic: Optional[TrafficGenerator] = None
+        # NOTE: GcsSystemMetricsCollector REMOVED - GCS resources not policy-relevant
+        self.mavlink_monitor = GcsMavLinkCollector()
+        
+        # Server state
+        self.server_sock: Optional[socket.socket] = None
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        
+        # Current suite state
+        self.current_suite: Optional[str] = None
+        self.handshake_start_time = 0.0
+    
+    def start(self):
+        """Start the benchmark server."""
+        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_sock.bind((GCS_CONTROL_HOST, GCS_CONTROL_PORT))
+        self.server_sock.listen(5)
+        self.server_sock.settimeout(1.0)
+        
+        self.running = True
+        self.thread = threading.Thread(target=self._server_loop, daemon=True)
+        self.thread.start()
+        
+        # Start MAVLink monitor
+        self.mavlink_monitor.start()
+        
+        log(f"GCS Benchmark Server listening on {GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}")
+        log(f"Run ID: {self.run_id}")
+    
+    def _server_loop(self):
+        while self.running:
+            try:
+                client, addr = self.server_sock.accept()
+                log(f"Connection from {addr}")
+                self._handle_client(client)
+            except socket.timeout:
+                continue
+            except Exception as e:
+                if self.running:
+                    log(f"Server error: {e}")
+    
+    def _handle_client(self, client: socket.socket):
+        try:
+            data = b""
+            client.settimeout(30.0)
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+                if b"\n" in data:
+                    break
+            
+            if data:
+                request = json.loads(data.decode().strip())
+                response = self._handle_command(request)
+                client.sendall(json.dumps(response).encode() + b"\n")
+        except Exception as e:
+            log(f"Client error: {e}")
+        finally:
+            client.close()
+    
+    def _handle_command(self, request: dict) -> dict:
+        cmd = request.get("cmd", "")
+        
+        if cmd == "ping":
+            return {
+                "status": "ok",
+                "message": "pong",
+                "role": "gcs_benchmark",
+                "run_id": self.run_id,
+            }
+        
+        elif cmd == "get_info":
+            return {
+                "status": "ok",
+                "hostname": socket.gethostname(),
+                "ip": GCS_HOST,
+                "kernel_version": get_kernel_version(),
+                "python_env": get_python_env(),
+            }
+        
+        elif cmd == "prepare_rekey":
+            log("CMD: prepare_rekey")
+            
+            # Stop traffic if running
+            if self.traffic:
+                self.traffic.stop()
+                self.traffic = None
+            
+            # Stop proxy
+            self.proxy.stop()
+            self.current_suite = None
+            
+            return {"status": "ok"}
+        
+        elif cmd == "start_proxy":
+            suite = request.get("suite")
+            if not suite:
+                return {"status": "error", "message": "missing suite parameter"}
+            
+            log(f"CMD: start_proxy({suite})")
+            
+            # Reset MAVLink validation counters
+            self.mavlink_monitor.reset()
+            
+            # Record handshake start
+            self.handshake_start_time = time.time()
+            
+            # Start proxy
+            if not self.proxy.start(suite):
+                return {"status": "error", "message": "proxy_start_failed"}
+            
+            self.current_suite = suite
+            
+            return {
+                "status": "ok",
+                "message": "suite_started",
+                "suite": suite,
+                "handshake_start_time": self.handshake_start_time,
+            }
+        
+        elif cmd == "start_traffic":
+            duration = request.get("duration", 10.0)
+            rate_mbps = request.get("rate_mbps", DEFAULT_RATE_MBPS)
+            
+            log(f"CMD: start_traffic(duration={duration}, rate={rate_mbps})")
+            
+            # Start traffic generator
+            self.traffic = TrafficGenerator(rate_mbps=rate_mbps)
+            self.traffic.start(duration)
+            
+            return {"status": "ok", "message": "traffic_started"}
+        
+        elif cmd == "stop_suite":
+            log("CMD: stop_suite")
+            
+            # Stop traffic
+            traffic_stats = {}
+            if self.traffic:
+                traffic_stats = self.traffic.get_stats()
+                self.traffic.stop()
+                self.traffic = None
+            
+            # Collect validation-only MAVLink metrics
+            mavlink_metrics = self.mavlink_monitor.stop()
+            
+            # Stop proxy
+            self.proxy.stop()
+            
+            # Restart MAVLink monitor for next suite
+            self.mavlink_monitor = GcsMavLinkCollector()
+            self.mavlink_monitor.start()
+            
+            # POLICY REALIGNMENT: GCS system metrics removed
+            # Only traffic validation + MAVLink integrity returned
+            return {
+                "status": "ok",
+                "suite": self.current_suite,
+                "traffic_stats": traffic_stats,
+                "mavlink_validation": mavlink_metrics,
+            }
+        
+        elif cmd == "shutdown":
+            log("CMD: shutdown")
+            self.stop()
+            return {"status": "ok", "message": "shutting_down"}
+        
+        return {"status": "error", "message": f"unknown_cmd: {cmd}"}
+    
+    def stop(self):
+        """Stop the server."""
+        log("Shutting down...")
+        self.running = False
+        
+        if self.traffic:
+            self.traffic.stop()
+        
+        self.proxy.stop()
+        
+        if self.server_sock:
+            self.server_sock.close()
+        
+        if self.thread:
+            self.thread.join(timeout=2.0)
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(description="GCS Benchmark Server - Operation Chronos v2")
+    parser.add_argument("--port", type=int, default=GCS_CONTROL_PORT,
+                        help=f"Control server port (default: {GCS_CONTROL_PORT})")
+    parser.add_argument("--run-id", type=str, default=None,
+                        help="Run ID (default: auto-generated)")
+    args = parser.parse_args()
+    
+    # Generate run ID
+    run_id = args.run_id or f"gcs_bench_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    
+    # Create logs directory
+    run_logs_dir = LOGS_DIR / run_id
+    run_logs_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Start server
+    server = GcsBenchmarkServer(
+        logs_dir=run_logs_dir,
+        run_id=run_id,
+    )
+    
+    # Handle signals
+    def signal_handler(sig, frame):
+        log("Interrupt received, stopping...")
+        server.stop()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    log("=" * 60)
+    log("OPERATION CHRONOS v2: GCS Benchmark Server")
+    log("=" * 60)
+    log(f"Listening for drone commands...")
+    log(f"Press Ctrl+C to stop")
+    
+    server.start()
+    
+    # Keep main thread alive
     try:
-        while True:
-            time.sleep(1)
+        while server.running:
+            time.sleep(1.0)
     except KeyboardInterrupt:
         log("Stopping...")
         server.stop()
-        listener.stop()
-        proxy.stop()
+
+if __name__ == "__main__":
+    main()

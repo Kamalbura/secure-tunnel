@@ -37,6 +37,7 @@ from core.config import CONFIG
 from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
 from sscheduler.benchmark_policy import BenchmarkPolicy, BenchmarkAction, get_suite_count
+from sscheduler.local_mon import LocalMonitor
 
 # Import MetricsAggregator for comprehensive metrics collection
 try:
@@ -286,6 +287,10 @@ class BenchmarkScheduler:
             cycle_interval_s=args.interval,
             filter_aead=args.filter_aead
         )
+
+        # Initialize Local Monitor for aggressive thermal/power logging
+        self.local_mon = LocalMonitor()
+        self.local_mon.start()
         
         # Limit suites if requested
         if args.max_suites and args.max_suites < len(self.policy.suite_list):
@@ -526,6 +531,17 @@ class BenchmarkScheduler:
             "ciphertext_size_bytes": metrics.get("ciphertext_size_bytes", 0),
             "sig_size_bytes": metrics.get("sig_size_bytes", 0)
         }
+
+        # Add Aggressive Local Metrics (Temp/Throttle)
+        if self.local_mon:
+            local = self.local_mon.get_metrics()
+            entry.update({
+                "cpu_temp_c": local.temp_c,
+                "cpu_temp_roc": local.temp_roc,
+                "cpu_pct": local.cpu_pct,
+                "battery_mv": local.battery_mv,
+                "armed": local.armed
+            })
         
         try:
             with open(self.results_file, "a") as f:

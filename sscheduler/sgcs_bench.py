@@ -61,6 +61,7 @@ GCS_PLAIN_RX_PORT = int(CONFIG.get("GCS_PLAINTEXT_RX", 47002))
 DRONE_PLAIN_RX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_RX", 47004))
 
 MAVLINK_SNIFF_PORT = 14552  # MAVProxy output for telemetry sniffing
+MAVLINK_INPUT_PORT = 14550  # MAVProxy input from proxy
 
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
 ROOT = Path(__file__).parent.parent
@@ -69,6 +70,9 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 PAYLOAD_SIZE = 1200
 DEFAULT_RATE_MBPS = 110.0
+
+# MAVProxy configuration
+MAVPROXY_ENABLE_GUI = True  # Enable --map and --console
 
 # =============================================================================
 # Logging Setup
@@ -98,6 +102,100 @@ def get_kernel_version() -> str:
 def get_python_env() -> str:
     """Get Python environment info."""
     return f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
+# =============================================================================
+# MAVProxy Manager (GCS side with GUI)
+# =============================================================================
+
+class GcsMavProxyManager:
+    """
+    Manages MAVProxy subprocess on GCS side with optional GUI (--map --console).
+    
+    MAVProxy receives telemetry from the crypto proxy on UDP 14550
+    and outputs to UDP 14552 for sniffing/validation.
+    """
+    
+    def __init__(self, logs_dir: Path, enable_gui: bool = MAVPROXY_ENABLE_GUI):
+        self.logs_dir = logs_dir
+        self.enable_gui = enable_gui
+        self.process: Optional[subprocess.Popen] = None
+        self._log_handle = None
+    
+    def start(self) -> bool:
+        """Start MAVProxy with map and console if enabled."""
+        if self.process and self.process.poll() is None:
+            log("[MAVPROXY] Already running")
+            return True
+        
+        # Build command
+        cmd = [
+            "mavproxy.py",
+            f"--master=udp:127.0.0.1:{MAVLINK_INPUT_PORT}",
+            f"--out=udp:127.0.0.1:{MAVLINK_SNIFF_PORT}",
+        ]
+        
+        if self.enable_gui:
+            cmd.extend(["--map", "--console"])
+            log("[MAVPROXY] Starting with GUI (map + console)")
+        else:
+            log("[MAVPROXY] Starting headless")
+        
+        try:
+            # Log file for MAVProxy output
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            log_path = self.logs_dir / f"mavproxy_gcs_{timestamp}.log"
+            self._log_handle = open(log_path, "w", encoding="utf-8")
+            
+            # Start MAVProxy
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=self._log_handle,
+                stderr=subprocess.STDOUT,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if platform.system() == "Windows" else 0
+            )
+            
+            # Give it time to start
+            time.sleep(2.0)
+            
+            if self.process.poll() is not None:
+                log(f"[MAVPROXY] Exited early with code {self.process.returncode}")
+                return False
+            
+            log(f"[MAVPROXY] Started (PID: {self.process.pid})")
+            return True
+            
+        except FileNotFoundError:
+            log("[MAVPROXY] mavproxy.py not found in PATH")
+            return False
+        except Exception as e:
+            log(f"[MAVPROXY] Failed to start: {e}")
+            return False
+    
+    def stop(self):
+        """Stop MAVProxy."""
+        if self.process:
+            try:
+                if platform.system() == "Windows":
+                    self.process.terminate()
+                else:
+                    self.process.terminate()
+                self.process.wait(timeout=5.0)
+                log("[MAVPROXY] Stopped")
+            except Exception as e:
+                log(f"[MAVPROXY] Error stopping: {e}")
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
+            self.process = None
+        
+        if self._log_handle:
+            self._log_handle.close()
+            self._log_handle = None
+    
+    def is_running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
 
 # =============================================================================
 # GCS System Metrics - REMOVED PER POLICY REALIGNMENT
@@ -455,6 +553,7 @@ class GcsBenchmarkServer:
         
         # Components
         self.proxy = GcsProxyManager(logs_dir)
+        self.mavproxy = GcsMavProxyManager(logs_dir, enable_gui=MAVPROXY_ENABLE_GUI)
         self.traffic: Optional[TrafficGenerator] = None
         # NOTE: GcsSystemMetricsCollector REMOVED - GCS resources not policy-relevant
         self.mavlink_monitor = GcsMavLinkCollector()
@@ -479,6 +578,10 @@ class GcsBenchmarkServer:
         self.running = True
         self.thread = threading.Thread(target=self._server_loop, daemon=True)
         self.thread.start()
+        
+        # Start MAVProxy with GUI
+        if not self.mavproxy.start():
+            log("[WARNING] MAVProxy failed to start - continuing without it")
         
         # Start MAVLink monitor
         self.mavlink_monitor.start()
@@ -636,6 +739,7 @@ class GcsBenchmarkServer:
             self.traffic.stop()
         
         self.proxy.stop()
+        self.mavproxy.stop()
         
         if self.server_sock:
             self.server_sock.close()
@@ -653,7 +757,14 @@ def main():
                         help=f"Control server port (default: {GCS_CONTROL_PORT})")
     parser.add_argument("--run-id", type=str, default=None,
                         help="Run ID (default: auto-generated)")
+    parser.add_argument("--no-gui", action="store_true",
+                        help="Disable MAVProxy GUI (map + console)")
     args = parser.parse_args()
+    
+    # Override GUI setting if --no-gui specified
+    global MAVPROXY_ENABLE_GUI
+    if args.no_gui:
+        MAVPROXY_ENABLE_GUI = False
     
     # Generate run ID
     run_id = args.run_id or f"gcs_bench_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"

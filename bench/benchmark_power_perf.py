@@ -1189,7 +1189,7 @@ def save_result(result: BenchmarkResult, output_dir: Path) -> None:
 def main():
     parser = argparse.ArgumentParser(description="PQC Benchmark with Power & Perf")
     parser.add_argument("-n", "--iterations", type=int, default=DEFAULT_ITERATIONS)
-    parser.add_argument("-o", "--output-dir", type=str, default="bench_results_power")
+    parser.add_argument("-o", "--output-dir", type=str, default="benchmarks/bench_results_power")
     parser.add_argument("--skip-kem", action="store_true")
     parser.add_argument("--skip-sig", action="store_true")
     parser.add_argument("--skip-aead", action="store_true")

@@ -1017,8 +1017,8 @@ def generate_markdown_report(
 
 def main():
     parser = argparse.ArgumentParser(description="Analyze power benchmarks")
-    parser.add_argument("-i", "--input", type=str, default="bench_results_power")
-    parser.add_argument("-o", "--output", type=str, default="power_analysis")
+    parser.add_argument("-i", "--input", type=str, default="benchmarks/bench_results_power")
+    parser.add_argument("-o", "--output", type=str, default="benchmarks/power_analysis")
     args = parser.parse_args()
     
     input_dir = Path(args.input)

@@ -488,7 +488,7 @@ def main():
     parser = argparse.ArgumentParser(description="PQC Benchmark Analysis")
     parser.add_argument("--bench-dir", type=str, default="bench_results",
                         help="Path to benchmark results directory")
-    parser.add_argument("--output-dir", type=str, default="bench_analysis",
+    parser.add_argument("--output-dir", type=str, default="benchmarks/bench_analysis",
                         help="Path to output directory")
     args = parser.parse_args()
     

@@ -10,11 +10,11 @@
 
 ### Critical Finding: Report Uses Wrong Data Source
 
-The existing `BENCHMARK_REPORT.md` in `individual_benchmarks/analysis/` was generated from **5-iteration test data** (`bench_results_power/`) instead of the **100-iteration production data** (`individual_benchmarks/raw_data/`).
+The existing `BENCHMARK_REPORT.md` in `individual_benchmarks/analysis/` was generated from **5-iteration test data** (`benchmarks/bench_results_power/`) instead of the **100-iteration production data** (`individual_benchmarks/raw_data/`).
 
 | Data Source | Location | Iterations | Total Measurements |
 |------------|----------|------------|-------------------|
-| **INCORRECT** (used for report) | `bench_results_power/` | 5 | 375 |
+| **INCORRECT** (used for report) | `benchmarks/bench_results_power/` | 5 | 375 |
 | **CORRECT** (production data) | `individual_benchmarks/raw_data/` | 100 | 7,500 |
 
 This means **all timing, power, and energy values in the existing report are statistically unreliable**.
@@ -167,7 +167,7 @@ Timestamp:        2026-01-11T15:03:15Z
 
 ### ❌ What Is Incorrect
 
-1. **Report uses wrong data source** - `bench_results_power/` (5 iter) instead of `individual_benchmarks/raw_data/` (100 iter)
+1. **Report uses wrong data source** - `benchmarks/bench_results_power/` (5 iter) instead of `individual_benchmarks/raw_data/` (100 iter)
 2. **All numeric values in report are unreliable** - Based on insufficient sample size
 3. **Some timing errors exceed 400%** - Particularly for fast operations
 
@@ -178,7 +178,7 @@ Timestamp:        2026-01-11T15:03:15Z
    python bench/analyze_power_benchmark.py -i individual_benchmarks/raw_data -o individual_benchmarks/analysis
    ```
 
-2. **Delete or rename** `bench_results_power/` to prevent future confusion
+2. **Delete or rename** `benchmarks/bench_results_power/` to prevent future confusion
 
 3. **Use the values in this audit report** for any immediate analysis needs
 
@@ -218,9 +218,9 @@ Timestamp:        2026-01-11T15:03:15Z
 
 ## Data Source Evidence
 
-### bench_results_power/ (INCORRECT - 5 iterations)
+### benchmarks/bench_results_power/ (INCORRECT - 5 iterations)
 ```
-Path: bench_results_power/raw/kem/ML_KEM_768_keygen.json
+Path: benchmarks/bench_results_power/raw/kem/ML_KEM_768_keygen.json
 Timestamp: 2026-01-11T14:27:11.601701Z
 Iterations: 5
 ```

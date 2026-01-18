@@ -363,8 +363,8 @@ CONFIG = {
         
         # Output configuration
         "output": {
-            "base_dir": "bench_results_power",   # Default output directory
-            "analysis_dir": "power_analysis",    # Analysis output directory
+            "base_dir": "benchmarks/bench_results_power",   # Default output directory
+            "analysis_dir": "benchmarks/power_analysis",    # Analysis output directory
             "save_raw_samples": False,           # Save individual power samples (large)
             "json_indent": 2,                    # JSON formatting
         },

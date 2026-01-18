@@ -26,7 +26,6 @@ import signal
 import argparse
 import threading
 import subprocess
-import atexit
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -35,19 +34,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
-from core.process import ManagedProcess
-from tools.mavproxy_manager import MavProxyManager
-from sscheduler.gcs_metrics import GcsMetricsCollector
-from sscheduler.control_security import get_drone_psk, create_challenge, verify_response
-from core.clock_sync import ClockSync
-
-# Import MetricsAggregator for comprehensive metrics collection
-try:
-    from core.metrics_aggregator import MetricsAggregator
-    HAS_METRICS_AGGREGATOR = True
-except ImportError:
-    HAS_METRICS_AGGREGATOR = False
-    MetricsAggregator = None
 
 # Extract config values (single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
@@ -55,8 +41,6 @@ GCS_HOST = str(CONFIG.get("GCS_HOST"))
 GCS_PLAIN_TX_PORT = int(CONFIG.get("GCS_PLAINTEXT_TX", 47001))
 GCS_PLAIN_RX_PORT = int(CONFIG.get("GCS_PLAINTEXT_RX", 47002))
 DRONE_PLAIN_RX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_RX", 47004))
-GCS_TELEMETRY_PORT = int(CONFIG.get("GCS_TELEMETRY_PORT", 52080))
-GCS_TELEMETRY_SNIFF_PORT = 14552
 TCP_CTRL_PORT = CONFIG.get("TCP_HANDSHAKE_PORT")
 
 # ============================================================
@@ -98,37 +82,189 @@ def log(msg: str):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[{ts}] [sgcs-follow] {msg}", flush=True)
 
-def wait_for_tcp_port(port: int, timeout: float = 5.0) -> bool:
-    """Wait for a local TCP port to be listening."""
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return True
-        except (ConnectionRefusedError, OSError, socket.timeout):
-            time.sleep(0.2)
-    return False
+# ============================================================
+# MAVProxy (GCS GUI)
+# ============================================================
 
-# Traffic generation removed from codebase. Native traffic generator implementation
-# was deleted to ensure no synthetic or test traffic can be produced by this repository.
+def start_mavproxy_gui() -> subprocess.Popen | None:
+    """Start MAVProxy with map+console on the GCS.
+
+    This is for operator visibility (monitor/map), not for traffic generation.
+    We bind MAVProxy to the plaintext RX port so it can display MAVLink that
+    arrives via the tunnel.
+    """
+    try:
+        bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
+        listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
+        qgc_port = int(CONFIG.get("QGC_PORT", 14550))
+        sniff_port = int(CONFIG.get("GCS_TELEMETRY_SNIFF_PORT", 14552))
+
+        master_str = f"udpin:{bind_host}:{listen_port}"
+        cmd = [
+            sys.executable,
+            "-m",
+            "MAVProxy.mavproxy",
+            f"--master={master_str}",
+            "--dialect=ardupilotmega",
+            "--nowait",
+            "--map",
+            "--console",
+            f"--out=udp:127.0.0.1:{qgc_port}",
+            f"--out=udp:127.0.0.1:{sniff_port}",
+        ]
+
+        env = os.environ.copy()
+        env["TERM"] = env.get("TERM") or "dumb"
+
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+
+        log(f"Starting MAVProxy GUI: {' '.join(cmd)}")
+        return subprocess.Popen(
+            cmd,
+            stdin=None,
+            stdout=None,
+            stderr=None,
+            env=env,
+            creationflags=creationflags,
+        )
+    except Exception as e:
+        log(f"WARN: MAVProxy GUI failed to start: {e}")
+        return None
+
+# ============================================================
+# Traffic Generator
+# ============================================================
+
+class TrafficGenerator:
+    """Generates UDP traffic from GCS to drone"""
+    
+    def __init__(self, rate_mbps: float = DEFAULT_RATE_MBPS):
+        self.rate_mbps = rate_mbps
+        self.tx_sock = None
+        self.rx_sock = None
+        self.running = False
+        self.tx_count = 0
+        self.rx_count = 0
+        self.tx_bytes = 0
+        self.rx_bytes = 0
+        self.lock = threading.Lock()
+        self.complete = False
+    
+    def start(self, duration: float):
+        """Start traffic generation in background thread"""
+        self.tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.tx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+
+        self.rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+        # Bind receive socket on the GCS plaintext RX port so echoes return here
+        self.rx_sock.bind((GCS_HOST, GCS_PLAIN_RX_PORT))
+        self.rx_sock.settimeout(1.0)
+        
+        self.running = True
+        self.complete = False
+        self.tx_count = 0
+        self.rx_count = 0
+        self.tx_bytes = 0
+        self.rx_bytes = 0
+        
+        # Start receiver thread
+        self.rx_thread = threading.Thread(target=self._receive_loop, daemon=True)
+        self.rx_thread.start()
+        
+        # Start sender thread
+        self.tx_thread = threading.Thread(target=self._send_loop, args=(duration,), daemon=True)
+        self.tx_thread.start()
+        
+        log(f"Traffic started: {self.rate_mbps} Mbps for {duration}s")
+    
+    def _send_loop(self, duration: float):
+        """Send packets at target rate"""
+        payload = b"X" * PAYLOAD_SIZE
+        packets_per_sec = (self.rate_mbps * 1_000_000) / (8 * PAYLOAD_SIZE)
+        interval = 1.0 / packets_per_sec
+        batch_size = max(1, int(packets_per_sec / 100))  # Send in batches
+        batch_interval = interval * batch_size
+        
+        start_time = time.time()
+        end_time = start_time + duration
+        
+        while time.time() < end_time and self.running:
+            batch_start = time.time()
+            
+            for _ in range(batch_size):
+                try:
+                    # Send traffic to the Drone's plaintext receive port
+                    self.tx_sock.sendto(payload, (DRONE_HOST, DRONE_PLAIN_RX_PORT))
+                    with self.lock:
+                        self.tx_count += 1
+                        self.tx_bytes += len(payload)
+                except Exception:
+                    pass
+            
+            # Rate limiting
+            elapsed = time.time() - batch_start
+            if elapsed < batch_interval:
+                time.sleep(batch_interval - elapsed)
+        
+        self.complete = True
+        log(f"Traffic complete: TX={self.tx_count}, RX={self.rx_count}")
+    
+    def _receive_loop(self):
+        """Receive echo responses"""
+        while self.running:
+            try:
+                data, addr = self.rx_sock.recvfrom(65535)
+                with self.lock:
+                    self.rx_count += 1
+                    self.rx_bytes += len(data)
+            except socket.timeout:
+                continue
+            except Exception:
+                if self.running:
+                    pass
+    
+    def get_stats(self):
+        with self.lock:
+            return {
+                "tx_count": self.tx_count,
+                "rx_count": self.rx_count,
+                "tx_bytes": self.tx_bytes,
+                "rx_bytes": self.rx_bytes,
+                "complete": self.complete,
+            }
+    
+    def stop(self):
+        self.running = False
+        if hasattr(self, 'tx_thread'):
+            self.tx_thread.join(timeout=2.0)
+        if hasattr(self, 'rx_thread'):
+            self.rx_thread.join(timeout=2.0)
+        if self.tx_sock:
+            self.tx_sock.close()
+        if self.rx_sock:
+            self.rx_sock.close()
+    
+    def is_complete(self):
+        return self.complete
 
 # ============================================================
 # GCS Proxy Management
 # ============================================================
 
-# Status file for GCS proxy (for data plane metrics)
-GCS_STATUS_FILE = Path(__file__).parent.parent / "logs" / "gcs_status.json"
-
 class GcsProxyManager:
     """Manages GCS proxy subprocess"""
     
     def __init__(self):
-        self.managed_proc = None
+        self.process = None
         self.current_suite = None
     
     def start(self, suite_name: str) -> bool:
         """Start GCS proxy with given suite"""
-        if self.managed_proc and self.managed_proc.is_running():
+        if self.process and self.process.poll() is None:
             self.stop()
         
         suite = get_suite(suite_name)
@@ -143,79 +279,43 @@ class GcsProxyManager:
             log(f"Missing key: {gcs_key}")
             return False
         
-        # Clear old status file before starting proxy
-        try:
-            if GCS_STATUS_FILE.exists():
-                GCS_STATUS_FILE.unlink()
-        except Exception:
-            pass
-        
         cmd = [
             sys.executable, "-m", "core.run_proxy", "gcs",
             "--suite", suite_name,
             "--gcs-secret-file", str(gcs_key),
-            "--status-file", str(GCS_STATUS_FILE),
             "--quiet"
         ]
         
         log(f"Launching: {' '.join(cmd)}")
-        self.managed_proc = ManagedProcess(
-            cmd=cmd,
-            name=f"proxy-{suite_name}",
+        self.process = subprocess.Popen(
+            cmd,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            stderr=subprocess.DEVNULL,
         )
+        self.current_suite = suite_name
         
-        if self.managed_proc.start():
-            self.current_suite = suite_name
-            time.sleep(2.0)
-            if not self.managed_proc.is_running():
-                log(f"Proxy exited early")
-                return False
-            return True
-        return False
+        # Wait for proxy to initialize
+        time.sleep(2.0)
+        
+        if self.process.poll() is not None:
+            log(f"Proxy exited early with code {self.process.returncode}")
+            return False
+        
+        return True
     
     def stop(self):
         """Stop GCS proxy"""
-        if self.managed_proc:
-            self.managed_proc.stop()
-            self.managed_proc = None
+        if self.process:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+            self.process = None
             self.current_suite = None
     
     def is_running(self) -> bool:
-        return self.managed_proc is not None and self.managed_proc.is_running()
-
-
-# MavProxyManager imported from tools.mavproxy_manager
-
-
-# ============================================================
-# Telemetry Sender
-# ============================================================
-
-class TelemetrySender:
-    """Sends telemetry updates to the Drone via UDP (Fire-and-Forget)"""
-    def __init__(self, target_host: str, target_port: int):
-        self.target_addr = (target_host, target_port)
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.seq = 0
-        self.lock = threading.Lock()
-
-    def send(self, packet: dict):
-        """Send a telemetry packet (Schema v1)"""
-        with self.lock:
-            self.seq += 1
-            packet["seq"] = self.seq
-        
-        try:
-            payload = json.dumps(packet).encode('utf-8')
-            self.sock.sendto(payload, self.target_addr)
-        except Exception:
-            # Fire and forget
-            pass
-
-    def close(self):
-        self.sock.close()
+        return self.process is not None and self.process.poll() is None
 
 # ============================================================
 # Control Server (GCS listens for drone commands)
@@ -227,130 +327,12 @@ class ControlServer:
     def __init__(self, proxy: GcsProxyManager):
         self.proxy = proxy
         self.traffic = None
-        self.mavproxy = MavProxyManager("gcs")
-        # Persistent mavproxy subprocess handle (if started here)
-        self.mavproxy_proc = None
         self.server_sock = None
         self.running = False
         self.thread = None
         self.rate_mbps = DEFAULT_RATE_MBPS
         self.duration = DEFAULT_DURATION
-        
-        # Telemetry
-        self.telemetry = TelemetrySender(DRONE_HOST, GCS_TELEMETRY_PORT)
-        self.telemetry_thread = None
-        
-        # Metrics Collector
-        self.metrics_collector = GcsMetricsCollector(
-            mavlink_host="127.0.0.1",
-            mavlink_port=GCS_TELEMETRY_SNIFF_PORT,
-            proxy_manager=self.proxy,
-            log_dir=Path(__file__).parent.parent / "logs" / "gcs_telemetry"
-        )
-        
-        # Comprehensive Metrics Aggregator (GCS side)
-        self.metrics_aggregator = None
-        if HAS_METRICS_AGGREGATOR:
-            try:
-                self.metrics_aggregator = MetricsAggregator(
-                    role="gcs",
-                    output_dir=str(Path(__file__).parent.parent / "logs" / "benchmarks" / "comprehensive")
-                )
-                log("MetricsAggregator initialized for comprehensive metrics")
-            except Exception as e:
-                log(f"MetricsAggregator init failed: {e}")
-        
-        # Track current suite for metrics
-        self.current_suite = None
-
-    def start_persistent_mavproxy(self):
-        """Start a persistent mavproxy subprocess for the lifetime of the scheduler.
-
-        Uses `sys.executable -m MAVProxy.mavproxy` where possible so Windows/sudo
-        environments resolve correctly.
-        """
-        try:
-            bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
-            listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
-            tunnel_out_port = int(CONFIG.get("GCS_PLAINTEXT_TX", GCS_PLAIN_TX_PORT))
-            QGC_PORT = int(CONFIG.get("QGC_PORT", 14550))
-
-            master_str = f"udpin:{bind_host}:{listen_port}"
-            # out_arg = f"udp:127.0.0.1:{tunnel_out_port}"
-
-            # Prefer module invocation to avoid PATH issues on Windows
-            python_exe = sys.executable
-            
-            # Interactive mode requested: Remove --daemon and use CREATE_NEW_CONSOLE on Windows
-            # Removed --out to proxy to prevent loops; rely on reply-to-sender from proxy
-            # [FIX] Removed --daemon, added --map --console for interactive GUI
-            # Added telemetry sniff port output
-            cmd = [
-                python_exe, "-m", "MAVProxy.mavproxy", 
-                f"--master={master_str}", 
-                "--dialect=ardupilotmega", 
-                "--nowait", 
-                "--map", 
-                "--console", 
-                f"--out=udp:127.0.0.1:{QGC_PORT}",
-                f"--out=udp:127.0.0.1:{GCS_TELEMETRY_SNIFF_PORT}"
-            ]
-
-            log(f"Starting persistent mavproxy: {' '.join(cmd)}")
-
-            log_dir = Path(__file__).resolve().parents[1] / "logs" / "sscheduler" / "gcs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            ts_now = time.strftime("%Y%m%d-%H%M%S")
-            log_path = log_dir / f"mavproxy_gcs_{ts_now}.log"
-            try:
-                fh = open(log_path, "w", encoding="utf-8")
-            except Exception:
-                fh = subprocess.DEVNULL
-
-            stdout_arg = fh
-            stderr_arg = subprocess.STDOUT
-            
-            if sys.platform == "win32":
-                # On Windows, redirecting stdout breaks prompt_toolkit even with new_console=True
-                stdout_arg = None
-                stderr_arg = None
-            
-            # Add TERM=dumb to environment to avoid prompt_toolkit crash on Windows
-            env = os.environ.copy()
-            env["TERM"] = "dumb"
-
-            stdin_arg = subprocess.DEVNULL
-            if sys.platform == "win32":
-                stdin_arg = None # Allow inheritance/detachment for interactive console
-
-            self.mavproxy_proc = ManagedProcess(
-                cmd=cmd,
-                name="mavproxy-gcs",
-                stdout=stdout_arg,
-                stderr=stderr_arg,
-                stdin=stdin_arg,
-                new_console=True, # Windows requires a console for prompt_toolkit
-                env=env
-            )
-            
-            if self.mavproxy_proc.start():
-                # Update metrics collector with process handle
-                self.metrics_collector.mavproxy_proc = self.mavproxy_proc
-                
-                if wait_for_tcp_port(TCP_CTRL_PORT, timeout=5.0):
-                    log("Persistent mavproxy started (port open)")
-                    return True
-                elif self.mavproxy_proc.is_running():
-                    log("Persistent mavproxy started (process running, but port not yet ready)")
-                    return True
-                else:
-                    log("Persistent mavproxy failed to start")
-                    return False
-            return False
-        except Exception as e:
-            log(f"start_persistent_mavproxy exception: {e}")
-            return False
-
+    
     def start(self):
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -362,51 +344,7 @@ class ControlServer:
         self.thread = threading.Thread(target=self._server_loop, daemon=True)
         self.thread.start()
         
-        # Start metrics collector
-        self.metrics_collector.start()
-        
-        # Start telemetry loop
-        self.telemetry_thread = threading.Thread(target=self._telemetry_loop, daemon=True)
-        self.telemetry_thread.start()
-        
         log(f"Control server listening on {GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}")
-
-        # Chronos Latency Sniffer (UDP)
-        # Binds to GCS_PLAIN_RX_PORT to sniff JSON packets from tunnel
-        self.chronos_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.chronos_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            self.chronos_sock.bind(("0.0.0.0", GCS_PLAIN_RX_PORT)) # Sniff what comes out of proxy
-            threading.Thread(target=self._chronos_loop, daemon=True).start()
-            log(f"Chronos Listener sniffing on {GCS_PLAIN_RX_PORT}")
-        except Exception as e:
-            log(f"Chronos Listener bind failed: {e}")
-
-    def _chronos_loop(self):
-        log_file = Path(__file__).parent.parent / "logs" / "chronos_latency.csv"
-        while self.running:
-            try:
-                data, _ = self.chronos_sock.recvfrom(65535)
-                # Check if JSON
-                if data.startswith(b"{") and b"sync" in data:
-                    try:
-                        payload = json.loads(data)
-                        if "sync" in payload:
-                            ts_synced = payload["sync"]["ts"]
-                            now = time.time()
-                            latency = now - ts_synced
-                            # Log Latency
-                            with open(log_file, "a") as f:
-                                f.write(f"{now},{ts_synced},{latency}\n")
-                            
-                            # Log Full Payload
-                            full_log = Path(__file__).parent.parent / "logs" / "chronos_full.jsonl"
-                            payload["_gcs_rx_ts"] = now
-                            with open(full_log, "a") as f:
-                                f.write(json.dumps(payload) + "\n")
-                    except: pass
-            except: pass
-
     
     def _server_loop(self):
         while self.running:
@@ -418,64 +356,21 @@ class ControlServer:
             except Exception as e:
                 if self.running:
                     log(f"Server error: {e}")
-
-    def _telemetry_loop(self):
-        """Periodically send status to drone"""
-        while self.running:
-            try:
-                # Get latest metrics snapshot
-                snapshot = self.metrics_collector.get_snapshot()
-                self.telemetry.send(snapshot)
-            except Exception:
-                pass
-            
-            time.sleep(0.2)
-
-    def _handle_client(self, client, addr):
+    
+    def _handle_client(self, client: socket.socket, addr):
         try:
-            # 1. Authentication Handshake
-            psk = get_drone_psk()
-            challenge = create_challenge()
-
-            # Send challenge (hex encoded)
-            client.sendall(challenge.hex().encode() + b"\n")
-
-            # Read response
-            response_data = b""
-            start_time = time.time()
-            while time.time() - start_time < 5.0:
-                chunk = client.recv(4096)
-                if not chunk:
-                    break
-                response_data += chunk
-                if b"\n" in response_data:
-                    break
-
-            client_response = response_data.decode().strip()
-
-            if not verify_response(challenge, client_response, psk):
-                log(f"Authentication failed for {addr}")
-                client.close()
-                return
-
-            # 2. Command Processing
+            client.settimeout(30.0)
             data = b""
-            while True:
+            while b"\n" not in data:
                 chunk = client.recv(4096)
                 if not chunk:
                     break
                 data += chunk
-                # Assuming simple one-shot JSON command
-                if len(data) > 0 and (data.strip().endswith(b"}") or b"\n" in data):
-                     break
             
             if data:
-                try:
-                    request = json.loads(data.decode().strip())
-                    response = self._handle_command(request)
-                    client.sendall(json.dumps(response).encode() + b"\n")
-                except json.JSONDecodeError:
-                    pass
+                request = json.loads(data.decode().strip())
+                response = self._handle_command(request)
+                client.sendall(json.dumps(response).encode() + b"\n")
         except Exception as e:
             log(f"Client error: {e}")
         finally:
@@ -486,11 +381,6 @@ class ControlServer:
         
         if cmd == "ping":
             return {"status": "ok", "message": "pong", "role": "gcs_follower"}
-            
-        elif cmd == "chronos_sync":
-            # Handle sync request (t1 is in params)
-            clock = ClockSync()
-            return clock.server_handle_sync(request)
         
         elif cmd == "status":
             traffic_stats = self.traffic.get_stats() if self.traffic else {}
@@ -526,122 +416,55 @@ class ControlServer:
             # Wait a moment for handshake
             time.sleep(1.0)
             
-            # Do NOT spawn a new mavproxy here. MAVProxy should be persistent.
-            log("Traffic start requested (MAVProxy is already running)")
-            # Check persistent mavproxy health
-            if not (self.mavproxy_proc and self.mavproxy_proc.poll() is None):
-                return {"status": "error", "message": "mavproxy_not_running"}
+            # Start traffic generation
+            if self.traffic:
+                self.traffic.stop()
+            
+            self.traffic = TrafficGenerator(self.rate_mbps)
+            self.traffic.start(duration)
+            
             return {"status": "ok", "message": "started"}
         
         elif cmd == "start_proxy":
             # Drone tells GCS to start proxy only (no traffic yet)
             suite = request.get("suite")
-            run_id = request.get("run_id")
             
             if not suite:
                 return {"status": "error", "message": "missing suite"}
             
             log(f"Start proxy requested for suite: {suite}")
-
-            # Keep GCS metrics run_id aligned with drone benchmark run_id (if provided)
-            if run_id and self.metrics_aggregator:
-                try:
-                    self.metrics_aggregator.set_run_id(str(run_id))
-                except Exception:
-                    pass
-            
-            # Finalize metrics for previous suite (if any)
-            if self.metrics_aggregator and self.current_suite:
-                try:
-                    self.metrics_aggregator.finalize_suite()
-                except Exception:
-                    pass
-            
-            # Get suite config and start comprehensive metrics collection
-            suite_config = get_suite(suite) or {}
-            if self.metrics_aggregator:
-                try:
-                    self.metrics_aggregator.start_suite(suite, suite_config)
-                    self.metrics_aggregator.record_handshake_start()
-                except Exception as e:
-                    log(f"Metrics start failed: {e}")
             
             # Start GCS proxy
             if not self.proxy.start(suite):
-                if self.metrics_aggregator:
-                    try:
-                        self.metrics_aggregator.record_handshake_end(success=False, failure_reason="proxy_start_failed")
-                        self.metrics_aggregator.finalize_suite()
-                        self.metrics_aggregator.save_suite_metrics()
-                    except Exception:
-                        pass
                 return {"status": "error", "message": "proxy_start_failed"}
-
-            self.current_suite = suite
             
-            # Record successful proxy start (handshake will complete after drone connects)
-            if self.metrics_aggregator:
-                try:
-                    self.metrics_aggregator.record_handshake_end(success=True)
-                except Exception:
-                    pass
-            
-            # Persistent MAVProxy should already be running; just acknowledge
-            log("Proxy started; persistent MAVProxy assumed running")
             return {"status": "ok", "message": "proxy_started"}
         
         elif cmd == "start_traffic":
-            # Traffic generation capability was removed from the codebase.
-            log("Rejected start_traffic: traffic generation removed from codebase")
-            return {"status": "error", "message": "traffic_removed"}
+            # Drone tells GCS to start traffic (proxy already running)
+            duration = request.get("duration", self.duration)
+            
+            if not self.proxy.is_running():
+                return {"status": "error", "message": "proxy_not_running"}
+            
+            log(f"Starting traffic: {self.rate_mbps} Mbps for {duration}s")
+            
+            # Start traffic generation
+            if self.traffic:
+                self.traffic.stop()
+            
+            self.traffic = TrafficGenerator(self.rate_mbps)
+            self.traffic.start(duration)
+            
+            return {"status": "ok", "message": "traffic_started"}
         
         elif cmd == "prepare_rekey":
             # Drone tells GCS to prepare for rekey (stop proxy)
             log("Prepare rekey: stopping proxy...")
-            
-            # Finalize and save comprehensive metrics before switching suite
-            if self.metrics_aggregator and self.current_suite:
-                try:
-                    # Read data plane metrics from GCS proxy status file (allow brief wait for status writer)
-                    counters = {}
-                    if GCS_STATUS_FILE.exists():
-                        for _ in range(3):
-                            try:
-                                with open(GCS_STATUS_FILE, "r") as f:
-                                    status_data = json.load(f)
-                                candidate = status_data.get("counters", {})
-                                counters = candidate or counters
-                                if candidate:
-                                    break
-                            except Exception:
-                                pass
-                            time.sleep(1.0)
-                        if counters:
-                            self.metrics_aggregator.record_data_plane_metrics(counters)
-                            log(
-                                "  Data plane: enc_in=%s, ptx_out=%s" %
-                                (counters.get("enc_in", 0), counters.get("ptx_out", 0))
-                            )
-                    
-                    comprehensive = self.metrics_aggregator.finalize_suite()
-                    if comprehensive:
-                        output_path = self.metrics_aggregator.save_suite_metrics(comprehensive)
-                        if output_path:
-                            log(f"Comprehensive metrics saved: {output_path}")
-                except Exception as e:
-                    log(f"Metrics finalize failed: {e}")
-            
             self.proxy.stop()
-            self.current_suite = None
-            
-            # DO NOT stop persistent MAVProxy here. It should keep running.
-            # if self.mavproxy_proc: ...
             
             if self.traffic:
-                try:
-                    self.traffic.stop()
-                except Exception:
-                    pass
+                self.traffic.stop()
                 self.traffic = None
             
             return {"status": "ok", "message": "ready_for_rekey"}
@@ -649,19 +472,9 @@ class ControlServer:
         elif cmd == "stop":
             log("Stop command received")
             self.proxy.stop()
-            # Stop mavproxy and any traffic generator wrapper
-            if self.mavproxy_proc:
-                try:
-                    self.mavproxy_proc.terminate()
-                except Exception:
-                    pass
-                self.mavproxy_proc = None
-
+            
             if self.traffic:
-                try:
-                    self.traffic.stop()
-                except Exception:
-                    pass
+                self.traffic.stop()
                 self.traffic = None
             
             return {"status": "ok", "message": "stopped"}
@@ -670,71 +483,27 @@ class ControlServer:
             return {
                 "status": "ok",
                 "suites": [s["name"] for s in SUITES],
+                "count": len(SUITES),
             }
         
-        return {"status": "error", "message": f"unknown command: {cmd}"}
+        else:
+            return {"status": "error", "message": f"unknown command: {cmd}"}
     
     def stop(self):
         self.running = False
         if self.thread:
             self.thread.join(timeout=2.0)
-        if self.telemetry_thread:
-            self.telemetry_thread.join(timeout=2.0)
-        if self.metrics_collector:
-            self.metrics_collector.stop()
-        if self.telemetry:
-            self.telemetry.close()
         if self.server_sock:
             self.server_sock.close()
         if self.traffic:
-            try:
-                self.traffic.stop()
-            except Exception:
-                pass
-        if self.mavproxy_proc:
-            try:
-                self.mavproxy_proc.stop()
-            except Exception:
-                pass
-            self.mavproxy_proc = None
+            self.traffic.stop()
 
 # ============================================================
 # Main
 # ============================================================
 
-def cleanup_environment():
-    """Force kill any stale instances of our components."""
-    log("Cleaning up stale processes...")
-    
-    # Current PID to avoid suicide (though unlikely to match targets)
-    my_pid = os.getpid()
-    
-    targets = ["mavproxy", "core.run_proxy"]
-    
-    if sys.platform.startswith("win"):
-        # Windows: Use taskkill for known PIDs if we tracked them, but here we are cleaning up *stale* ones.
-        # WMIC is slow but effective for pattern matching.
-        for t in targets:
-            # Clause: name='python.exe' AND commandline like '%target%' AND ProcessId != my_pid
-            query = f"name='python.exe' and commandline like '%{t}%' and ProcessId!={my_pid}"
-            cmd = f'wmic process where "{query}" call terminate'
-            try:
-                subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                pass
-    else:
-        # Linux/Posix
-        for t in targets:
-             subprocess.run(["pkill", "-f", t], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-             
-    time.sleep(1.0)
-
-# Register cleanup on exit
-atexit.register(cleanup_environment)
-
 def main():
     parser = argparse.ArgumentParser(description="GCS Scheduler (Follower)")
-    parser.add_argument("--mode", choices=["standard", "chronos"], default="standard", help="Operation mode")
     args = parser.parse_args()
     
     print("=" * 60)
@@ -756,26 +525,13 @@ def main():
     log("GCS scheduler running. Waiting for commands from drone...")
     log("(Drone will send 'start', 'rekey', 'stop' commands)")
     
-    # Cleanup environment before starting
-    cleanup_environment()
-
     # Initialize components
     proxy = GcsProxyManager()
     control = ControlServer(proxy)
     control.start()
 
-    # Start persistent MAVProxy for the scheduler lifetime
-    if args.mode != "chronos":
-        try:
-            ok = control.start_persistent_mavproxy()
-            if ok:
-                log("persistent mavproxy started at scheduler startup")
-            else:
-                log("persistent mavproxy failed to start at scheduler startup")
-        except Exception as _e:
-            log(f"persistent mavproxy startup exception: {_e}")
-    else:
-        log("MAVProxy disabled in Chronos mode")
+    # Start MAVProxy GUI (map/console) for operator visibility
+    mavproxy_proc = start_mavproxy_gui()
 
     # Apply local in-file overrides for rate/duration if set
     if LOCAL_RATE_MBPS is not None:
@@ -798,6 +554,11 @@ def main():
             shutdown.wait(timeout=1.0)
     finally:
         log("Shutting down...")
+        if mavproxy_proc:
+            try:
+                mavproxy_proc.terminate()
+            except Exception:
+                pass
         control.stop()
         proxy.stop()
     

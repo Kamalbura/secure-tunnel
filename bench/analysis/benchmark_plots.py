@@ -615,9 +615,9 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="PQC Benchmark Visualization")
-    parser.add_argument("--analysis-dir", type=str, default="bench_analysis",
+    parser.add_argument("--analysis-dir", type=str, default="benchmarks/bench_analysis",
                         help="Path to analysis output directory")
-    parser.add_argument("--output-dir", type=str, default="bench_analysis/plots",
+    parser.add_argument("--output-dir", type=str, default="benchmarks/bench_analysis/plots",
                         help="Path to plot output directory")
     args = parser.parse_args()
     

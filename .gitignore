@@ -33,3 +33,23 @@ logs/gcs_telemetry/gcs_telemetry_v1.jsonl
 *.tlog
 *.tlog.raw
 
+# Benchmark outputs (generated artifacts)
+benchmarks/
+bench_results_*/
+bench_analysis/
+power_analysis/
+benchmark_book/
+
+# LaTeX build artifacts (benchmark reports)
+**/*.aux
+**/*.bbl
+**/*.bcf
+**/*.blg
+**/*.fdb_latexmk
+**/*.fls
+**/*.log
+**/*.out
+**/*.run.xml
+**/*.synctex.gz
+**/*.toc
+

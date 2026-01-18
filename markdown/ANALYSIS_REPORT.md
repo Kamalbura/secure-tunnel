@@ -60,7 +60,7 @@ The "Individual Benchmarks" phase appears to be driven by `bench/benchmark_power
     *   **Timing:** `perf_time_ns` (CPU time) vs `wall_time_ns` (Real time).
     *   **Power:** High-frequency (1kHz) sampling via INA219.
     *   **Hardware Counters:** Cycles, Instructions, Cache Misses (via Linux `perf`).
-*   **Status:** The code is complete and capable of generating detailed JSON reports in `bench_results_power/`.
+*   **Status:** The code is complete and capable of generating detailed JSON reports in `benchmarks/bench_results_power/`.
 
 ## 6. Recommendations for "End-to-End MAV to MAV"
 

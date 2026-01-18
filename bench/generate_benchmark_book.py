@@ -842,7 +842,7 @@ class BenchmarkBookGenerator:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Generate PQC Benchmark Book")
-    parser.add_argument("-i", "--input", type=str, default="bench_results_100iter")
+    parser.add_argument("-i", "--input", type=str, default="benchmarks/bench_results_100iter")
     parser.add_argument("-o", "--output", type=str, default="benchmark_book")
     args = parser.parse_args()
     

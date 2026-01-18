@@ -43,14 +43,20 @@ from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
 from sscheduler.local_mon import LocalMonitor
+from core.clock_sync import ClockSync
+from core.power_monitor import create_power_monitor
+from core.mavlink_collector import MavLinkMetricsCollector
 from sscheduler.control_security import get_drone_psk, compute_response
 from sscheduler.policy import (
     TelemetryAwarePolicyV2,
     DecisionInput,
     PolicyAction,
     PolicyOutput,
+    PolicyOutput,
     get_suite_tier,
 )
+from sscheduler.benchmark_policy import DeterministicClockPolicy
+
 
 # Extract config values (use CONFIG as single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
@@ -267,18 +273,24 @@ class TelemetryListener:
 
 class DecisionContext:
     """Aggregates system state for policy decisions"""
-    def __init__(self, telemetry: TelemetryListener, local_mon: LocalMonitor, suites: List[str]):
+    def __init__(self, telemetry: TelemetryListener, local_mon: LocalMonitor, suites: List[str], clock_sync: ClockSync, policy_type: str = "standard"):
         self.telemetry = telemetry
         self.local_mon = local_mon
         self.suites = suites
+        self.clock_sync = clock_sync
         # cooldown after suite switch (mono seconds)
         self._last_switch_mono = 0.0
         self._cooldown_until_mono = 0.0
         self._current_suite = ""
         self._local_epoch = 0
         
-        # Telemetry-aware policy V2
-        self._policy = TelemetryAwarePolicyV2()
+        # Policy Selection
+        if policy_type == "chronos":
+            log("Using DeterministicClockPolicy (Chronos)")
+            self._policy = DeterministicClockPolicy()
+        else:
+            self._policy = TelemetryAwarePolicyV2()
+
 
     def get_gcs_status(self):
         data, ts = self.telemetry.get_latest()
@@ -345,7 +357,9 @@ class DecisionContext:
             local_epoch=self._local_epoch,
             last_switch_mono_ms=self._last_switch_mono * 1000.0,
             cooldown_until_mono_ms=self._cooldown_until_mono * 1000.0,
+            synced_time=self.clock_sync.synced_time() if self.clock_sync.is_synced() else 0.0
         )
+
 
     def evaluate_policy(self, expected_suite: str) -> PolicyOutput:
         """Evaluate the telemetry-aware policy and return output."""
@@ -618,10 +632,23 @@ class DroneScheduler:
         self.current_proxy_proc = None
         self.current_suite = None
         
+        # Chronos Components (Init first for DecisionContext)
+        self.clock_sync = ClockSync()
+        self.chronos_mode = False
+        self.power_mon = None
+        self.mav_collector = None
+        
         # Telemetry & Decision Context
         self.telemetry = TelemetryListener(GCS_TELEMETRY_PORT, allowed_ip=GCS_HOST)
         self.local_mon = LocalMonitor()
-        self.context = DecisionContext(self.telemetry, self.local_mon, self.suites)
+        
+        # Policy Selection
+        policy_type = "standard"
+        if args.policy == "chronos":
+            policy_type = "chronos"
+            
+        self.context = DecisionContext(self.telemetry, self.local_mon, self.suites, self.clock_sync, policy_type=policy_type)
+
         
         # Action log file
         self.action_log_file = LOGS_DIR / "drone_actions.jsonl"
@@ -637,6 +664,82 @@ class DroneScheduler:
                     return {"status": "error", "message": str(e)}
 
         self.gcs_client = _GcsClient()
+        
+
+        
+        # Initialize Power Monitor (Mock or Real)
+        try:
+            self.power_mon = create_power_monitor(output_dir=LOGS_DIR)
+        except Exception:
+            pass
+
+    def enable_chronos_mode(self):
+        """Enable sensor fusion loop."""
+        self.chronos_mode = True
+        self.mav_collector = MavLinkMetricsCollector(role="drone")
+        # Try to sniff local MAVProxy output
+        self.mav_collector.start_sniffing(port=14555) # Secondary out from MAVProxy
+        
+        # Start Fusion Thread
+        threading.Thread(target=self._sensor_fusion_loop, daemon=True).start()
+        log("Chronos Sensor Fusion Loop Started (10Hz)")
+
+    def perform_clock_sync(self):
+        """Perform 3-way handshake with GCS using Authenticated RPC."""
+        log("Initiating Clock Sync with GCS...")
+        try:
+            t1 = time.time()
+            # Send sync request via existing authenticated channel
+            resp = self.gcs_client.send_command("chronos_sync", params={"t1": t1})
+            t4 = time.time()
+            
+            if resp.get("status") == "ok":
+                offset = self.clock_sync.update_from_rpc(t1, t4, resp)
+                log(f"Clock Sync OK. Offset: {offset:.4f}s")
+                return True
+            else:
+                log(f"Clock Sync Failed: {resp.get('message')}")
+                return False
+        except Exception as e:
+            log(f"Clock Sync Exception: {e}")
+            return False
+
+    def _sensor_fusion_loop(self):
+        """10Hz Aggregation Loop."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Inject into Proxy Input (UDP 47003) -> Encrypted -> GCS
+        target = ("127.0.0.1", DRONE_PLAIN_TX_PORT)
+
+        
+        while self.chronos_mode:
+            try:
+                start = time.time()
+                
+                # Gather Data
+                ts_synced = self.clock_sync.synced_time()
+                pwr = self.power_mon.get_latest_sample() if self.power_mon else {}
+                mav = self.mav_collector.get_chronos_data() if self.mav_collector else {}
+                sys_stat = self.local_mon.get_metrics()
+                
+                payload = {
+                    "schema": "chronos.v1",
+                    "sync": {"ts": ts_synced, "offset": self.clock_sync.get_offset()},
+                    "pwr": {"v": pwr.get("bus_v", 0), "i": pwr.get("current_ma", 0)},
+                    "mav": mav,
+                    "sys": {"cpu": sys_stat.cpu_pct, "temp": sys_stat.temp_c},
+                    "crypto": {"suite": self.current_suite}
+                }
+                
+                data = json.dumps(payload).encode('utf-8')
+                sock.sendto(data, target)
+                
+                # Rate Limit 10Hz
+                elapsed = time.time() - start
+                sleep_time = max(0.0, 0.1 - elapsed)
+                time.sleep(sleep_time)
+            except Exception as e:
+                pass
+
 
     def wait_for_handshake_completion(self, timeout: float = 10.0) -> bool:
         """Poll for the handshake completion status file."""
@@ -991,8 +1094,10 @@ class DroneScheduler:
             while True:
                 # Initial suite selection (fallback to first filtered suite)
                 if not self.current_suite:
-                    if self.context._policy.filtered_suites:
-                        self.current_suite = self.context._policy.filtered_suites[0]
+                    # Robust access for different policy types
+                    filtered = getattr(self.context._policy, 'filtered_suites', getattr(self.context._policy, 'suite_list', []))
+                    if filtered:
+                        self.current_suite = filtered[0]
                     else:
                         self.current_suite = self.suites[0]["name"]  # Fallback
 
@@ -1115,7 +1220,9 @@ def main():
     parser.add_argument("--duration", type=float, default=DEFAULT_DURATION, help="Seconds per suite")
     parser.add_argument("--rate", type=float, default=DEFAULT_RATE_MBPS, help="Traffic rate Mbps")
     parser.add_argument("--max-suites", type=int, default=None, help="Max suites to run")
+    parser.add_argument("--policy", choices=["standard", "chronos"], default="standard", help="Scheduling policy (standard/chronos)")
     args = parser.parse_args()
+
     
     print("=" * 60)
     print("Simplified Drone Scheduler (CONTROLLER) - sscheduler")
@@ -1177,9 +1284,20 @@ def main():
 
     # Initialize components
     scheduler = DroneScheduler(args, selected_suite_dicts)
+    
+    if args.policy == "chronos":
+        log("=== CHRONOS MODE ACTIVATED ===")
+        # Perform Sync
+        if not scheduler.perform_clock_sync():
+            log("FATAL: Clock sync failed. Aborting Chronos run.")
+            return 1
+        # Enable Fusion
+        scheduler.enable_chronos_mode()
+    
     # configure logging
     logging.basicConfig(level=logging.INFO)
     scheduler.run_scheduler()
+
 
     return 0
 

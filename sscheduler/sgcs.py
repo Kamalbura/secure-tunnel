@@ -39,6 +39,7 @@ from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
 from sscheduler.gcs_metrics import GcsMetricsCollector
 from sscheduler.control_security import get_drone_psk, create_challenge, verify_response
+from core.clock_sync import ClockSync
 
 # Import MetricsAggregator for comprehensive metrics collection
 try:
@@ -369,6 +370,43 @@ class ControlServer:
         self.telemetry_thread.start()
         
         log(f"Control server listening on {GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}")
+
+        # Chronos Latency Sniffer (UDP)
+        # Binds to GCS_PLAIN_RX_PORT to sniff JSON packets from tunnel
+        self.chronos_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.chronos_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            self.chronos_sock.bind(("0.0.0.0", GCS_PLAIN_RX_PORT)) # Sniff what comes out of proxy
+            threading.Thread(target=self._chronos_loop, daemon=True).start()
+            log(f"Chronos Listener sniffing on {GCS_PLAIN_RX_PORT}")
+        except Exception as e:
+            log(f"Chronos Listener bind failed: {e}")
+
+    def _chronos_loop(self):
+        log_file = Path(__file__).parent.parent / "logs" / "chronos_latency.csv"
+        while self.running:
+            try:
+                data, _ = self.chronos_sock.recvfrom(65535)
+                # Check if JSON
+                if data.startswith(b"{") and b"sync" in data:
+                    try:
+                        payload = json.loads(data)
+                        if "sync" in payload:
+                            ts_synced = payload["sync"]["ts"]
+                            now = time.time()
+                            latency = now - ts_synced
+                            # Log Latency
+                            with open(log_file, "a") as f:
+                                f.write(f"{now},{ts_synced},{latency}\n")
+                            
+                            # Log Full Payload
+                            full_log = Path(__file__).parent.parent / "logs" / "chronos_full.jsonl"
+                            payload["_gcs_rx_ts"] = now
+                            with open(full_log, "a") as f:
+                                f.write(json.dumps(payload) + "\n")
+                    except: pass
+            except: pass
+
     
     def _server_loop(self):
         while self.running:
@@ -448,6 +486,11 @@ class ControlServer:
         
         if cmd == "ping":
             return {"status": "ok", "message": "pong", "role": "gcs_follower"}
+            
+        elif cmd == "chronos_sync":
+            # Handle sync request (t1 is in params)
+            clock = ClockSync()
+            return clock.server_handle_sync(request)
         
         elif cmd == "status":
             traffic_stats = self.traffic.get_stats() if self.traffic else {}
@@ -691,6 +734,7 @@ atexit.register(cleanup_environment)
 
 def main():
     parser = argparse.ArgumentParser(description="GCS Scheduler (Follower)")
+    parser.add_argument("--mode", choices=["standard", "chronos"], default="standard", help="Operation mode")
     args = parser.parse_args()
     
     print("=" * 60)
@@ -721,14 +765,17 @@ def main():
     control.start()
 
     # Start persistent MAVProxy for the scheduler lifetime
-    try:
-        ok = control.start_persistent_mavproxy()
-        if ok:
-            log("persistent mavproxy started at scheduler startup")
-        else:
-            log("persistent mavproxy failed to start at scheduler startup")
-    except Exception as _e:
-        log(f"persistent mavproxy startup exception: {_e}")
+    if args.mode != "chronos":
+        try:
+            ok = control.start_persistent_mavproxy()
+            if ok:
+                log("persistent mavproxy started at scheduler startup")
+            else:
+                log("persistent mavproxy failed to start at scheduler startup")
+        except Exception as _e:
+            log(f"persistent mavproxy startup exception: {_e}")
+    else:
+        log("MAVProxy disabled in Chronos mode")
 
     # Apply local in-file overrides for rate/duration if set
     if LOCAL_RATE_MBPS is not None:

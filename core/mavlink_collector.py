@@ -158,6 +158,14 @@ class MavLinkMetricsCollector:
         # Protocol info
         self._protocol_version = ""
         
+        # Chronos Telemetry Store
+        self._last_telemetry = {
+            "alt_rel_m": 0.0,
+            "hdg_deg": 0.0,
+            "batt_rem_pct": 0,
+            "last_update": 0.0
+        }
+        
     def _detect_role(self) -> str:
         """Detect role from platform."""
         import platform
@@ -312,6 +320,19 @@ class MavLinkMetricsCollector:
             # Command ACK tracking
             elif msg_type == "COMMAND_ACK":
                 self._handle_command_ack(msg, now)
+            
+            # Chronos Telemetry Parsing
+            elif msg_type == "GLOBAL_POSITION_INT":
+                try:
+                    self._last_telemetry["alt_rel_m"] = msg.relative_alt / 1000.0
+                    self._last_telemetry["hdg_deg"] = msg.hdg / 100.0
+                    self._last_telemetry["last_update"] = now
+                except: pass
+            elif msg_type == "SYS_STATUS":
+                try:
+                    self._last_telemetry["batt_rem_pct"] = msg.battery_remaining
+                    self._last_telemetry["last_update"] = now
+                except: pass
             
             # Log message
             self._msg_log.append({
@@ -600,8 +621,17 @@ class MavLinkMetricsCollector:
         integrity_metrics.mavlink_out_of_order_count = m["seq_out_of_order_count"]
         integrity_metrics.mavlink_duplicate_count = m["seq_duplicate_count"]
         integrity_metrics.mavlink_message_latency_avg_ms = m["message_latency_avg_ms"]
-        integrity_metrics.mavlink_message_latency_p95_ms = m["message_latency_p95_ms"]
-
+    def get_chronos_data(self) -> Dict[str, Any]:
+        """
+        Get latest telemetry for Chronos Sensor Fusion.
+        Returns dict with "alt", "hdg", "batt".
+        """
+        with self._lock:
+            return {
+                "alt": self._last_telemetry["alt_rel_m"],
+                "hdg": self._last_telemetry["hdg_deg"],
+                "batt": self._last_telemetry["batt_rem_pct"]
+            }
 
 # =============================================================================
 # TEST

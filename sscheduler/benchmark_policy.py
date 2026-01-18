@@ -22,6 +22,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
+from sscheduler.policy import PolicyAction, PolicyOutput, DecisionInput
+
 
 from core.suites import list_suites
 
@@ -127,7 +129,7 @@ class BenchmarkPolicy:
     purely on systematic benchmarking.
     """
     
-    def __init__(self, cycle_interval_s: float = 10.0, filter_aead: Optional[str] = None):
+    def __init__(self, cycle_interval_s: float = 10.0, filter_aead: Optional[str] = None, suite_list: Optional[List[str]] = None):
         self.settings = load_benchmark_settings()
         self.benchmark_cfg = self.settings.get("benchmark_mode", {})
         
@@ -135,9 +137,17 @@ class BenchmarkPolicy:
         self.cycle_interval_s = cycle_interval_s or self.benchmark_cfg.get("cycle_interval_s", 10.0)
         self.filter_aead = filter_aead
         
-        # Get all suites
-        self.all_suites = list_suites()
-        self.suite_list = self._build_suite_list()
+        if suite_list is None:
+            # Default to full suite list from registry
+            self.all_suites = list_suites()
+            self.suite_list = self._build_suite_list()
+        else:
+            # Use provided suite list, and populate all_suites for metadata lookup
+            self.suite_list = suite_list
+            all_registered_suites = list_suites()
+            self.all_suites = {sid: all_registered_suites[sid] for sid in suite_list if sid in all_registered_suites}
+            
+        self.filtered_suites = self.suite_list # Support sdrone interface
         
         # State
         self.current_index = 0
@@ -497,3 +507,76 @@ def get_suites_by_kem_family() -> Dict[str, List[str]]:
 def get_suite_count() -> int:
     """Get total number of registered suites."""
     return len(list_suites())
+
+# =============================================================================
+# CHRONOS DETERMINISTIC POLICY
+# =============================================================================
+
+class DeterministicClockPolicy:
+    """
+    Deterministic policy for Operation Chronos.
+    Uses synchronized time to enforce 10s suite rotation.
+    Compatible with sdrone.py DecisionContext interface.
+    """
+    def __init__(self, cycle_interval_s: float = 10.0):
+        self.cycle_interval_s = cycle_interval_s
+        self.period_start = 0.0
+        
+        # Build ordered suite list (Same as BenchmarkPolicy)
+        self.all_suites = list_suites()
+        self.suite_list = []
+        for sid, cfg in self.all_suites.items():
+            self.suite_list.append(sid)
+        
+        # Sort deterministic (NIST Level -> KEM -> Sig)
+        def sort_key(sid: str) -> Tuple[str, str, str]:
+            cfg = self.all_suites.get(sid, {})
+            return (
+                cfg.get("nist_level", "L5"),
+                cfg.get("kem_name", ""),
+                cfg.get("sig_name", "")
+            )
+        self.suite_list.sort(key=sort_key)
+        
+        logging.info(f"DeterministicClockPolicy: {len(self.suite_list)} suites, {self.cycle_interval_s}s interval")
+
+    def evaluate(self, inp: DecisionInput) -> PolicyOutput:
+        """Evaluate policy based on synced time."""
+        # Calculate target suite index
+        # Slot index = int(synced_time / interval)
+        if inp.synced_time == 0.0:
+            # Fallback if no sync yet
+            return PolicyOutput(PolicyAction.HOLD, reasons=["no_sync"])
+            
+        slot = int(inp.synced_time / self.cycle_interval_s)
+        suite_idx = slot % len(self.suite_list)
+        target_suite = self.suite_list[suite_idx]
+        
+        # Calculate time into period
+        phase = inp.synced_time % self.cycle_interval_s
+        
+        # Trigger switch/rekey if mismatch
+        if inp.current_suite != target_suite:
+            # If we are in the last 0.5s of the slot, maybe wait? 
+            # No, switch immediately to catch up.
+            
+            # Use REKEY if same suite (unlikely with rotation) or UPGRADE/DOWNGRADE?
+            # PolicyAction.REKEY is generic "Switch to this suite" in some contexts?
+            # sdrone.py logic:
+            # REKEY -> _execute_rekey(target)
+            # DOWNGRADE/UPGRADE/ROLLBACK -> _execute_suite_switch(target) -> Stop -> Start
+            # _execute_rekey only works if target == current?
+            # Let's check sdrone.py.
+            return PolicyOutput(PolicyAction.UPGRADE, target_suite, reasons=["chronos_slot_switch"])
+            
+        # If we are on the correct suite, check if we need to "Trigger Rekey" explicitly at start?
+        # User said "Logic: if (current_synced_time % 10.0) < 0.1: trigger_rekey()."
+        # If we just switched, we essentially rekeyed.
+        # If the suite repeats (e.g. only 1 suite), we might need to rekey.
+        if phase < 0.5: 
+             # Only trigger if we haven't switched recently (avoid double rekey)
+             if (inp.mono_ms - inp.last_switch_mono_ms) > 1000.0:
+                 return PolicyOutput(PolicyAction.REKEY, target_suite, reasons=["chronos_periodic_rekey"])
+                 
+        return PolicyOutput(PolicyAction.HOLD, reasons=["chronos_stable"])
+

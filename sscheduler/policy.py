@@ -141,6 +141,10 @@ class DecisionInput:
     local_epoch: int
     last_switch_mono_ms: float
     cooldown_until_mono_ms: float
+    
+    # Chronos Sync
+    synced_time: float = 0.0
+
 
 # =============================================================================
 # POLICY OUTPUT

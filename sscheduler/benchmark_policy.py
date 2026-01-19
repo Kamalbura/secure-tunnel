@@ -38,7 +38,7 @@ def load_benchmark_settings() -> Dict[str, Any]:
     defaults = {
         "benchmark_mode": {
             "enabled": True,
-            "cycle_interval_s": 10.0,
+            "cycle_interval_s": 110.0,
             "sequential_cycling": True,
             "collect_metrics": True,
             "output_dir": "logs/benchmarks",
@@ -129,7 +129,7 @@ class BenchmarkPolicy:
     purely on systematic benchmarking.
     """
     
-    def __init__(self, cycle_interval_s: float = 10.0, filter_aead: Optional[str] = None, suite_list: Optional[List[str]] = None):
+    def __init__(self, cycle_interval_s: float = 110.0, filter_aead: Optional[str] = None, suite_list: Optional[List[str]] = None):
         self.settings = load_benchmark_settings()
         self.benchmark_cfg = self.settings.get("benchmark_mode", {})
         
@@ -208,9 +208,9 @@ class BenchmarkPolicy:
             return None  # Will complete after current
         return self.suite_list[next_idx]
     
-    def start_benchmark(self) -> str:
+    def start_benchmark(self, start_time_mono: Optional[float] = None) -> str:
         """Initialize benchmark and return first suite."""
-        self.start_time_mono = time.monotonic()
+        self.start_time_mono = start_time_mono if start_time_mono is not None else time.monotonic()
         self.last_switch_mono = self.start_time_mono
         self.current_index = 0
         self.iteration = 0

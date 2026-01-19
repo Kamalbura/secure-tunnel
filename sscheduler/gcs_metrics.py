@@ -98,27 +98,18 @@ class GcsMetricsCollector:
             self.thread.join(timeout=2.0)
         if self.mav_conn:
             self.mav_conn.close()
-        if self.sock:
-            self.sock.close()
 
     def _connect(self):
         # Use udpin to bind and listen for packets from MAVProxy
         conn_str = f"udpin:{self.mavlink_host}:{self.mavlink_port}"
-        if mavutil:
-            try:
-                self.mav_conn = mavutil.mavlink_connection(conn_str, source_system=255)
-                return True
-            except Exception as e:
-                logging.error(f"MAVLink connect failed: {e}")
-                pass
-        
+        if not mavutil:
+            logging.error("pymavlink is required for MAVLink telemetry collection")
+            return False
         try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.bind((self.mavlink_host, self.mavlink_port))
-            self.sock.settimeout(0.1)
+            self.mav_conn = mavutil.mavlink_connection(conn_str, source_system=255)
             return True
         except Exception as e:
-            logging.error(f"Socket bind failed: {e}")
+            logging.error(f"MAVLink connect failed: {e}")
             return False
 
     def _prune_windows(self, now_mono):
@@ -214,16 +205,6 @@ class GcsMetricsCollector:
                 except Exception as e:
                     self.mav_state['decode_stats']['parse_errors'] += 1
                     self.mav_state['decode_stats']['reason'] = str(e)[:50] # Bounded reason string
-            elif self.sock:
-                try:
-                    data, _ = self.sock.recvfrom(65535)
-                    ts_mono = time.monotonic()
-                    size = len(data)
-                except socket.timeout:
-                    pass
-                except Exception:
-                    pass
-            
             if ts_mono:
                 with self.lock:
                     # Gap detection
@@ -360,7 +341,7 @@ class GcsMetricsCollector:
             loop_start = time.monotonic()
             
             # Reconnect
-            if not self.mav_conn and not self.sock:
+            if not self.mav_conn:
                 if not self._connect():
                     time.sleep(1.0)
                     continue

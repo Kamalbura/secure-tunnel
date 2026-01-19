@@ -17,7 +17,6 @@ import socket
 import threading
 import logging
 from pathlib import Path
-from collections import deque
 from typing import Dict, Any
 
 # Add parent to path for imports
@@ -47,57 +46,6 @@ logging.basicConfig(
 
 def log(msg):
     logging.info(msg)
-
-# =============================================================================
-# JSON Telemetry Listener (The Scientist)
-# =============================================================================
-
-class JsonChronosListener:
-    def __init__(self, port: int, output_file: Path):
-        self.port = port
-        self.output_file = output_file
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(("0.0.0.0", port))
-        self.running = True
-        self.packet_count = 0
-        
-    def run(self):
-        log(f"Chronos Listener sniffing on UDP {self.port}...")
-        with open(self.output_file, "a") as f:
-            while self.running:
-                try:
-                    data, addr = self.sock.recvfrom(4096)
-                    recv_ts = time.time()
-                    
-                    try:
-                        packet = json.loads(data.decode("utf-8"))
-                        
-                        # Calculate Metrics
-                        sent_ts = packet.get("ts", recv_ts)
-                        latency_ms = (recv_ts - sent_ts) * 1000.0
-                        
-                        # Augment
-                        packet["recv_ts"] = recv_ts
-                        packet["latency_ms"] = latency_ms
-                        
-                        # Write to Disk
-                        f.write(json.dumps(packet) + "\n")
-                        f.flush()
-                        
-                        self.packet_count += 1
-                        if self.packet_count % 10 == 0:
-                            log(f"RX: {self.packet_count} | Latency: {latency_ms:.2f}ms | Suite: {packet.get('suite')}")
-                            
-                    except json.JSONDecodeError:
-                        log("WARN: Received non-JSON packet")
-                        
-                except Exception as e:
-                    if self.running:
-                        log(f"Listener Error: {e}")
-
-    def stop(self):
-        self.running = False
-        self.sock.close()
 
 # =============================================================================
 # Control Server (The Servant)
@@ -171,13 +119,8 @@ if __name__ == "__main__":
     
     proxy = GcsProxyManager()
     server = ControlServer(proxy)
-    listener = JsonChronosListener(GCS_PLAIN_RX_PORT, SESSION_LOG)
-    
     t_server = threading.Thread(target=server.run, daemon=True)
-    t_listener = threading.Thread(target=listener.run, daemon=True)
-    
     t_server.start()
-    t_listener.start()
     
     try:
         while True:
@@ -185,5 +128,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         log("Stopping...")
         server.stop()
-        listener.stop()
         proxy.stop()

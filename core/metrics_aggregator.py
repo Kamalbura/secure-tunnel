@@ -118,6 +118,13 @@ class MetricsAggregator:
         self._collect_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._system_samples: List[Dict[str, Any]] = []
+
+        # Proxy counters snapshot (for throughput calculations)
+        self._last_proxy_counters: Optional[Dict[str, Any]] = None
+
+        # Clock sync offset (run context)
+        self._clock_offset_ms: Optional[float] = None
+        self._clock_offset_method: str = "ntp"
         
         # Callbacks for external data
         self._proxy_metrics_callback: Optional[Callable[[], Dict[str, Any]]] = None
@@ -141,6 +148,18 @@ class MetricsAggregator:
     def register_mavlink_callback(self, callback: Callable[[], Dict[str, Any]]):
         """Register callback to get MAVLink metrics."""
         self._mavlink_metrics_callback = callback
+
+    def set_clock_offset(self, offset_seconds: float, method: str = "ntp"):
+        """Record clock offset for run context."""
+        try:
+            self._clock_offset_ms = float(offset_seconds) * 1000.0
+            self._clock_offset_method = method or "ntp"
+        except (TypeError, ValueError):
+            return
+
+        if self._current_metrics:
+            self._current_metrics.run_context.clock_offset_ms = self._clock_offset_ms
+            self._current_metrics.run_context.clock_offset_method = self._clock_offset_method
     
     def start_suite(self, suite_id: str, suite_config: Dict[str, Any] = None) -> ComprehensiveSuiteMetrics:
         """
@@ -179,6 +198,9 @@ class MetricsAggregator:
         m.run_context.liboqs_version = env.get("liboqs_version", "")
         m.run_context.run_start_time_wall = datetime.now(timezone.utc).isoformat()
         m.run_context.run_start_time_mono = time.monotonic()
+        if self._clock_offset_ms is not None:
+            m.run_context.clock_offset_ms = self._clock_offset_ms
+            m.run_context.clock_offset_method = self._clock_offset_method
         
         # B. Suite Crypto Identity (from config)
         if suite_config:
@@ -333,6 +355,7 @@ class MetricsAggregator:
             return
         
         dp = self._current_metrics.data_plane
+        self._last_proxy_counters = counters
         
         dp.ptx_in = counters.get("ptx_in", 0)
         dp.ptx_out = counters.get("ptx_out", 0)
@@ -341,6 +364,9 @@ class MetricsAggregator:
         dp.drop_replay = counters.get("drop_replay", 0)
         dp.drop_auth = counters.get("drop_auth", 0)
         dp.drop_header = counters.get("drop_header", 0)
+
+        dp.replay_drop_count = dp.drop_replay
+        dp.decode_failure_count = dp.drop_auth + dp.drop_header + counters.get("drop_session_epoch", 0)
         
         dp.packets_sent = dp.enc_out
         dp.packets_received = dp.enc_in
@@ -352,8 +378,18 @@ class MetricsAggregator:
             dp.packet_delivery_ratio = 1.0 - dp.packet_loss_ratio
         
         # Byte counters
-        dp.bytes_sent = counters.get("bytes_out", 0)
-        dp.bytes_received = counters.get("bytes_in", 0)
+        dp.bytes_sent = counters.get("ptx_bytes_out", counters.get("bytes_out", 0))
+        dp.bytes_received = counters.get("ptx_bytes_in", counters.get("bytes_in", 0))
+
+        # Rekey metrics (proxy counters)
+        rk = self._current_metrics.rekey
+        rk.rekey_success = counters.get("rekeys_ok", 0)
+        rk.rekey_failure = counters.get("rekeys_fail", 0)
+        rk.rekey_attempts = rk.rekey_success + rk.rekey_failure
+        rk.rekey_interval_ms = counters.get("rekey_interval_ms", 0)
+        rk.rekey_duration_ms = counters.get("rekey_duration_ms", counters.get("last_rekey_ms", 0))
+        rk.rekey_blackout_duration_ms = counters.get("rekey_blackout_duration_ms", 0)
+        rk.rekey_trigger_reason = counters.get("rekey_trigger_reason", "")
         
         # AEAD timing from primitive_metrics (nested structure)
         prim = counters.get("primitive_metrics", {})
@@ -370,6 +406,35 @@ class MetricsAggregator:
     def record_latency_sample(self, latency_ms: float):
         """Record a latency sample."""
         self.latency_tracker.record(latency_ms)
+
+    def record_control_plane_metrics(
+        self,
+        scheduler_tick_interval_ms: Optional[float] = None,
+        scheduler_action_type: Optional[str] = None,
+        scheduler_action_reason: Optional[str] = None,
+        policy_name: Optional[str] = None,
+        policy_state: Optional[str] = None,
+        policy_suite_index: Optional[int] = None,
+        policy_total_suites: Optional[int] = None,
+    ) -> None:
+        """Record control plane metrics for the current suite."""
+        if not self._current_metrics:
+            return
+        cp = self._current_metrics.control_plane
+        if scheduler_tick_interval_ms is not None:
+            cp.scheduler_tick_interval_ms = float(scheduler_tick_interval_ms)
+        if scheduler_action_type is not None:
+            cp.scheduler_action_type = str(scheduler_action_type)
+        if scheduler_action_reason is not None:
+            cp.scheduler_action_reason = str(scheduler_action_reason)
+        if policy_name is not None:
+            cp.policy_name = str(policy_name)
+        if policy_state is not None:
+            cp.policy_state = str(policy_state)
+        if policy_suite_index is not None:
+            cp.policy_suite_index = int(policy_suite_index)
+        if policy_total_suites is not None:
+            cp.policy_total_suites = int(policy_total_suites)
     
     def record_traffic_start(self):
         """Mark start of data plane traffic."""
@@ -444,6 +509,30 @@ class MetricsAggregator:
         m.lifecycle.suite_total_duration_ms = (now - m.lifecycle.suite_selected_time) * 1000
         if m.lifecycle.suite_activated_time > 0:
             m.lifecycle.suite_active_duration_ms = (now - m.lifecycle.suite_activated_time) * 1000
+
+        # G. Data plane throughput (requires counters snapshot)
+        duration_s = 0.0
+        if m.lifecycle.suite_active_duration_ms > 0:
+            duration_s = m.lifecycle.suite_active_duration_ms / 1000.0
+        elif m.lifecycle.suite_total_duration_ms > 0:
+            duration_s = m.lifecycle.suite_total_duration_ms / 1000.0
+        if duration_s > 0:
+            ptx_out = 0
+            ptx_in = 0
+            enc_out = 0
+            enc_in = 0
+            if self._last_proxy_counters:
+                ptx_out = int(self._last_proxy_counters.get("ptx_bytes_out", m.data_plane.bytes_sent) or 0)
+                ptx_in = int(self._last_proxy_counters.get("ptx_bytes_in", m.data_plane.bytes_received) or 0)
+                enc_out = int(self._last_proxy_counters.get("enc_bytes_out", self._last_proxy_counters.get("bytes_out", 0)) or 0)
+                enc_in = int(self._last_proxy_counters.get("enc_bytes_in", self._last_proxy_counters.get("bytes_in", 0)) or 0)
+
+            total_payload_bytes = max(0, ptx_out + ptx_in)
+            total_wire_bytes = max(0, enc_out + enc_in)
+
+            m.data_plane.goodput_mbps = (total_payload_bytes * 8.0) / (duration_s * 1_000_000.0)
+            m.data_plane.achieved_throughput_mbps = m.data_plane.goodput_mbps
+            m.data_plane.wire_rate_mbps = (total_wire_bytes * 8.0) / (duration_s * 1_000_000.0)
         
         # H. Latency stats
         lat_stats = self.latency_tracker.get_stats()
@@ -451,6 +540,7 @@ class MetricsAggregator:
         m.latency_jitter.one_way_latency_p50_ms = lat_stats["p50_ms"]
         m.latency_jitter.one_way_latency_p95_ms = lat_stats["p95_ms"]
         m.latency_jitter.one_way_latency_max_ms = lat_stats["max_ms"]
+        m.latency_jitter.latency_samples = self.latency_tracker.get_samples()
         self.latency_tracker.clear()
         
         # N/O. System resources
@@ -505,6 +595,20 @@ class MetricsAggregator:
                 
                 # K. MAVLink integrity
                 self.mavlink_collector.populate_mavlink_integrity(m.mavlink_integrity)
+
+                # L. Flight controller telemetry (drone only)
+                if self.role == "drone":
+                    fc = self.mavlink_collector.get_flight_controller_metrics()
+                    m.flight_controller.fc_mode = fc.get("fc_mode", "")
+                    m.flight_controller.fc_armed_state = bool(fc.get("fc_armed_state", False))
+                    m.flight_controller.fc_heartbeat_age_ms = fc.get("fc_heartbeat_age_ms", 0.0) or 0.0
+                    m.flight_controller.fc_attitude_update_rate_hz = fc.get("fc_attitude_update_rate_hz", 0.0) or 0.0
+                    m.flight_controller.fc_position_update_rate_hz = fc.get("fc_position_update_rate_hz", 0.0) or 0.0
+                    m.flight_controller.fc_battery_voltage_v = fc.get("fc_battery_voltage_v", 0.0) or 0.0
+                    m.flight_controller.fc_battery_current_a = fc.get("fc_battery_current_a", 0.0) or 0.0
+                    m.flight_controller.fc_battery_remaining_percent = fc.get("fc_battery_remaining_percent", 0.0) or 0.0
+                    m.flight_controller.fc_cpu_load_percent = fc.get("fc_cpu_load_percent", 0.0) or 0.0
+                    m.flight_controller.fc_sensor_health_flags = int(fc.get("fc_sensor_health_flags", 0) or 0)
             except Exception:
                 pass
         
@@ -532,6 +636,7 @@ class MetricsAggregator:
         # Clear for next suite
         self._current_metrics = None
         self._system_samples = []
+        self._last_proxy_counters = None
         
         return m
     

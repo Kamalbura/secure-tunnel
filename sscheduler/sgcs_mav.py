@@ -38,6 +38,7 @@ from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
 from tools.mavproxy_manager import MavProxyManager
 from sscheduler.gcs_metrics import GcsMetricsCollector
+from core.clock_sync import ClockSync
 
 # Extract config values (single source of truth)
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
@@ -98,124 +99,6 @@ def wait_for_tcp_port(port: int, timeout: float = 5.0) -> bool:
         except (ConnectionRefusedError, OSError, socket.timeout):
             time.sleep(0.2)
     return False
-
-# ============================================================
-# Traffic Generator
-# ============================================================
-
-class TrafficGenerator:
-    """Generates UDP traffic from GCS to drone"""
-    
-    def __init__(self, rate_mbps: float = DEFAULT_RATE_MBPS):
-        self.rate_mbps = rate_mbps
-        self.tx_sock = None
-        self.rx_sock = None
-        self.running = False
-        self.tx_count = 0
-        self.rx_count = 0
-        self.tx_bytes = 0
-        self.rx_bytes = 0
-        self.lock = threading.Lock()
-        self.complete = False
-    
-    def start(self, duration: float):
-        """Start traffic generation in background thread"""
-        self.tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.tx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
-
-        self.rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
-        # Bind receive socket on the GCS plaintext RX port so echoes return here
-        self.rx_sock.bind((GCS_HOST, GCS_PLAIN_RX_PORT))
-        self.rx_sock.settimeout(1.0)
-        
-        self.running = True
-        self.complete = False
-        self.tx_count = 0
-        self.rx_count = 0
-        self.tx_bytes = 0
-        self.rx_bytes = 0
-        
-        # Start receiver thread
-        self.rx_thread = threading.Thread(target=self._receive_loop, daemon=True)
-        self.rx_thread.start()
-        
-        # Start sender thread
-        self.tx_thread = threading.Thread(target=self._send_loop, args=(duration,), daemon=True)
-        self.tx_thread.start()
-        
-        log(f"Traffic started: {self.rate_mbps} Mbps for {duration}s")
-    
-    def _send_loop(self, duration: float):
-        """Send packets at target rate"""
-        payload = b"X" * PAYLOAD_SIZE
-        packets_per_sec = (self.rate_mbps * 1_000_000) / (8 * PAYLOAD_SIZE)
-        interval = 1.0 / packets_per_sec
-        batch_size = max(1, int(packets_per_sec / 100))  # Send in batches
-        batch_interval = interval * batch_size
-        
-        start_time = time.time()
-        end_time = start_time + duration
-        
-        while time.time() < end_time and self.running:
-            batch_start = time.time()
-            
-            for _ in range(batch_size):
-                try:
-                    # Send traffic to the Drone's plaintext receive port
-                    self.tx_sock.sendto(payload, (DRONE_HOST, DRONE_PLAIN_RX_PORT))
-                    with self.lock:
-                        self.tx_count += 1
-                        self.tx_bytes += len(payload)
-                except Exception:
-                    pass
-            
-            # Rate limiting
-            elapsed = time.time() - batch_start
-            if elapsed < batch_interval:
-                time.sleep(batch_interval - elapsed)
-        
-        self.complete = True
-        log(f"Traffic complete: TX={self.tx_count}, RX={self.rx_count}")
-    
-    def _receive_loop(self):
-        """Receive echo responses"""
-        while self.running:
-            try:
-                data, addr = self.rx_sock.recvfrom(65535)
-                with self.lock:
-                    self.rx_count += 1
-                    self.rx_bytes += len(data)
-            except socket.timeout:
-                continue
-            except Exception:
-                if self.running:
-                    pass
-    
-    def get_stats(self):
-        with self.lock:
-            return {
-                "tx_count": self.tx_count,
-                "rx_count": self.rx_count,
-                "tx_bytes": self.tx_bytes,
-                "rx_bytes": self.rx_bytes,
-                "complete": self.complete,
-            }
-    
-    def stop(self):
-        self.running = False
-        if hasattr(self, 'tx_thread'):
-            self.tx_thread.join(timeout=2.0)
-        if hasattr(self, 'rx_thread'):
-            self.rx_thread.join(timeout=2.0)
-        if self.tx_sock:
-            self.tx_sock.close()
-        if self.rx_sock:
-            self.rx_sock.close()
-    
-    def is_complete(self):
-        return self.complete
 
 # ============================================================
 # GCS Proxy Management
@@ -320,7 +203,6 @@ class ControlServer:
     
     def __init__(self, proxy: GcsProxyManager):
         self.proxy = proxy
-        self.traffic = None
         self.mavproxy = MavProxyManager("gcs")
         # Persistent mavproxy subprocess handle (if started here)
         self.mavproxy_proc = None
@@ -329,6 +211,7 @@ class ControlServer:
         self.thread = None
         self.rate_mbps = DEFAULT_RATE_MBPS
         self.duration = DEFAULT_DURATION
+        self.clock_sync = ClockSync()
         
         # Telemetry
         self.telemetry = TelemetrySender(DRONE_HOST, GCS_TELEMETRY_PORT)
@@ -504,13 +387,11 @@ class ControlServer:
             return {"status": "ok", "message": "pong", "role": "gcs_follower"}
         
         elif cmd == "status":
-            traffic_stats = self.traffic.get_stats() if self.traffic else {}
             return {
                 "status": "ok",
                 "proxy_running": self.proxy.is_running(),
                 "current_suite": self.proxy.current_suite,
-                "traffic_complete": traffic_stats.get("complete", False),
-                "traffic_stats": traffic_stats,
+                "mavproxy_running": bool(self.mavproxy_proc and self.mavproxy_proc.is_running()),
             }
         
         elif cmd == "configure":
@@ -562,21 +443,8 @@ class ControlServer:
             return {"status": "ok", "message": "proxy_started"}
         
         elif cmd == "start_traffic":
-            # Drone tells GCS to start traffic (proxy already running)
-            duration = request.get("duration", self.duration)
-            
-            if not self.proxy.is_running():
-                return {"status": "error", "message": "proxy_not_running"}
-            
-            log(f"Starting traffic: {self.rate_mbps} Mbps for {duration}s")
-            
-            # With persistent MAVProxy there is nothing to spawn here.
-            log("Traffic start requested (MAVProxy is already running)")
-            if not (self.mavproxy_proc and self.mavproxy_proc.poll() is None):
-                return {"status": "error", "message": "mavproxy_not_running"}
-            return {"status": "ok", "message": "traffic_started"}
-            
-            return {"status": "ok", "message": "traffic_started"}
+            # MAVProxy-only tunnel: traffic generation is not supported
+            return {"status": "error", "message": "traffic_generation_disabled"}
         
         elif cmd == "prepare_rekey":
             # Drone tells GCS to prepare for rekey (stop proxy)
@@ -585,13 +453,6 @@ class ControlServer:
             
             # DO NOT stop persistent MAVProxy here. It should keep running.
             # if self.mavproxy_proc: ...
-            
-            if self.traffic:
-                try:
-                    self.traffic.stop()
-                except Exception:
-                    pass
-                self.traffic = None
             
             return {"status": "ok", "message": "ready_for_rekey"}
         
@@ -606,13 +467,6 @@ class ControlServer:
                     pass
                 self.mavproxy_proc = None
 
-            if self.traffic:
-                try:
-                    self.traffic.stop()
-                except Exception:
-                    pass
-                self.traffic = None
-            
             return {"status": "ok", "message": "stopped"}
         
         elif cmd == "get_suites":
@@ -620,6 +474,13 @@ class ControlServer:
                 "status": "ok",
                 "suites": [s["name"] for s in SUITES],
             }
+
+        elif cmd == "chronos_sync":
+            try:
+                resp = self.clock_sync.server_handle_sync(request)
+                return resp
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
         
         return {"status": "error", "message": f"unknown command: {cmd}"}
     
@@ -635,11 +496,6 @@ class ControlServer:
             self.telemetry.close()
         if self.server_sock:
             self.server_sock.close()
-        if self.traffic:
-            try:
-                self.traffic.stop()
-            except Exception:
-                pass
         if self.mavproxy_proc:
             try:
                 self.mavproxy_proc.stop()

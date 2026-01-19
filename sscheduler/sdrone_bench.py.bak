@@ -28,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.config import CONFIG
 from core.suites import list_suites
 from core.clock_sync import ClockSync
-from core.power_monitor import create_power_monitor
 from core.run_proxy import DroneProxyManager
 
 # =============================================================================
@@ -37,7 +36,6 @@ from core.run_proxy import DroneProxyManager
 
 GCS_HOST = str(CONFIG.get("GCS_HOST", "192.168.0.100"))
 GCS_CONTROL_PORT = int(CONFIG.get("GCS_CONTROL_PORT", 48080))
-DRONE_PLAIN_TX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_TX", 47003))
 
 LOGS_DIR = Path(__file__).parent.parent / "logs" / "benchmarks"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -119,11 +117,7 @@ class BenchDroneScheduler:
         
         # Chronos Components
         self.clock_sync = ClockSync()
-        self.power_mon = create_power_monitor(output_dir=LOGS_DIR)
-        
-        # Telemetry Injection Socket
-        self.tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.tx_addr = ("127.0.0.1", DRONE_PLAIN_TX_PORT)
+        self.power_mon = None
         
         # Mock connection 
         self.gcs_ready = False
@@ -140,10 +134,7 @@ class BenchDroneScheduler:
             # self.clock_sync.sync() 
             pass
 
-        # 2. Start Sensor Fusion Loop
-        threading.Thread(target=self._sensor_fusion_loop, daemon=True).start()
-        
-        # 3. Main Policy Loop
+        # 2. Main Policy Loop
         while self.running:
             target_suite = self.rotator.get_target_suite()
             
@@ -177,39 +168,9 @@ class BenchDroneScheduler:
         else:
             log(f"❌ Failed to start local proxy for {suite_name}")
 
-    def _sensor_fusion_loop(self):
-        """10Hz Data Injection."""
-        log("Sensor Fusion Loop Active")
-        while self.running:
-            try:
-                # 1. Gather Data
-                pwr = self.power_mon.read_metrics() if self.power_mon else {}
-                ts = time.time() # Use local valid time
-                
-                # 2. Build Packet
-                packet = {
-                    "type": "chronos_fusion",
-                    "ts": ts,
-                    "suite": self.current_suite,
-                    "bat_v": pwr.get("bus_v", 0.0),
-                    "bat_i": pwr.get("current_mA", 0.0),
-                    "seq": int(ts * 10) # Pseudo seq
-                }
-                
-                # 3. Inject to Tunnel
-                data = json.dumps(packet).encode()
-                self.tx_sock.sendto(data, self.tx_addr)
-                
-            except Exception as e:
-                log(f"Fusion Error: {e}")
-                
-            time.sleep(0.1) # 10Hz
-
     def stop(self):
         self.running = False
         self.proxy.stop()
-        if self.power_mon:
-            self.power_mon.stop()
 
 def cleanup():
     # pkill sdrone?

@@ -340,3 +340,74 @@ class TelemetryAwarePolicyV2:
         successfully to enforce the per-hour limit.
         """
         self.rekey_timestamps.append(now_mono)
+
+
+# =============================================================================
+# SIMPLE POLICIES USED BY MAV SCHEDULER
+# =============================================================================
+
+class LinearLoopPolicy:
+    """Deterministic round-robin suite policy."""
+
+    def __init__(self, suites: List[str], duration_s: float = 10.0):
+        self.suites = list(suites)
+        self._idx = 0
+        self._duration_s = float(duration_s)
+
+    def next_suite(self) -> str:
+        if not self.suites:
+            raise RuntimeError("No suites configured")
+        suite = self.suites[self._idx % len(self.suites)]
+        self._idx += 1
+        return suite
+
+    def get_duration(self) -> float:
+        return self._duration_s
+
+
+class RandomPolicy:
+    """Random suite selection policy."""
+
+    def __init__(self, suites: List[str], duration_s: float = 10.0):
+        import random
+        self._rng = random.Random()
+        self.suites = list(suites)
+        self._duration_s = float(duration_s)
+
+    def next_suite(self) -> str:
+        if not self.suites:
+            raise RuntimeError("No suites configured")
+        return self._rng.choice(self.suites)
+
+    def get_duration(self) -> float:
+        return self._duration_s
+
+
+class ManualOverridePolicy:
+    """Manual suite override with fallback to linear loop."""
+
+    def __init__(self, suites: List[str], duration_s: float = 10.0):
+        self.suites = list(suites)
+        self._duration_s = float(duration_s)
+        self._override: Optional[str] = None
+        self._idx = 0
+
+    def set_override(self, suite_name: Optional[str]) -> None:
+        if suite_name is None:
+            self._override = None
+            return
+        if suite_name not in self.suites:
+            raise ValueError("Unknown suite override")
+        self._override = suite_name
+
+    def next_suite(self) -> str:
+        if not self.suites:
+            raise RuntimeError("No suites configured")
+        if self._override:
+            return self._override
+        suite = self.suites[self._idx % len(self.suites)]
+        self._idx += 1
+        return suite
+
+    def get_duration(self) -> float:
+        return self._duration_s

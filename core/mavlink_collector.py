@@ -165,6 +165,22 @@ class MavLinkMetricsCollector:
             "batt_rem_pct": 0,
             "last_update": 0.0
         }
+
+        # Flight controller telemetry fields
+        self._fc_mode: str = ""
+        self._fc_armed: bool = False
+        self._fc_heartbeat_last_mono: float = 0.0
+        self._fc_attitude_first_mono: float = 0.0
+        self._fc_attitude_last_mono: float = 0.0
+        self._fc_attitude_count: int = 0
+        self._fc_position_first_mono: float = 0.0
+        self._fc_position_last_mono: float = 0.0
+        self._fc_position_count: int = 0
+        self._fc_batt_voltage_v: float = 0.0
+        self._fc_batt_current_a: float = 0.0
+        self._fc_batt_remaining_pct: float = 0.0
+        self._fc_cpu_load_pct: float = 0.0
+        self._fc_sensor_health_flags: int = 0
         
     def _detect_role(self) -> str:
         """Detect role from platform."""
@@ -222,28 +238,20 @@ class MavLinkMetricsCollector:
     
     def _sniff_loop(self, host: str, port: int):
         """Main sniffing loop."""
-        # Try pymavlink first
-        if HAS_PYMAVLINK:
-            try:
-                conn_str = f"udpin:{host}:{port}"
-                self._mav_conn = mavutil.mavlink_connection(
-                    conn_str,
-                    source_system=255,
-                    source_component=0
-                )
-                self._protocol_version = "MAVLink 2.0"
-            except Exception as e:
-                self._mav_conn = None
-        
-        # Fallback to raw socket
-        if not self._mav_conn:
-            try:
-                self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self._sock.bind((host, port))
-                self._sock.settimeout(0.1)
-            except Exception as e:
-                return
+        # Require pymavlink; no raw socket fallback
+        if not HAS_PYMAVLINK:
+            return
+        try:
+            conn_str = f"udpin:{host}:{port}"
+            self._mav_conn = mavutil.mavlink_connection(
+                conn_str,
+                source_system=255,
+                source_component=0
+            )
+            self._protocol_version = "MAVLink 2.0"
+        except Exception:
+            self._mav_conn = None
+            return
         
         while self._running:
             try:
@@ -259,13 +267,7 @@ class MavLinkMetricsCollector:
             msg = self._mav_conn.recv_match(blocking=True, timeout=0.1)
             if msg:
                 self._handle_message(msg, now)
-        elif self._sock:
-            try:
-                data, addr = self._sock.recvfrom(65535)
-                if data:
-                    self._handle_raw_packet(data, now)
-            except socket.timeout:
-                pass
+        
     
     def _handle_message(self, msg, now: float):
         """Handle a parsed MAVLink message."""
@@ -328,11 +330,49 @@ class MavLinkMetricsCollector:
                     self._last_telemetry["hdg_deg"] = msg.hdg / 100.0
                     self._last_telemetry["last_update"] = now
                 except: pass
+                # Position update rate tracking
+                if self._fc_position_count == 0:
+                    self._fc_position_first_mono = now
+                self._fc_position_last_mono = now
+                self._fc_position_count += 1
             elif msg_type == "SYS_STATUS":
                 try:
                     self._last_telemetry["batt_rem_pct"] = msg.battery_remaining
                     self._last_telemetry["last_update"] = now
                 except: pass
+                try:
+                    # SYS_STATUS battery fields are in mV and 10mA units
+                    if getattr(msg, "voltage_battery", None) is not None:
+                        self._fc_batt_voltage_v = msg.voltage_battery / 1000.0
+                    if getattr(msg, "current_battery", None) is not None:
+                        self._fc_batt_current_a = msg.current_battery / 100.0
+                    if getattr(msg, "battery_remaining", None) is not None:
+                        self._fc_batt_remaining_pct = float(msg.battery_remaining)
+                    if getattr(msg, "load", None) is not None:
+                        self._fc_cpu_load_pct = float(msg.load) / 10.0
+                    if getattr(msg, "onboard_control_sensors_health", None) is not None:
+                        self._fc_sensor_health_flags = int(msg.onboard_control_sensors_health)
+                except Exception:
+                    pass
+            elif msg_type == "BATTERY_STATUS":
+                try:
+                    # Use first non-zero cell voltage (mV)
+                    voltages = getattr(msg, "voltages", []) or []
+                    for mv in voltages:
+                        if mv and mv > 0:
+                            self._fc_batt_voltage_v = mv / 1000.0
+                            break
+                    if getattr(msg, "current_battery", None) is not None:
+                        self._fc_batt_current_a = msg.current_battery / 100.0
+                    if getattr(msg, "battery_remaining", None) is not None:
+                        self._fc_batt_remaining_pct = float(msg.battery_remaining)
+                except Exception:
+                    pass
+            elif msg_type == "ATTITUDE":
+                if self._fc_attitude_count == 0:
+                    self._fc_attitude_first_mono = now
+                self._fc_attitude_last_mono = now
+                self._fc_attitude_count += 1
             
             # Log message
             self._msg_log.append({
@@ -342,41 +382,6 @@ class MavLinkMetricsCollector:
                 "sysid": sysid,
                 "compid": compid,
             })
-    
-    def _handle_raw_packet(self, data: bytes, now: float):
-        """Handle raw MAVLink packet (fallback without pymavlink)."""
-        with self._lock:
-            self._total_rx += 1
-            self._total_bytes_rx += len(data)
-            
-            # Basic MAVLink v2 header parsing
-            if len(data) >= 12 and data[0] == 0xFD:  # MAVLink 2.0
-                payload_len = data[1]
-                seq = data[4]
-                sysid = data[5]
-                compid = data[6]
-                msg_id = struct.unpack("<I", data[7:10] + b"\x00")[0]
-                
-                self._track_sequence(sysid, seq)
-                
-                if msg_id not in self._msg_stats:
-                    self._msg_stats[msg_id] = MavLinkMessageStats(
-                        msg_id=msg_id,
-                        msg_name=f"MSG_{msg_id}",
-                        first_seen_mono=now
-                    )
-                
-                self._msg_stats[msg_id].count_rx += 1
-                self._msg_stats[msg_id].last_seen_mono = now
-            
-            elif len(data) >= 8 and data[0] == 0xFE:  # MAVLink 1.0
-                payload_len = data[1]
-                seq = data[2]
-                sysid = data[3]
-                compid = data[4]
-                msg_id = data[5]
-                
-                self._track_sequence(sysid, seq)
     
     def _track_sequence(self, sysid: int, seq: int):
         """Track sequence numbers for gap detection."""
@@ -401,12 +406,23 @@ class MavLinkMetricsCollector:
         self._heartbeat.count += 1
         self._heartbeat.sysid = msg.get_srcSystem()
         self._heartbeat.compid = msg.get_srcComponent()
+        self._fc_heartbeat_last_mono = now
         
         try:
             self._heartbeat.mode = msg.custom_mode
             if HAS_PYMAVLINK:
                 self._heartbeat.armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
         except:
+            pass
+
+        # Flight controller mode/armed state
+        try:
+            if HAS_PYMAVLINK:
+                self._fc_mode = mavutil.mode_string_v10(msg)
+                self._fc_armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+            else:
+                self._fc_mode = str(getattr(msg, "custom_mode", ""))
+        except Exception:
             pass
         
         # Calculate interval
@@ -621,6 +637,40 @@ class MavLinkMetricsCollector:
         integrity_metrics.mavlink_out_of_order_count = m["seq_out_of_order_count"]
         integrity_metrics.mavlink_duplicate_count = m["seq_duplicate_count"]
         integrity_metrics.mavlink_message_latency_avg_ms = m["message_latency_avg_ms"]
+
+    def get_flight_controller_metrics(self) -> Dict[str, Any]:
+        """Return derived flight controller telemetry metrics."""
+        with self._lock:
+            now = time.monotonic()
+
+            hb_age_ms = 0.0
+            if self._fc_heartbeat_last_mono > 0:
+                hb_age_ms = max(0.0, (now - self._fc_heartbeat_last_mono) * 1000.0)
+
+            attitude_rate_hz = 0.0
+            if self._fc_attitude_count > 1 and self._fc_attitude_last_mono > self._fc_attitude_first_mono:
+                duration = self._fc_attitude_last_mono - self._fc_attitude_first_mono
+                if duration > 0:
+                    attitude_rate_hz = self._fc_attitude_count / duration
+
+            position_rate_hz = 0.0
+            if self._fc_position_count > 1 and self._fc_position_last_mono > self._fc_position_first_mono:
+                duration = self._fc_position_last_mono - self._fc_position_first_mono
+                if duration > 0:
+                    position_rate_hz = self._fc_position_count / duration
+
+            return {
+                "fc_mode": self._fc_mode,
+                "fc_armed_state": self._fc_armed,
+                "fc_heartbeat_age_ms": hb_age_ms,
+                "fc_attitude_update_rate_hz": attitude_rate_hz,
+                "fc_position_update_rate_hz": position_rate_hz,
+                "fc_battery_voltage_v": self._fc_batt_voltage_v,
+                "fc_battery_current_a": self._fc_batt_current_a,
+                "fc_battery_remaining_percent": self._fc_batt_remaining_pct,
+                "fc_cpu_load_percent": self._fc_cpu_load_pct,
+                "fc_sensor_health_flags": self._fc_sensor_health_flags,
+            }
     def get_chronos_data(self) -> Dict[str, Any]:
         """
         Get latest telemetry for Chronos Sensor Fusion.

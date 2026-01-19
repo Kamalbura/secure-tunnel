@@ -75,6 +75,10 @@ class ProxyCounters:
         self.ptx_in = 0       # plaintext packets received from app
         self.enc_out = 0      # encrypted packets sent to peer
         self.enc_in = 0       # encrypted packets received from peer
+        self.ptx_bytes_out = 0  # plaintext bytes sent out to app
+        self.ptx_bytes_in = 0   # plaintext bytes received from app
+        self.enc_bytes_out = 0  # encrypted bytes sent to peer
+        self.enc_bytes_in = 0   # encrypted bytes received from peer
         self.drops = 0        # total drops
         # Granular drop reasons
         self.drop_replay = 0
@@ -87,6 +91,16 @@ class ProxyCounters:
         self.rekeys_fail = 0
         self.last_rekey_ms = 0
         self.last_rekey_suite: Optional[str] = None
+        self.rekey_interval_ms = 0.0
+        self.rekey_duration_ms = 0.0
+        self.rekey_blackout_duration_ms = 0.0
+        self.rekey_trigger_reason: Optional[str] = None
+        self._last_rekey_start_mono: Optional[float] = None
+        self._last_rekey_end_mono: Optional[float] = None
+        self._last_packet_mono: Optional[float] = None
+        self._rekey_active = False
+        self._rekey_blackout_start_mono: Optional[float] = None
+        self._rekey_blackout_end_mono: Optional[float] = None
         self.handshake_metrics: Dict[str, object] = {}
         self._primitive_templates = {
             "count": 0,
@@ -200,6 +214,12 @@ class ProxyCounters:
             "ptx_in": self.ptx_in,
             "enc_out": self.enc_out,
             "enc_in": self.enc_in,
+            "ptx_bytes_out": self.ptx_bytes_out,
+            "ptx_bytes_in": self.ptx_bytes_in,
+            "enc_bytes_out": self.enc_bytes_out,
+            "enc_bytes_in": self.enc_bytes_in,
+            "bytes_out": self.enc_bytes_out,
+            "bytes_in": self.enc_bytes_in,
             "drops": self.drops,
             "drop_replay": self.drop_replay,
             "drop_auth": self.drop_auth,
@@ -211,6 +231,10 @@ class ProxyCounters:
             "rekeys_fail": self.rekeys_fail,
             "last_rekey_ms": self.last_rekey_ms,
             "last_rekey_suite": self.last_rekey_suite or "",
+            "rekey_interval_ms": self.rekey_interval_ms,
+            "rekey_duration_ms": self.rekey_duration_ms,
+            "rekey_blackout_duration_ms": self.rekey_blackout_duration_ms,
+            "rekey_trigger_reason": self.rekey_trigger_reason or "",
             "handshake_metrics": self.handshake_metrics,
             "primitive_metrics": {name: _serialize(stats) for name, stats in self.primitive_metrics.items()},
         }
@@ -980,16 +1004,44 @@ def run_proxy(
         enabled=tcp_control_enabled,
     )
 
-    def _launch_rekey(target_suite_id: str, rid: str) -> None:
+    def _launch_rekey(target_suite_id: str, rid: str, trigger_reason: Optional[str] = None) -> None:
         with rekey_guard:
             if rid in active_rekeys:
                 return
             active_rekeys.add(rid)
 
+        with counters_lock:
+            now_mono = time.monotonic()
+            counters._rekey_active = True
+            counters._rekey_blackout_start_mono = now_mono
+            counters._rekey_blackout_end_mono = None
+            counters._last_rekey_start_mono = now_mono
+            if counters._last_rekey_end_mono is not None:
+                counters.rekey_interval_ms = (now_mono - counters._last_rekey_end_mono) * 1000.0
+            if trigger_reason:
+                counters.rekey_trigger_reason = trigger_reason
+
         logger.info(
             "Control rekey negotiation started",
             extra={"role": role, "suite_id": target_suite_id, "rid": rid},
         )
+
+        def _finalize_rekey() -> None:
+            with counters_lock:
+                end_mono = time.monotonic()
+                counters._last_rekey_end_mono = end_mono
+                if counters._last_rekey_start_mono is not None:
+                    counters.rekey_duration_ms = (end_mono - counters._last_rekey_start_mono) * 1000.0
+                if counters._rekey_blackout_start_mono is not None:
+                    if counters._rekey_blackout_end_mono is not None:
+                        counters.rekey_blackout_duration_ms = (
+                            counters._rekey_blackout_end_mono - counters._rekey_blackout_start_mono
+                        ) * 1000.0
+                    else:
+                        counters.rekey_blackout_duration_ms = (
+                            end_mono - counters._rekey_blackout_start_mono
+                        ) * 1000.0
+                counters._rekey_active = False
 
         def worker() -> None:
             nonlocal gcs_sig_public
@@ -1005,6 +1057,7 @@ def run_proxy(
                             current_suite = active_context["suite"]
                         with counters_lock:
                             counters.rekeys_fail += 1
+                        _finalize_rekey()
                         record_rekey_result(control_state, rid, current_suite, success=False)
                         logger.warning(
                             "Control rekey rejected: missing signing secret",
@@ -1058,6 +1111,7 @@ def run_proxy(
                         current_suite = active_context["suite"]
                     with counters_lock:
                         counters.rekeys_fail += 1
+                    _finalize_rekey()
                     record_rekey_result(control_state, rid, current_suite, success=False)
                     logger.warning(
                         "Control rekey rejected: missing signing public key",
@@ -1076,6 +1130,7 @@ def run_proxy(
                         current_suite = active_context["suite"]
                     with counters_lock:
                         counters.rekeys_fail += 1
+                    _finalize_rekey()
                     record_rekey_result(control_state, rid, current_suite, success=False)
                     logger.warning(
                         "Control rekey rejected: signing public key load failed",
@@ -1161,6 +1216,7 @@ def run_proxy(
                     counters.last_rekey_ms = int(time.time() * 1000)
                     counters.last_rekey_suite = new_suite["suite_id"]
                     counters.handshake_metrics = dict(new_handshake_metrics) if new_handshake_metrics else {}
+                _finalize_rekey()
                 if role == "drone" and new_public is not None:
                     gcs_sig_public = new_public
                 record_rekey_result(control_state, rid, new_suite["suite_id"], success=True)
@@ -1198,6 +1254,7 @@ def run_proxy(
                     current_suite = active_context["suite"]
                 with counters_lock:
                     counters.rekeys_fail += 1
+                _finalize_rekey()
                 record_rekey_result(control_state, rid, current_suite, success=False)
                 logger.warning(
                     "Control rekey failed",
@@ -1234,6 +1291,10 @@ def run_proxy(
             try:
                 sockets["encrypted"].sendto(wire, sockets["encrypted_peer"])
                 counters.enc_out += 1
+                counters.enc_bytes_out += len(wire)
+                counters._last_packet_mono = time.monotonic()
+                if counters._rekey_active and counters._rekey_blackout_end_mono is None:
+                    counters._rekey_blackout_end_mono = counters._last_packet_mono
             except socket.error as exc:
                 counters.drops += 1
                 counters.drop_other += 1
@@ -1267,6 +1328,10 @@ def run_proxy(
 
                             with counters_lock:
                                 counters.ptx_in += 1
+                                counters.ptx_bytes_in += len(payload)
+                                counters._last_packet_mono = time.monotonic()
+                                if counters._rekey_active and counters._rekey_blackout_end_mono is None:
+                                    counters._rekey_blackout_end_mono = counters._last_packet_mono
 
                             payload_out = (b"\x01" + payload) if cfg.get("ENABLE_PACKET_TYPE") else payload
                             with context_lock:
@@ -1325,6 +1390,10 @@ def run_proxy(
                                 sockets["encrypted"].sendto(wire, sockets["encrypted_peer"])
                                 with counters_lock:
                                     counters.enc_out += 1
+                                    counters.enc_bytes_out += len(wire)
+                                    counters._last_packet_mono = time.monotonic()
+                                    if counters._rekey_active and counters._rekey_blackout_end_mono is None:
+                                        counters._rekey_blackout_end_mono = counters._last_packet_mono
                             except socket.error:
                                 with counters_lock:
                                     counters.drops += 1
@@ -1362,6 +1431,10 @@ def run_proxy(
 
                             with counters_lock:
                                 counters.enc_in += 1
+                                counters.enc_bytes_in += len(wire)
+                                counters._last_packet_mono = time.monotonic()
+                                if counters._rekey_active and counters._rekey_blackout_end_mono is None:
+                                    counters._rekey_blackout_end_mono = counters._last_packet_mono
 
                             cipher_len = len(wire)
                             decrypt_start_ns = time.perf_counter_ns()
@@ -1494,7 +1567,7 @@ def run_proxy(
                                     control_state.outbox.put(payload)
                                 if result.start_handshake:
                                     suite_next, rid = result.start_handshake
-                                    _launch_rekey(suite_next, rid)
+                                    _launch_rekey(suite_next, rid, trigger_reason=control_json.get("type"))
                                 continue
 
                             if cfg.get("ENABLE_PACKET_TYPE") and plaintext:
@@ -1512,6 +1585,10 @@ def run_proxy(
                             sockets["plaintext_out"].sendto(out_bytes, app_peer_addr)
                             with counters_lock:
                                 counters.ptx_out += 1
+                                counters.ptx_bytes_out += len(out_bytes)
+                                counters._last_packet_mono = time.monotonic()
+                                if counters._rekey_active and counters._rekey_blackout_end_mono is None:
+                                    counters._rekey_blackout_end_mono = counters._last_packet_mono
                         except socket.error:
                             with counters_lock:
                                 counters.drops += 1

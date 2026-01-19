@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
+from core.clock_sync import ClockSync
 from tools.mavproxy_manager import MavProxyManager
 from sscheduler.policy import LinearLoopPolicy, RandomPolicy, ManualOverridePolicy
 
@@ -440,47 +441,18 @@ def run_suite(proxy: DroneProxyManager, mavproxy,
     # Wait for handshake
     time.sleep(1.0)
     
-    # Tell GCS to start traffic
-    log("Telling GCS to start traffic...")
-    resp = send_gcs_command("start_traffic", duration=duration)
-    if resp.get("status") != "ok":
-        log(f"GCS start_traffic failed: {resp}")
-        result["status"] = "gcs_traffic_failed"
-        return result
-    
-    log("Traffic started, waiting for completion... (mavproxy relaying MAVLink)")
-    
-    # Wait for GCS to finish traffic generation
-    # Poll GCS status
-    traffic_done = False
+    log("MAVProxy tunnel active; holding for suite duration...")
     start_time = time.time()
-    max_wait = duration + 30  # Extra buffer
-    
-    while time.time() - start_time < max_wait:
+    while time.time() - start_time < duration:
         time.sleep(2.0)
-        
-        # Log mavproxy status periodically
         try:
             log(f"mavproxy running: {mavproxy.is_running()}")
         except Exception:
             pass
-        
-        # Check GCS status
-        status = send_gcs_command("status")
-        if status.get("traffic_complete"):
-            traffic_done = True
-            break
-        
-        # Check if proxy died
         if not proxy.is_running():
             log("Proxy exited unexpectedly")
             result["status"] = "proxy_exited"
             return result
-    
-    if not traffic_done:
-        log("Traffic did not complete in time")
-        result["status"] = "timeout"
-        return result
     
     # Indicate mavproxy and proxy status in result
     try:
@@ -507,10 +479,11 @@ class DroneScheduler:
     def __init__(self, args, suites):
         self.args = args
         self.suites = suites
-        self.policy = LinearLoopPolicy(self.suites)
+        self.policy = LinearLoopPolicy(self.suites, duration_s=float(self.args.duration))
         self.proxy = DroneProxyManager()
         self.mavproxy_proc = None
         self.current_proxy_proc = None
+        self.clock_sync = ClockSync()
         
         # Telemetry & Decision Context
         self.telemetry = TelemetryListener(GCS_TELEMETRY_PORT)
@@ -633,6 +606,19 @@ class DroneScheduler:
 
         # Start Telemetry Listener
         self.telemetry.start()
+
+        # Clock sync with GCS control server
+        try:
+            t1 = time.time()
+            resp = send_gcs_command("chronos_sync", t1=t1)
+            t4 = time.time()
+            if resp.get("status") == "ok":
+                offset = self.clock_sync.update_from_rpc(t1, t4, resp)
+                log(f"Clock sync offset (gcs-drone): {offset:.6f}s")
+            else:
+                log(f"Clock sync failed: {resp}")
+        except Exception as e:
+            log(f"Clock sync error: {e}")
 
         # Start MAVProxy once
         ok = self.start_persistent_mavproxy()

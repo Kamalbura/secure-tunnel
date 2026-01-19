@@ -680,6 +680,11 @@ class LatencyTracker:
             "min_ms": samples_sorted[0],
             "count": n,
         }
+
+    def get_samples(self) -> List[float]:
+        """Return a copy of raw latency samples."""
+        with self._lock:
+            return self._samples.copy()
     
     def clear(self):
         """Clear all samples."""

@@ -508,7 +508,7 @@ class GcsBenchmarkServer:
         
         # Components
         self.proxy = GcsProxyManager(logs_dir)
-        self.mavproxy = GcsMavProxyManager(logs_dir, enable_gui=MAVPROXY_ENABLE_GUI)
+        self.mavproxy = GcsMavProxyManager(logs_dir, enable_gui=True)
         # NOTE: GcsSystemMetricsCollector REMOVED - GCS resources not policy-relevant
         self.mavlink_monitor = GcsMavLinkCollector()
         self.clock_sync = ClockSync()
@@ -721,10 +721,7 @@ def main():
                         help="Disable MAVProxy GUI (map + console)")
     args = parser.parse_args()
     
-    # Override GUI setting if --no-gui specified
-    global MAVPROXY_ENABLE_GUI
-    if args.no_gui:
-        MAVPROXY_ENABLE_GUI = False
+    # NOTE: GUI is always enabled for benchmark runs (map + console)
     
     # Generate run ID
     run_id = args.run_id or f"gcs_bench_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"

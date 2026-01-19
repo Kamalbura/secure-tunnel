@@ -243,7 +243,7 @@ class GcsMavProxyManager:
                 # GUI mode: let MAVProxy use the console directly
                 self.process = subprocess.Popen(
                     cmd,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if platform.system() == "Windows" else 0
+                    creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == "Windows" else 0
                 )
             else:
                 # Headless mode: redirect to log file

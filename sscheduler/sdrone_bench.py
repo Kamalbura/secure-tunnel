@@ -405,9 +405,12 @@ class BenchmarkScheduler:
                             policy_total_suites=output.total_suites,
                             scheduler_tick_interval_ms=self.args.interval * 1000.0,
                         )
-                    # Finalize last suite metrics before returning
-                    self._finalize_metrics(success=True)
-                    self._collect_gcs_metrics(current_suite)
+                    
+                    # 1. Collect GCS metrics FIRST (so we can include them in final report)
+                    gcs_metrics = self._collect_gcs_metrics(current_suite)
+
+                    # 2. Finalize metrics (passing GCS data for consolidation)
+                    self._finalize_metrics(success=True, gcs_metrics=gcs_metrics)
                     return
                 
                 if output.action == BenchmarkAction.NEXT_SUITE:
@@ -425,11 +428,12 @@ class BenchmarkScheduler:
                             scheduler_tick_interval_ms=self.args.interval * 1000.0,
                         )
                     
-                    # Finalize metrics AFTER interval wait (data plane has accumulated)
-                    self._finalize_metrics(success=True)
-
-                    # Collect GCS-side metrics for the current suite
-                    gcs_ok = self._collect_gcs_metrics(current_suite)
+                    # 1. Collect GCS metrics FIRST
+                    gcs_metrics = self._collect_gcs_metrics(current_suite)
+                    gcs_ok = bool(gcs_metrics)
+                    
+                    # 2. Finalize metrics (passing GCS data for consolidation)
+                    self._finalize_metrics(success=True, gcs_metrics=gcs_metrics)
                     
                     # Stop current proxy
                     self.proxy.stop()
@@ -522,7 +526,7 @@ class BenchmarkScheduler:
             self._finalize_metrics(success=False, error="handshake_timeout")
             return False
     
-    def _finalize_metrics(self, success: bool, error: str = ""):
+    def _finalize_metrics(self, success: bool, error: str = "", gcs_metrics: Dict = None):
         """Finalize and save comprehensive metrics for current suite."""
         if not self.metrics_aggregator:
             return
@@ -550,8 +554,12 @@ class BenchmarkScheduler:
                     (counters.get("ptx_in", 0), counters.get("enc_out", 0))
                 )
             
-            self.metrics_aggregator.record_handshake_end(success=success, failure_reason=error)
-            comprehensive = self.metrics_aggregator.finalize_suite()
+            # NOTE: record_handshake_end() is NOT called here.
+            # It was already called in _activate_suite() immediately after handshake completion.
+            # Calling it here would overwrite the correct handshake duration with the suite duration.
+            
+            # MERGE GCS METRICS HERE
+            comprehensive = self.metrics_aggregator.finalize_suite(merge_from=gcs_metrics)
             if comprehensive:
                 # Export to JSON
                 output_path = self.metrics_aggregator.save_suite_metrics(comprehensive)
@@ -560,17 +568,17 @@ class BenchmarkScheduler:
         except Exception as e:
             log(f"Metrics finalize failed: {e}", "WARN")
 
-    def _collect_gcs_metrics(self, suite_name: str) -> bool:
-        """Fetch GCS-side metrics for the suite and log to JSONL."""
+    def _collect_gcs_metrics(self, suite_name: str) -> Optional[Dict[str, Any]]:
+        """Fetch GCS-side metrics for the suite and return them (also log to JSONL)."""
         try:
             resp = send_gcs_command("stop_suite")
         except Exception as e:
             log(f"GCS stop_suite error: {e}", "WARN")
-            return False
+            return None
 
         if resp.get("status") != "ok":
             log(f"GCS stop_suite failed: {resp}", "WARN")
-            return False
+            return None
 
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -582,9 +590,9 @@ class BenchmarkScheduler:
                 f.write(json.dumps(entry) + "\n")
         except Exception as e:
             log(f"Failed to log GCS metrics: {e}", "WARN")
-            return False
-
-        return True
+            # Don't return None here, we still have the metrics to pass to aggregator
+        
+        return resp
     
     def _log_result(self, suite_name: str, metrics: Dict, success: bool, error: str = ""):
         """Log result to JSONL file."""

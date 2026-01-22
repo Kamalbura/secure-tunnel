@@ -502,13 +502,13 @@ class GcsBenchmarkServer:
         shutdown: Graceful shutdown
     """
     
-    def __init__(self, logs_dir: Path, run_id: str):
+    def __init__(self, logs_dir: Path, run_id: str, enable_gui: bool = True):
         self.logs_dir = logs_dir
         self.run_id = run_id
         
         # Components
         self.proxy = GcsProxyManager(logs_dir)
-        self.mavproxy = GcsMavProxyManager(logs_dir, enable_gui=True)
+        self.mavproxy = GcsMavProxyManager(logs_dir, enable_gui=enable_gui)
         # NOTE: GcsSystemMetricsCollector REMOVED - GCS resources not policy-relevant
         self.mavlink_monitor = GcsMavLinkCollector()
         self.clock_sync = ClockSync()
@@ -734,6 +734,7 @@ def main():
     server = GcsBenchmarkServer(
         logs_dir=run_logs_dir,
         run_id=run_id,
+        enable_gui=not args.no_gui
     )
 
     def _atexit_cleanup():

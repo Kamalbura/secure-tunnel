@@ -262,10 +262,24 @@ class MetricsAggregator:
                 self._current_metrics.handshake.handshake_start_time_drone = now
     
     def record_handshake_end(self, success: bool = True, failure_reason: str = ""):
-        """Mark handshake end and record status."""
+        """Mark handshake end and record status.
+        
+        IDEMPOTENT: If handshake timing is already recorded, this call is ignored
+        to prevent overwriting with incorrect values (e.g., suite duration).
+        """
         if self._current_metrics:
-            now = time.monotonic()
             h = self._current_metrics.handshake
+            
+            # GUARD: Prevent double-call from overwriting correct timing
+            if h.handshake_total_duration_ms > 0:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "record_handshake_end() called twice - ignoring to preserve "
+                    f"original duration of {h.handshake_total_duration_ms:.2f}ms"
+                )
+                return
+            
+            now = time.monotonic()
             
             if self.role == "gcs":
                 h.handshake_end_time_gcs = now
@@ -664,11 +678,36 @@ class MetricsAggregator:
                 if hasattr(m.system_drone, k):
                     setattr(m.system_drone, k, v)
         
+
         # Merge power metrics
         if "power_energy" in peer_data:
             for k, v in peer_data["power_energy"].items():
                 if hasattr(m.power_energy, k):
                     setattr(m.power_energy, k, v)
+
+        # Merge GCS MAVLink metrics (mavlink_validation)
+        if "mavlink_validation" in peer_data:
+            d = peer_data["mavlink_validation"]
+            target = m.mavproxy_gcs
+            
+            # Direct mapping from get_metrics() dict keys to MavProxyGcsMetrics fields
+            target.mavproxy_gcs_total_msgs_received = d.get("total_msgs_received", 0)
+            target.mavproxy_gcs_seq_gap_count = d.get("seq_gap_count", 0)
+            
+            # Extended metrics (UN-PRUNED for latency verification)
+            target.mavproxy_gcs_start_time = d.get("start_time", 0.0)
+            target.mavproxy_gcs_end_time = d.get("end_time", 0.0)
+            target.mavproxy_gcs_tx_pps = d.get("tx_pps", 0.0)
+            target.mavproxy_gcs_rx_pps = d.get("rx_pps", 0.0)
+            target.mavproxy_gcs_total_msgs_sent = d.get("total_msgs_sent", 0)
+            target.mavproxy_gcs_msg_type_counts = d.get("msg_type_counts", {})
+            target.mavproxy_gcs_heartbeat_interval_ms = d.get("heartbeat_interval_ms", 0.0)
+            target.mavproxy_gcs_heartbeat_loss_count = d.get("heartbeat_loss_count", 0)
+            target.mavproxy_gcs_cmd_sent_count = d.get("cmd_sent_count", 0)
+            target.mavproxy_gcs_cmd_ack_received_count = d.get("cmd_ack_received_count", 0)
+            target.mavproxy_gcs_cmd_ack_latency_avg_ms = d.get("cmd_ack_latency_avg_ms", 0.0)
+            target.mavproxy_gcs_cmd_ack_latency_p95_ms = d.get("cmd_ack_latency_p95_ms", 0.0)
+            target.mavproxy_gcs_stream_rate_hz = d.get("stream_rate_hz", 0.0)
     
     def _save_metrics(self, m: ComprehensiveSuiteMetrics):
         """Save metrics to JSON file."""

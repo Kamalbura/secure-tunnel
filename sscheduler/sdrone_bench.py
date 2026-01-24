@@ -570,6 +570,13 @@ class BenchmarkScheduler:
 
     def _collect_gcs_metrics(self, suite_name: str) -> Optional[Dict[str, Any]]:
         """Fetch GCS-side metrics for the suite and return them (also log to JSONL)."""
+        gcs_info: Dict[str, Any] = {}
+        try:
+            info_resp = send_gcs_command("get_info")
+            if info_resp.get("status") == "ok":
+                gcs_info = info_resp
+        except Exception:
+            gcs_info = {}
         try:
             resp = send_gcs_command("stop_suite")
         except Exception as e:
@@ -584,6 +591,7 @@ class BenchmarkScheduler:
             "ts": datetime.now(timezone.utc).isoformat(),
             "suite_id": suite_name,
             "gcs_metrics": resp,
+            "gcs_info": gcs_info,
         }
         try:
             with open(self.gcs_results_file, "a", encoding="utf-8") as f:
@@ -592,6 +600,9 @@ class BenchmarkScheduler:
             log(f"Failed to log GCS metrics: {e}", "WARN")
             # Don't return None here, we still have the metrics to pass to aggregator
         
+        if gcs_info:
+            resp = dict(resp)
+            resp["gcs_info"] = gcs_info
         return resp
     
     def _log_result(self, suite_name: str, metrics: Dict, success: bool, error: str = ""):

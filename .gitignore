@@ -26,6 +26,9 @@ logs/
 .vscode/
 *.code-workspace
 
+# Node.js
+node_modules/
+
 # Explicitly ignore large telemetry file
 logs/gcs_telemetry/gcs_telemetry_v1.jsonl
 

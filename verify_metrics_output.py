@@ -31,6 +31,8 @@ REQUIRED_FIELDS: List[Tuple[str, ...]] = [
     ("control_plane", "policy_name"),
     ("control_plane", "policy_suite_index"),
     ("control_plane", "policy_total_suites"),
+    ("power_energy", "voltage_avg_v"),
+    ("power_energy", "current_avg_a"),
 ]
 
 

@@ -35,14 +35,12 @@ from core.metrics_schema import (
     CryptoPrimitiveBreakdown,
     RekeyMetrics,
     DataPlaneMetrics,
-    LatencyJitterMetrics,
     MavProxyDroneMetrics,
     MavProxyGcsMetrics,
     MavLinkIntegrityMetrics,
     FlightControllerTelemetry,
     ControlPlaneMetrics,
     SystemResourcesDrone,
-    SystemResourcesGcs,
     PowerEnergyMetrics,
     ObservabilityMetrics,
     ValidationMetrics,
@@ -53,7 +51,6 @@ from core.metrics_collectors import (
     SystemCollector,
     PowerCollector,
     NetworkCollector,
-    LatencyTracker,
 )
 
 # Import MAVLink collector (optional)
@@ -94,7 +91,7 @@ class MetricsAggregator:
         self.env_collector = EnvironmentCollector()
         self.system_collector = SystemCollector()
         self.network_collector = NetworkCollector()
-        self.latency_tracker = LatencyTracker()
+        self.latency_tracker = None
         
         # Power collector (drone only)
         if self.role == "drone":
@@ -419,7 +416,8 @@ class MetricsAggregator:
     
     def record_latency_sample(self, latency_ms: float):
         """Record a latency sample."""
-        self.latency_tracker.record(latency_ms)
+        if self.latency_tracker:
+            self.latency_tracker.record(latency_ms)
 
     def record_control_plane_metrics(
         self,
@@ -453,12 +451,14 @@ class MetricsAggregator:
     def record_traffic_start(self):
         """Mark start of data plane traffic."""
         if self._current_metrics:
-            self._current_metrics.lifecycle.suite_traffic_start_time = time.monotonic()
+            if hasattr(self._current_metrics.lifecycle, "suite_traffic_start_time"):
+                self._current_metrics.lifecycle.suite_traffic_start_time = time.monotonic()
     
     def record_traffic_end(self):
         """Mark end of data plane traffic."""
         if self._current_metrics:
-            self._current_metrics.lifecycle.suite_traffic_end_time = time.monotonic()
+            if hasattr(self._current_metrics.lifecycle, "suite_traffic_end_time"):
+                self._current_metrics.lifecycle.suite_traffic_end_time = time.monotonic()
     
     def _start_background_collection(self):
         """Start background system metrics collection."""
@@ -548,23 +548,11 @@ class MetricsAggregator:
             m.data_plane.achieved_throughput_mbps = m.data_plane.goodput_mbps
             m.data_plane.wire_rate_mbps = (total_wire_bytes * 8.0) / (duration_s * 1_000_000.0)
         
-        # H. Latency stats
-        lat_stats = self.latency_tracker.get_stats()
-        m.latency_jitter.one_way_latency_avg_ms = lat_stats["avg_ms"]
-        m.latency_jitter.one_way_latency_p50_ms = lat_stats["p50_ms"]
-        m.latency_jitter.one_way_latency_p95_ms = lat_stats["p95_ms"]
-        m.latency_jitter.one_way_latency_max_ms = lat_stats["max_ms"]
-        m.latency_jitter.latency_samples = self.latency_tracker.get_samples()
-        self.latency_tracker.clear()
-        
-        # N/O. System resources
+        # N. System resources
         if self._system_samples:
             cpu_samples = [s["cpu_percent"] for s in self._system_samples if "cpu_percent" in s]
             
-            if self.role == "drone":
-                sys_m = m.system_drone
-            else:
-                sys_m = m.system_gcs
+            sys_m = m.system_drone
             
             if cpu_samples:
                 sys_m.cpu_usage_avg_percent = sum(cpu_samples) / len(cpu_samples)
@@ -576,12 +564,12 @@ class MetricsAggregator:
             sys_m.memory_rss_mb = last.get("memory_rss_mb", 0)
             sys_m.memory_vms_mb = last.get("memory_vms_mb", 0)
             sys_m.thread_count = last.get("thread_count", 0)
+            sys_m.uptime_s = last.get("uptime_s", 0.0)
             
-            if self.role == "drone":
-                sys_m.temperature_c = last.get("temperature_c", 0)
-                sys_m.load_avg_1m = last.get("load_avg_1m", 0)
-                sys_m.load_avg_5m = last.get("load_avg_5m", 0)
-                sys_m.load_avg_15m = last.get("load_avg_15m", 0)
+            sys_m.temperature_c = last.get("temperature_c", 0)
+            sys_m.load_avg_1m = last.get("load_avg_1m", 0)
+            sys_m.load_avg_5m = last.get("load_avg_5m", 0)
+            sys_m.load_avg_15m = last.get("load_avg_15m", 0)
         
         # P. Power & Energy
         if power_samples:
@@ -591,6 +579,8 @@ class MetricsAggregator:
             m.power_energy.power_avg_w = energy_stats["power_avg_w"]
             m.power_energy.power_peak_w = energy_stats["power_peak_w"]
             m.power_energy.energy_total_j = energy_stats["energy_total_j"]
+            m.power_energy.voltage_avg_v = energy_stats.get("voltage_avg_v", 0.0)
+            m.power_energy.current_avg_a = energy_stats.get("current_avg_a", 0.0)
             
             # Calculate per-handshake energy
             if m.handshake.handshake_total_duration_ms > 0:
@@ -665,6 +655,17 @@ class MetricsAggregator:
             m.run_context.gcs_hostname = peer_data["gcs_hostname"]
         if "gcs_ip" in peer_data:
             m.run_context.gcs_ip = peer_data["gcs_ip"]
+        if "python_env_gcs" in peer_data:
+            m.run_context.python_env_gcs = peer_data["python_env_gcs"]
+        if "kernel_version_gcs" in peer_data:
+            m.run_context.kernel_version_gcs = peer_data["kernel_version_gcs"]
+
+        gcs_info = peer_data.get("gcs_info") if isinstance(peer_data, dict) else None
+        if isinstance(gcs_info, dict):
+            m.run_context.gcs_hostname = gcs_info.get("hostname", m.run_context.gcs_hostname)
+            m.run_context.gcs_ip = gcs_info.get("ip", m.run_context.gcs_ip)
+            m.run_context.python_env_gcs = gcs_info.get("python_env", m.run_context.python_env_gcs)
+            m.run_context.kernel_version_gcs = gcs_info.get("kernel_version", m.run_context.kernel_version_gcs)
         
         # Merge handshake timing
         if "handshake_start_time_drone" in peer_data:
@@ -677,7 +678,6 @@ class MetricsAggregator:
             for k, v in peer_data["system_drone"].items():
                 if hasattr(m.system_drone, k):
                     setattr(m.system_drone, k, v)
-        
 
         # Merge power metrics
         if "power_energy" in peer_data:
@@ -693,21 +693,6 @@ class MetricsAggregator:
             # Direct mapping from get_metrics() dict keys to MavProxyGcsMetrics fields
             target.mavproxy_gcs_total_msgs_received = d.get("total_msgs_received", 0)
             target.mavproxy_gcs_seq_gap_count = d.get("seq_gap_count", 0)
-            
-            # Extended metrics (UN-PRUNED for latency verification)
-            target.mavproxy_gcs_start_time = d.get("start_time", 0.0)
-            target.mavproxy_gcs_end_time = d.get("end_time", 0.0)
-            target.mavproxy_gcs_tx_pps = d.get("tx_pps", 0.0)
-            target.mavproxy_gcs_rx_pps = d.get("rx_pps", 0.0)
-            target.mavproxy_gcs_total_msgs_sent = d.get("total_msgs_sent", 0)
-            target.mavproxy_gcs_msg_type_counts = d.get("msg_type_counts", {})
-            target.mavproxy_gcs_heartbeat_interval_ms = d.get("heartbeat_interval_ms", 0.0)
-            target.mavproxy_gcs_heartbeat_loss_count = d.get("heartbeat_loss_count", 0)
-            target.mavproxy_gcs_cmd_sent_count = d.get("cmd_sent_count", 0)
-            target.mavproxy_gcs_cmd_ack_received_count = d.get("cmd_ack_received_count", 0)
-            target.mavproxy_gcs_cmd_ack_latency_avg_ms = d.get("cmd_ack_latency_avg_ms", 0.0)
-            target.mavproxy_gcs_cmd_ack_latency_p95_ms = d.get("cmd_ack_latency_p95_ms", 0.0)
-            target.mavproxy_gcs_stream_rate_hz = d.get("stream_rate_hz", 0.0)
     
     def _save_metrics(self, m: ComprehensiveSuiteMetrics):
         """Save metrics to JSON file."""
@@ -762,13 +747,6 @@ class MetricsAggregator:
                 "gcs_ip": m.run_context.gcs_ip,
                 "python_env_gcs": m.run_context.python_env_gcs,
                 "kernel_version_gcs": m.run_context.kernel_version_gcs,
-                "handshake_start_time_gcs": m.handshake.handshake_start_time_gcs,
-                "handshake_end_time_gcs": m.handshake.handshake_end_time_gcs,
-                "system_gcs": {
-                    "cpu_usage_avg_percent": m.system_gcs.cpu_usage_avg_percent,
-                    "cpu_usage_peak_percent": m.system_gcs.cpu_usage_peak_percent,
-                    "memory_rss_mb": m.system_gcs.memory_rss_mb,
-                },
             }
     
     def save_suite_metrics(self, metrics: ComprehensiveSuiteMetrics = None) -> Optional[str]:
@@ -872,8 +850,7 @@ if __name__ == "__main__":
     print(f"Suite: {final_metrics.run_context.suite_id}")
     print(f"Handshake success: {final_metrics.handshake.handshake_success}")
     print(f"Handshake duration: {final_metrics.handshake.handshake_total_duration_ms:.2f} ms")
-    print(f"CPU avg: {final_metrics.system_drone.cpu_usage_avg_percent:.1f}%" if agg.role == "drone" 
-          else f"CPU avg: {final_metrics.system_gcs.cpu_usage_avg_percent:.1f}%")
+    print(f"CPU avg: {final_metrics.system_drone.cpu_usage_avg_percent:.1f}%")
     print(f"Total duration: {final_metrics.lifecycle.suite_total_duration_ms:.2f} ms")
     
     print(f"\nMetrics saved to: {agg.output_dir}")

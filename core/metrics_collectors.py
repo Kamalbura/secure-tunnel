@@ -550,12 +550,16 @@ class PowerCollector(BaseCollector):
         # Calculate energy using trapezoidal integration
         energy_j = 0.0
         powers = []
+        voltages = []
+        currents = []
         
         for i in range(1, len(samples)):
             dt = samples[i]["mono_time"] - samples[i-1]["mono_time"]
             p_avg = (samples[i]["power_w"] + samples[i-1]["power_w"]) / 2.0
             energy_j += p_avg * dt
             powers.append(samples[i]["power_w"])
+            voltages.append(samples[i].get("voltage_v", 0.0))
+            currents.append(samples[i].get("current_a", 0.0))
         
         duration = samples[-1]["mono_time"] - samples[0]["mono_time"]
         
@@ -564,6 +568,8 @@ class PowerCollector(BaseCollector):
             "power_avg_w": sum(powers) / len(powers) if powers else 0.0,
             "power_peak_w": max(powers) if powers else 0.0,
             "power_min_w": min(powers) if powers else 0.0,
+            "voltage_avg_v": sum(voltages) / len(voltages) if voltages else 0.0,
+            "current_avg_a": sum(currents) / len(currents) if currents else 0.0,
             "duration_s": duration,
             "sample_count": len(samples),
         }

@@ -199,6 +199,9 @@ class MavLinkMetricsCollector:
         """
         if self._running:
             return
+
+        # Reset counters for a new suite to avoid cumulative leakage
+        self.reset()
         
         self._sniff_port = port
         self._start_time_mono = time.monotonic()
@@ -210,6 +213,61 @@ class MavLinkMetricsCollector:
             daemon=True
         )
         self._thread.start()
+
+    def reset(self) -> None:
+        """Reset all counters and state for a new suite."""
+        with self._lock:
+            # Connection timing
+            self._start_time_mono = 0.0
+            self._end_time_mono = 0.0
+
+            # Message tracking
+            self._msg_stats = {}
+            self._total_rx = 0
+            self._total_tx = 0
+            self._total_bytes_rx = 0
+            self._total_bytes_tx = 0
+
+            # Heartbeat tracking
+            self._heartbeat = HeartbeatStats()
+            self._last_heartbeat_mono = 0.0
+            self._heartbeat_intervals = []
+
+            # Command tracking
+            self._commands = CommandStats()
+
+            # Sequence tracking
+            self._sequences = SequenceStats()
+
+            # Error tracking
+            self._crc_errors = 0
+            self._decode_errors = 0
+            self._msg_drops = 0
+
+            # Latency tracking
+            self._latency_samples = []
+
+            # Raw message log
+            self._msg_log = deque(maxlen=10000)
+
+            # Protocol info
+            self._protocol_version = ""
+
+            # Flight controller telemetry fields
+            self._fc_mode = ""
+            self._fc_armed = False
+            self._fc_heartbeat_last_mono = 0.0
+            self._fc_attitude_first_mono = 0.0
+            self._fc_attitude_last_mono = 0.0
+            self._fc_attitude_count = 0
+            self._fc_position_first_mono = 0.0
+            self._fc_position_last_mono = 0.0
+            self._fc_position_count = 0
+            self._fc_batt_voltage_v = 0.0
+            self._fc_batt_current_a = 0.0
+            self._fc_batt_remaining_pct = 0.0
+            self._fc_cpu_load_pct = 0.0
+            self._fc_sensor_health_flags = 0
     
     def stop(self) -> Dict[str, Any]:
         """Stop sniffing and return collected metrics."""
@@ -587,21 +645,8 @@ class MavLinkMetricsCollector:
         m = self.get_metrics()
         
         if role == "gcs":
-            mavproxy_metrics.mavproxy_gcs_start_time = m["start_time"]
-            mavproxy_metrics.mavproxy_gcs_end_time = m["end_time"]
-            mavproxy_metrics.mavproxy_gcs_tx_pps = m["tx_pps"]
-            mavproxy_metrics.mavproxy_gcs_rx_pps = m["rx_pps"]
-            mavproxy_metrics.mavproxy_gcs_total_msgs_sent = m["total_msgs_sent"]
             mavproxy_metrics.mavproxy_gcs_total_msgs_received = m["total_msgs_received"]
-            mavproxy_metrics.mavproxy_gcs_msg_type_counts = m["msg_type_counts"]
-            mavproxy_metrics.mavproxy_gcs_heartbeat_interval_ms = m["heartbeat_interval_ms"]
-            mavproxy_metrics.mavproxy_gcs_heartbeat_loss_count = m["heartbeat_loss_count"]
             mavproxy_metrics.mavproxy_gcs_seq_gap_count = m["seq_gap_count"]
-            mavproxy_metrics.mavproxy_gcs_cmd_sent_count = m["cmd_sent_count"]
-            mavproxy_metrics.mavproxy_gcs_cmd_ack_received_count = m["cmd_ack_received_count"]
-            mavproxy_metrics.mavproxy_gcs_cmd_ack_latency_avg_ms = m["cmd_ack_latency_avg_ms"]
-            mavproxy_metrics.mavproxy_gcs_cmd_ack_latency_p95_ms = m["cmd_ack_latency_p95_ms"]
-            mavproxy_metrics.mavproxy_gcs_stream_rate_hz = m["stream_rate_hz"]
         else:
             mavproxy_metrics.mavproxy_drone_start_time = m["start_time"]
             mavproxy_metrics.mavproxy_drone_end_time = m["end_time"]

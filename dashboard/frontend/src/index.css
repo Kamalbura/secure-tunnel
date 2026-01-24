@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles for PQC Dashboard */
+
+:root {
+  --color-verified: #10b981;
+  --color-conditional: #f59e0b;
+  --color-deprecated: #6b7280;
+  --color-missing: #9ca3af;
+  --color-integrity-risk: #ef4444;
+}
+
+body {
+  @apply bg-gray-900 text-gray-100;
+}
+
+/* Reliability badges */
+.badge-verified {
+  @apply bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-xs font-medium;
+}
+
+.badge-conditional {
+  @apply bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded text-xs font-medium;
+}
+
+.badge-deprecated {
+  @apply bg-gray-500/20 text-gray-400 px-2 py-0.5 rounded text-xs font-medium;
+}
+
+.badge-missing {
+  @apply bg-gray-700 text-gray-500 px-2 py-0.5 rounded text-xs font-medium italic;
+}
+
+/* Card styles */
+.card {
+  @apply bg-gray-800 rounded-lg border border-gray-700 p-4;
+}
+
+.card-header {
+  @apply text-lg font-semibold text-gray-100 mb-3;
+}
+
+/* Table styles */
+.data-table {
+  @apply w-full text-sm;
+}
+
+.data-table th {
+  @apply text-left text-gray-400 font-medium py-2 px-3 border-b border-gray-700;
+}
+
+.data-table td {
+  @apply py-2 px-3 border-b border-gray-800;
+}
+
+.data-table tr:hover {
+  @apply bg-gray-800/50;
+}
+
+/* Chart container */
+.chart-container {
+  @apply bg-gray-800/50 rounded-lg p-4;
+}
+
+/* Navigation */
+.nav-link {
+  @apply px-4 py-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded transition-colors;
+}
+
+.nav-link.active {
+  @apply text-white bg-gray-800;
+}
+
+/* Input styles */
+.select-input {
+  @apply bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500;
+}
+
+/* Disclaimer banner */
+.disclaimer-banner {
+  @apply bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2 text-amber-400 text-sm;
+}

@@ -38,7 +38,7 @@ def load_benchmark_settings() -> Dict[str, Any]:
     defaults = {
         "benchmark_mode": {
             "enabled": True,
-            "cycle_interval_s": 110.0,
+            "cycle_interval_s": 10.0,
             "sequential_cycling": True,
             "collect_metrics": True,
             "output_dir": "logs/benchmarks",
@@ -129,7 +129,7 @@ class BenchmarkPolicy:
     purely on systematic benchmarking.
     """
     
-    def __init__(self, cycle_interval_s: float = 110.0, filter_aead: Optional[str] = None, suite_list: Optional[List[str]] = None):
+    def __init__(self, cycle_interval_s: Optional[float] = None, filter_aead: Optional[str] = None, suite_list: Optional[List[str]] = None):
         self.settings = load_benchmark_settings()
         self.benchmark_cfg = self.settings.get("benchmark_mode", {})
         

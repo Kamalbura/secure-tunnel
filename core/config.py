@@ -12,7 +12,7 @@ from core.exceptions import ConfigError
 
 # Baseline host defaults reused throughout the configuration payload.
 # Keep both LAN and Tailscale addresses handy so schedulers can pin the
-# Defaults target the LAN endpoints.
+# appropriate interface per testbed. Defaults target the LAN endpoints.
 # Localhost-only topology override for smoke/local tests can be applied
 # by temporarily pointing *_HOST_LAN values at 127.0.0.1. For normal
 # lab runs, keep these set to the actual LAN-facing addresses.

@@ -1,0 +1,434 @@
+"""
+API Routes for PQC Benchmark Dashboard.
+
+Endpoints:
+- GET /api/runs - List all benchmark runs
+- GET /api/suites - List all suites with filtering
+- GET /api/suite/{suite_key} - Get detailed suite metrics
+- GET /api/compare - Compare two suites
+- GET /api/metrics/schema - Return schema definitions
+- GET /api/health - Health check
+"""
+
+from fastapi import APIRouter, HTTPException, Query
+from typing import List, Optional, Dict, Any
+
+from models import (
+    ComprehensiveSuiteMetrics,
+    SuiteSummary,
+    RunSummary,
+    ComparisonResult,
+    SchemaField,
+    HealthResponse
+)
+from ingest import get_store
+from analysis import (
+    compare_suites,
+    compute_comparison_table,
+    get_drone_vs_gcs_summary,
+    generate_schema_definition,
+    aggregate_by_kem_family,
+    aggregate_by_nist_level
+)
+
+router = APIRouter(prefix="/api", tags=["api"])
+
+
+# =============================================================================
+# HEALTH CHECK
+# =============================================================================
+
+@router.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint."""
+    store = get_store()
+    return HealthResponse(
+        status="ok",
+        suites_loaded=store.suite_count,
+        runs_loaded=store.run_count
+    )
+
+
+# =============================================================================
+# RUNS
+# =============================================================================
+
+@router.get("/runs", response_model=List[RunSummary])
+async def list_runs():
+    """List all benchmark runs."""
+    store = get_store()
+    return store.list_runs()
+
+
+# =============================================================================
+# SUITES
+# =============================================================================
+
+@router.get("/suites", response_model=List[SuiteSummary])
+async def list_suites(
+    kem_family: Optional[str] = Query(None, description="Filter by KEM family"),
+    sig_family: Optional[str] = Query(None, description="Filter by signature family"),
+    aead: Optional[str] = Query(None, description="Filter by AEAD algorithm"),
+    nist_level: Optional[str] = Query(None, description="Filter by NIST level"),
+    run_id: Optional[str] = Query(None, description="Filter by run ID")
+):
+    """List all suites with optional filtering."""
+    store = get_store()
+    return store.list_suites(
+        kem_family=kem_family,
+        sig_family=sig_family,
+        aead=aead,
+        nist_level=nist_level,
+        run_id=run_id
+    )
+
+
+@router.get("/suites/filters")
+async def get_suite_filters():
+    """Get available filter values."""
+    store = get_store()
+    return {
+        "kem_families": store.get_unique_values("kem_family"),
+        "sig_families": store.get_unique_values("sig_family"),
+        "aead_algorithms": store.get_unique_values("aead_algorithm"),
+        "nist_levels": store.get_unique_values("nist_level"),
+    }
+
+
+@router.get("/suite/{suite_key}", response_model=ComprehensiveSuiteMetrics)
+async def get_suite(suite_key: str):
+    """
+    Get detailed metrics for a specific suite.
+    
+    suite_key can be:
+    - Composite key: "run_id:suite_id"
+    - Just suite_id (returns first match)
+    """
+    store = get_store()
+    
+    if ":" in suite_key:
+        suite = store.get_suite_by_key(suite_key)
+    else:
+        suite = store.get_suite(suite_key)
+    
+    if suite is None:
+        raise HTTPException(status_code=404, detail=f"Suite not found: {suite_key}")
+    
+    return suite
+
+
+@router.get("/suite/{suite_key}/drone-vs-gcs")
+async def get_suite_drone_vs_gcs(suite_key: str):
+    """Get drone vs GCS comparison for a suite."""
+    store = get_store()
+    
+    if ":" in suite_key:
+        suite = store.get_suite_by_key(suite_key)
+    else:
+        suite = store.get_suite(suite_key)
+    
+    if suite is None:
+        raise HTTPException(status_code=404, detail=f"Suite not found: {suite_key}")
+    
+    return get_drone_vs_gcs_summary(suite)
+
+
+# =============================================================================
+# COMPARISON
+# =============================================================================
+
+@router.get("/compare")
+async def compare_two_suites(
+    suite_a: str = Query(..., description="First suite key (run_id:suite_id or suite_id)"),
+    suite_b: str = Query(..., description="Second suite key (run_id:suite_id or suite_id)")
+):
+    """
+    Compare two suites side-by-side.
+    
+    Returns both suite data and computed differences.
+    """
+    store = get_store()
+    
+    # Get suite A
+    if ":" in suite_a:
+        s_a = store.get_suite_by_key(suite_a)
+    else:
+        s_a = store.get_suite(suite_a)
+    
+    if s_a is None:
+        raise HTTPException(status_code=404, detail=f"Suite A not found: {suite_a}")
+    
+    # Get suite B
+    if ":" in suite_b:
+        s_b = store.get_suite_by_key(suite_b)
+    else:
+        s_b = store.get_suite(suite_b)
+    
+    if s_b is None:
+        raise HTTPException(status_code=404, detail=f"Suite B not found: {suite_b}")
+    
+    result = compare_suites(s_a, s_b)
+    comparison_table = compute_comparison_table(s_a, s_b)
+    
+    return {
+        "summary": result.model_dump(),
+        "detailed_comparison": comparison_table
+    }
+
+
+# =============================================================================
+# AGGREGATION
+# =============================================================================
+
+@router.get("/aggregate/kem-family")
+async def aggregate_by_kem(
+    run_id: Optional[str] = Query(None, description="Filter by run ID")
+):
+    """
+    Aggregate metrics by KEM family.
+    
+    This is an explicit aggregation - data is grouped only when requested.
+    """
+    store = get_store()
+    suites = [
+        store.get_suite_by_key(key) 
+        for key in store._suites.keys()
+        if run_id is None or key.startswith(run_id + ":")
+    ]
+    suites = [s for s in suites if s is not None]
+    
+    if not suites:
+        return {"data": [], "warning": "No suites found"}
+    
+    df = aggregate_by_kem_family(suites)
+    
+    if df.empty:
+        return {"data": [], "warning": "No aggregatable data"}
+    
+    # Convert multi-index columns to flat
+    result = df.reset_index().to_dict(orient="records")
+    return {"data": result}
+
+
+@router.get("/aggregate/nist-level")
+async def aggregate_by_nist(
+    run_id: Optional[str] = Query(None, description="Filter by run ID")
+):
+    """
+    Aggregate metrics by NIST security level.
+    
+    This is an explicit aggregation - data is grouped only when requested.
+    """
+    store = get_store()
+    suites = [
+        store.get_suite_by_key(key) 
+        for key in store._suites.keys()
+        if run_id is None or key.startswith(run_id + ":")
+    ]
+    suites = [s for s in suites if s is not None]
+    
+    if not suites:
+        return {"data": [], "warning": "No suites found"}
+    
+    df = aggregate_by_nist_level(suites)
+    
+    if df.empty:
+        return {"data": [], "warning": "No aggregatable data"}
+    
+    result = df.reset_index().to_dict(orient="records")
+    return {"data": result}
+
+
+# =============================================================================
+# SCHEMA
+# =============================================================================
+
+@router.get("/metrics/schema", response_model=List[SchemaField])
+async def get_schema():
+    """Get schema field definitions with reliability classification."""
+    return generate_schema_definition()
+
+
+@router.get("/metrics/load-errors")
+async def get_load_errors():
+    """Get any errors encountered during data loading."""
+    store = get_store()
+    return {
+        "errors": [
+            {"file": f, "line": l, "error": e}
+            for f, l, e in store.load_errors
+        ],
+        "count": len(store.load_errors)
+    }
+
+
+# =============================================================================
+# COMPARISON BUCKETS
+# =============================================================================
+
+# NIST level ordering for sorting
+NIST_ORDER = {"L1": 1, "L3": 2, "L5": 3, "": 99}
+
+def _nist_sort_key(suite_summary):
+    """Sort key for NIST level ordering."""
+    level = suite_summary.suite_security_level
+    return (NIST_ORDER.get(level, 99), suite_summary.suite_id)
+
+
+@router.get("/buckets")
+async def get_comparison_buckets(
+    run_id: Optional[str] = Query(None, description="Filter by run ID")
+):
+    """
+    Get predefined comparison bucket groupings.
+    
+    Returns suites grouped by:
+    - NIST security level (L1, L3, L5)
+    - NIST level + AEAD combination
+    - AEAD algorithm only
+    - KEM family (sorted by NIST level within family)
+    - SIG family (sorted by NIST level within family)
+    
+    All buckets contain suite keys in format "run_id:suite_id".
+    """
+    store = get_store()
+    suites = store.list_suites(run_id=run_id)
+    
+    # Initialize bucket structures
+    buckets = {
+        "nist_level": {},
+        "nist_aead": {},
+        "aead": {},
+        "kem_family": {},
+        "sig_family": {}
+    }
+    
+    for s in suites:
+        key = f"{s.run_id}:{s.suite_id}"
+        nist = s.suite_security_level or "Unknown"
+        aead = s.aead_algorithm or "Unknown"
+        
+        # Extract KEM family from algorithm name
+        kem_alg = s.kem_algorithm or ""
+        if "ML-KEM" in kem_alg or "mlkem" in kem_alg.lower():
+            kem_family = "ML-KEM"
+        elif "HQC" in kem_alg or "hqc" in kem_alg.lower():
+            kem_family = "HQC"
+        elif "McEliece" in kem_alg or "mceliece" in kem_alg.lower():
+            kem_family = "ClassicMcEliece"
+        else:
+            kem_family = "Other"
+        
+        # Extract SIG family from algorithm name
+        sig_alg = s.sig_algorithm or ""
+        if "ML-DSA" in sig_alg or "mldsa" in sig_alg.lower():
+            sig_family = "ML-DSA"
+        elif "Falcon" in sig_alg or "falcon" in sig_alg.lower():
+            sig_family = "Falcon"
+        elif "SPHINCS" in sig_alg or "sphincs" in sig_alg.lower():
+            sig_family = "SPHINCS+"
+        else:
+            sig_family = "Other"
+        
+        # Populate buckets
+        # 1. NIST level
+        if nist not in buckets["nist_level"]:
+            buckets["nist_level"][nist] = []
+        buckets["nist_level"][nist].append({"key": key, "suite": s})
+        
+        # 2. NIST + AEAD
+        nist_aead_key = f"{nist}-{aead}"
+        if nist_aead_key not in buckets["nist_aead"]:
+            buckets["nist_aead"][nist_aead_key] = []
+        buckets["nist_aead"][nist_aead_key].append({"key": key, "suite": s})
+        
+        # 3. AEAD only
+        if aead not in buckets["aead"]:
+            buckets["aead"][aead] = []
+        buckets["aead"][aead].append({"key": key, "suite": s})
+        
+        # 4. KEM family
+        if kem_family not in buckets["kem_family"]:
+            buckets["kem_family"][kem_family] = []
+        buckets["kem_family"][kem_family].append({"key": key, "suite": s})
+        
+        # 5. SIG family
+        if sig_family not in buckets["sig_family"]:
+            buckets["sig_family"][sig_family] = []
+        buckets["sig_family"][sig_family].append({"key": key, "suite": s})
+    
+    # Sort and convert to final format
+    result = {
+        "nist_level": {},
+        "nist_aead": {},
+        "aead": {},
+        "kem_family": {},
+        "sig_family": {}
+    }
+    
+    # Sort NIST levels by order
+    for level in sorted(buckets["nist_level"].keys(), key=lambda x: NIST_ORDER.get(x, 99)):
+        items = buckets["nist_level"][level]
+        items.sort(key=lambda x: _nist_sort_key(x["suite"]))
+        result["nist_level"][level] = [
+            {"key": item["key"], "suite_id": item["suite"].suite_id, 
+             "kem": item["suite"].kem_algorithm, "sig": item["suite"].sig_algorithm,
+             "aead": item["suite"].aead_algorithm, "nist": item["suite"].suite_security_level,
+             "handshake_ms": item["suite"].handshake_total_duration_ms,
+             "power_w": item["suite"].power_avg_w, "energy_j": item["suite"].energy_total_j}
+            for item in items
+        ]
+    
+    # Sort NIST+AEAD combinations
+    for combo in sorted(buckets["nist_aead"].keys()):
+        items = buckets["nist_aead"][combo]
+        items.sort(key=lambda x: _nist_sort_key(x["suite"]))
+        result["nist_aead"][combo] = [
+            {"key": item["key"], "suite_id": item["suite"].suite_id,
+             "kem": item["suite"].kem_algorithm, "sig": item["suite"].sig_algorithm,
+             "handshake_ms": item["suite"].handshake_total_duration_ms,
+             "power_w": item["suite"].power_avg_w, "energy_j": item["suite"].energy_total_j}
+            for item in items
+        ]
+    
+    # Sort AEAD alphabetically
+    for aead in sorted(buckets["aead"].keys()):
+        items = buckets["aead"][aead]
+        items.sort(key=lambda x: _nist_sort_key(x["suite"]))
+        result["aead"][aead] = [
+            {"key": item["key"], "suite_id": item["suite"].suite_id,
+             "kem": item["suite"].kem_algorithm, "sig": item["suite"].sig_algorithm,
+             "nist": item["suite"].suite_security_level,
+             "handshake_ms": item["suite"].handshake_total_duration_ms,
+             "power_w": item["suite"].power_avg_w, "energy_j": item["suite"].energy_total_j}
+            for item in items
+        ]
+    
+    # Sort KEM families, then by NIST level within
+    for family in sorted(buckets["kem_family"].keys()):
+        items = buckets["kem_family"][family]
+        items.sort(key=lambda x: _nist_sort_key(x["suite"]))
+        result["kem_family"][family] = [
+            {"key": item["key"], "suite_id": item["suite"].suite_id,
+             "kem": item["suite"].kem_algorithm, "sig": item["suite"].sig_algorithm,
+             "aead": item["suite"].aead_algorithm, "nist": item["suite"].suite_security_level,
+             "handshake_ms": item["suite"].handshake_total_duration_ms,
+             "power_w": item["suite"].power_avg_w, "energy_j": item["suite"].energy_total_j}
+            for item in items
+        ]
+    
+    # Sort SIG families, then by NIST level within
+    for family in sorted(buckets["sig_family"].keys()):
+        items = buckets["sig_family"][family]
+        items.sort(key=lambda x: _nist_sort_key(x["suite"]))
+        result["sig_family"][family] = [
+            {"key": item["key"], "suite_id": item["suite"].suite_id,
+             "kem": item["suite"].kem_algorithm, "sig": item["suite"].sig_algorithm,
+             "aead": item["suite"].aead_algorithm, "nist": item["suite"].suite_security_level,
+             "handshake_ms": item["suite"].handshake_total_duration_ms,
+             "power_w": item["suite"].power_avg_w, "energy_j": item["suite"].energy_total_j}
+            for item in items
+        ]
+    
+    return result
+

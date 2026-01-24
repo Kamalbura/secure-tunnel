@@ -245,8 +245,8 @@ def start_mavproxy(mav_master: str) -> Optional[ManagedProcess]:
         f"--master={mav_master}",
         f"--out={out_proxy}",
         f"--out={out_sniff}",
-        "--nowait",
-        "--daemon",
+        # "--nowait",  # REMOVED: Bind lifecycle to parent
+        # "--daemon",  # REMOVED: Bind lifecycle to parent
     ]
     
     ts = time.strftime("%Y%m%d-%H%M%S")
@@ -725,7 +725,8 @@ def main():
     # Don't register atexit - it kills proxies during normal benchmark flow
     
     # Light cleanup before starting (just MAVProxy, not proxies)
-    cleanup_environment(aggressive=False)
+    # Aggressive cleanup before starting to ensure clean slate (per Operational Plan)
+    cleanup_environment(aggressive=True)
     
     # Run benchmark
     scheduler = BenchmarkScheduler(args)

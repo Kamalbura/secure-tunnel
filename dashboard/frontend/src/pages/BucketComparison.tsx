@@ -138,34 +138,6 @@ export default function BucketComparison() {
                 </div>
             </div>
 
-            {/* Summary Stats */}
-            {suites.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="card text-center">
-                        <div className="text-3xl font-bold text-blue-400">{suites.length}</div>
-                        <div className="text-sm text-gray-400">Suites in Bucket</div>
-                    </div>
-                    <div className="card text-center">
-                        <div className="text-3xl font-bold text-green-400">
-                            {(suites.reduce((a, s) => a + s.handshake_ms, 0) / suites.length).toFixed(0)}
-                        </div>
-                        <div className="text-sm text-gray-400">Avg Handshake (ms)</div>
-                    </div>
-                    <div className="card text-center">
-                        <div className="text-3xl font-bold text-yellow-400">
-                            {(suites.reduce((a, s) => a + s.power_w, 0) / suites.length).toFixed(2)}
-                        </div>
-                        <div className="text-sm text-gray-400">Avg Power (W)</div>
-                    </div>
-                    <div className="card text-center">
-                        <div className="text-3xl font-bold text-purple-400">
-                            {(suites.reduce((a, s) => a + s.energy_j, 0) / suites.length).toFixed(2)}
-                        </div>
-                        <div className="text-sm text-gray-400">Avg Energy (J)</div>
-                    </div>
-                </div>
-            )}
-
             {/* Handshake Comparison Chart */}
             {suites.length > 0 && (
                 <div className="card">

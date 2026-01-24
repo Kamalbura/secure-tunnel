@@ -205,7 +205,14 @@ async def aggregate_by_kem(
     if df.empty:
         return {"data": [], "warning": "No aggregatable data"}
     
-    # Convert multi-index columns to flat
+    # Convert multi-index columns to flat, JSON-friendly keys
+    df = df.copy()
+    if df.index.name:
+        df.index.name = df.index.name.replace(".", "_")
+    df.columns = [
+        "_".join([str(part).replace(".", "_") for part in col]) if isinstance(col, tuple) else str(col)
+        for col in df.columns
+    ]
     result = df.reset_index().to_dict(orient="records")
     return {"data": result}
 
@@ -235,6 +242,13 @@ async def aggregate_by_nist(
     if df.empty:
         return {"data": [], "warning": "No aggregatable data"}
     
+    df = df.copy()
+    if df.index.name:
+        df.index.name = df.index.name.replace(".", "_")
+    df.columns = [
+        "_".join([str(part).replace(".", "_") for part in col]) if isinstance(col, tuple) else str(col)
+        for col in df.columns
+    ]
     result = df.reset_index().to_dict(orient="records")
     return {"data": result}
 

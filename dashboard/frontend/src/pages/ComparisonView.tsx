@@ -142,7 +142,6 @@ export default function ComparisonView() {
                                     <th>Metric</th>
                                     <th className="text-right">Suite A</th>
                                     <th className="text-right">Suite B</th>
-                                    <th className="text-right">Difference</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -150,49 +149,31 @@ export default function ComparisonView() {
                                     <td>Handshake Duration</td>
                                     <td className="text-right font-mono">{comparisonSuiteA.handshake.handshake_total_duration_ms.toFixed(2)} ms</td>
                                     <td className="text-right font-mono">{comparisonSuiteB.handshake.handshake_total_duration_ms.toFixed(2)} ms</td>
-                                    <td className={`text-right font-mono ${(comparisonSuiteB.handshake.handshake_total_duration_ms - comparisonSuiteA.handshake.handshake_total_duration_ms) > 0 ? 'text-red-400' : 'text-green-400'}`}>
-                                        {(comparisonSuiteB.handshake.handshake_total_duration_ms - comparisonSuiteA.handshake.handshake_total_duration_ms).toFixed(2)} ms
-                                    </td>
                                 </tr>
                                 <tr>
                                     <td>Power Avg</td>
                                     <td className="text-right font-mono">{comparisonSuiteA.power_energy.power_avg_w.toFixed(2)} W</td>
                                     <td className="text-right font-mono">{comparisonSuiteB.power_energy.power_avg_w.toFixed(2)} W</td>
-                                    <td className={`text-right font-mono ${(comparisonSuiteB.power_energy.power_avg_w - comparisonSuiteA.power_energy.power_avg_w) > 0 ? 'text-red-400' : 'text-green-400'}`}>
-                                        {(comparisonSuiteB.power_energy.power_avg_w - comparisonSuiteA.power_energy.power_avg_w).toFixed(2)} W
-                                    </td>
                                 </tr>
                                 <tr>
                                     <td>Energy Total</td>
                                     <td className="text-right font-mono">{comparisonSuiteA.power_energy.energy_total_j.toFixed(2)} J</td>
                                     <td className="text-right font-mono">{comparisonSuiteB.power_energy.energy_total_j.toFixed(2)} J</td>
-                                    <td className={`text-right font-mono ${(comparisonSuiteB.power_energy.energy_total_j - comparisonSuiteA.power_energy.energy_total_j) > 0 ? 'text-red-400' : 'text-green-400'}`}>
-                                        {(comparisonSuiteB.power_energy.energy_total_j - comparisonSuiteA.power_energy.energy_total_j).toFixed(2)} J
-                                    </td>
                                 </tr>
                                 <tr>
                                     <td>Packets Sent</td>
                                     <td className="text-right font-mono">{comparisonSuiteA.data_plane.packets_sent}</td>
                                     <td className="text-right font-mono">{comparisonSuiteB.data_plane.packets_sent}</td>
-                                    <td className="text-right font-mono text-gray-400">
-                                        {comparisonSuiteB.data_plane.packets_sent - comparisonSuiteA.data_plane.packets_sent}
-                                    </td>
                                 </tr>
                                 <tr>
                                     <td>CPU Avg</td>
                                     <td className="text-right font-mono">{comparisonSuiteA.system_drone.cpu_usage_avg_percent.toFixed(1)}%</td>
                                     <td className="text-right font-mono">{comparisonSuiteB.system_drone.cpu_usage_avg_percent.toFixed(1)}%</td>
-                                    <td className={`text-right font-mono ${(comparisonSuiteB.system_drone.cpu_usage_avg_percent - comparisonSuiteA.system_drone.cpu_usage_avg_percent) > 0 ? 'text-red-400' : 'text-green-400'}`}>
-                                        {(comparisonSuiteB.system_drone.cpu_usage_avg_percent - comparisonSuiteA.system_drone.cpu_usage_avg_percent).toFixed(1)}%
-                                    </td>
                                 </tr>
                                 <tr>
                                     <td>Memory RSS</td>
                                     <td className="text-right font-mono">{comparisonSuiteA.system_drone.memory_rss_mb.toFixed(2)} MB</td>
                                     <td className="text-right font-mono">{comparisonSuiteB.system_drone.memory_rss_mb.toFixed(2)} MB</td>
-                                    <td className="text-right font-mono text-gray-400">
-                                        {(comparisonSuiteB.system_drone.memory_rss_mb - comparisonSuiteA.system_drone.memory_rss_mb).toFixed(2)} MB
-                                    </td>
                                 </tr>
                             </tbody>
                         </table>

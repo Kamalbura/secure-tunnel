@@ -20,8 +20,8 @@ function ReliabilityBadge({ reliability }: { reliability: ReliabilityClass }) {
 
 // Metric display component
 function MetricValue({ value, unit = '', missing = false }: { value: number | string | boolean | null | undefined; unit?: string; missing?: boolean }) {
-    if (missing || value === null || value === undefined || value === '' || value === 0) {
-        return <span className="text-gray-500 italic">—</span>;
+    if (missing || value === null || value === undefined || value === '') {
+        return <span className="text-gray-500 italic">NOT AVAILABLE</span>;
     }
     if (typeof value === 'boolean') {
         return <span className={value ? 'text-green-400' : 'text-red-400'}>{value ? 'Yes' : 'No'}</span>;
@@ -106,10 +106,6 @@ export default function SuiteDetail() {
                     <div>
                         <div className="text-gray-400 text-xs">Total Duration</div>
                         <div className="text-xl"><MetricValue value={suite.handshake.handshake_total_duration_ms} unit="ms" /></div>
-                    </div>
-                    <div>
-                        <div className="text-gray-400 text-xs">RTT</div>
-                        <div className="text-xl"><MetricValue value={suite.handshake.handshake_rtt_ms} unit="ms" /></div>
                     </div>
                     <div>
                         <div className="text-gray-400 text-xs">Success</div>

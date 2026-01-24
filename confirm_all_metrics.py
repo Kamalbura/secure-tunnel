@@ -26,14 +26,12 @@ from core.metrics_schema import (
     CryptoPrimitiveBreakdown,
     RekeyMetrics,
     DataPlaneMetrics,
-    LatencyJitterMetrics,
     MavProxyDroneMetrics,
     MavProxyGcsMetrics,
     MavLinkIntegrityMetrics,
     FlightControllerTelemetry,
     ControlPlaneMetrics,
     SystemResourcesDrone,
-    SystemResourcesGcs,
     PowerEnergyMetrics,
     ObservabilityMetrics,
     ValidationMetrics,
@@ -101,14 +99,6 @@ def get_category_info() -> List[Dict[str, Any]]:
             "critical": True
         },
         {
-            "letter": "H",
-            "name": "Latency & Jitter (Transport)",
-            "class": LatencyJitterMetrics,
-            "description": "Transport layer latency and jitter statistics",
-            "source": "Traffic Generator/Receiver",
-            "critical": True
-        },
-        {
             "letter": "I",
             "name": "MAVProxy Application Layer — Drone",
             "class": MavProxyDroneMetrics,
@@ -157,14 +147,6 @@ def get_category_info() -> List[Dict[str, Any]]:
             "critical": True
         },
         {
-            "letter": "O",
-            "name": "System Resources — GCS",
-            "class": SystemResourcesGcs,
-            "description": "System resource metrics from the GCS",
-            "source": "GCS System",
-            "critical": True
-        },
-        {
             "letter": "P",
             "name": "Power & Energy (Drone)",
             "class": PowerEnergyMetrics,
@@ -204,7 +186,8 @@ def generate_confirmation_report() -> str:
     
     # Summary
     counts = count_metrics()
-    lines.append(f"\nTotal Metrics: {counts['TOTAL']} fields across 18 categories (A-R)")
+    category_count = len([k for k in counts.keys() if k != "TOTAL"])
+    lines.append(f"\nTotal Metrics: {counts['TOTAL']} fields across {category_count} categories")
     
     # Category summary table
     lines.append("\n" + "-" * 80)

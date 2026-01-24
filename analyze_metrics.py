@@ -5,7 +5,7 @@ analyze_metrics.py
 Data Engineering & Analysis for Comprehensive PQC Metrics
 
 This script provides:
-1. Schema validation - confirms all 231 metrics captured
+1. Schema validation - confirms all metrics captured
 2. Statistical analysis - descriptive stats for each category
 3. Comparison analysis - across AEAD, KEM, Signature variants
 4. Data quality checks - missing values, outliers, anomalies
@@ -33,9 +33,7 @@ from core.metrics_schema import (
     HandshakeMetrics,
     CryptoPrimitiveBreakdown,
     DataPlaneMetrics,
-    LatencyJitterMetrics,
     SystemResourcesDrone,
-    SystemResourcesGcs,
     PowerEnergyMetrics,
     ValidationMetrics,
 )
@@ -135,14 +133,12 @@ class MetricsAnalyzer:
             "E. Crypto Primitive Breakdown": "crypto_primitives",
             "F. Rekey Metrics": "rekey",
             "G. Data Plane": "data_plane",
-            "H. Latency & Jitter": "latency_jitter",
             "I. MAVProxy Drone": "mavproxy_drone",
             "J. MAVProxy GCS": "mavproxy_gcs",
             "K. MAVLink Integrity": "mavlink_integrity",
             "L. Flight Controller": "fc_telemetry",
             "M. Control Plane": "control_plane",
             "N. System Drone": "system_drone",
-            "O. System GCS": "system_gcs",
             "P. Power & Energy": "power_energy",
             "Q. Observability": "observability",
             "R. Validation": "validation",
@@ -176,7 +172,6 @@ class MetricsAnalyzer:
             "handshake": {},
             "crypto_primitives": {},
             "data_plane": {},
-            "latency": {},
             "system": {},
         }
         
@@ -190,8 +185,6 @@ class MetricsAnalyzer:
         packets_sent = []
         packets_recv = []
         delivery_rates = []
-        latency_avg = []
-        latency_p95 = []
         cpu_usage = []
         
         for data in self.metrics_data:
@@ -218,20 +211,10 @@ class MetricsAnalyzer:
             if dp.get("packet_delivery_ratio"):
                 delivery_rates.append(dp["packet_delivery_ratio"])
             
-            # Latency
-            lat = m.get("latency_jitter", {})
-            if lat.get("one_way_latency_avg_ms"):
-                latency_avg.append(lat["one_way_latency_avg_ms"])
-            if lat.get("one_way_latency_p95_ms"):
-                latency_p95.append(lat["one_way_latency_p95_ms"])
-            
             # System
             sys_d = m.get("system_drone", {})
-            sys_g = m.get("system_gcs", {})
             if sys_d.get("cpu_usage_avg_percent"):
                 cpu_usage.append(sys_d["cpu_usage_avg_percent"])
-            if sys_g.get("cpu_usage_avg_percent"):
-                cpu_usage.append(sys_g["cpu_usage_avg_percent"])
         
         def calc_stats(values: List[float], name: str) -> Dict[str, Any]:
             if not values:
@@ -259,8 +242,6 @@ class MetricsAnalyzer:
         stats["data_plane"]["packets_sent"] = calc_stats(packets_sent, "Packets Sent")
         stats["data_plane"]["packets_recv"] = calc_stats(packets_recv, "Packets Received")
         stats["data_plane"]["delivery_rate"] = calc_stats(delivery_rates, "Delivery Rate")
-        stats["latency"]["avg_ms"] = calc_stats(latency_avg, "Latency Avg (ms)")
-        stats["latency"]["p95_ms"] = calc_stats(latency_p95, "Latency P95 (ms)")
         stats["system"]["cpu_percent"] = calc_stats(cpu_usage, "CPU Usage (%)")
         
         return stats

@@ -316,14 +316,6 @@ def main():
     print(f"   Packets received: {final_metrics.data_plane.packets_received}")
     print(f"   Delivery: {final_metrics.data_plane.packet_delivery_ratio*100:.1f}%")
     
-    print(f"\nH. Latency:")
-    print(f"   Avg: {final_metrics.latency_jitter.one_way_latency_avg_ms:.2f} ms")
-    print(f"   P95: {final_metrics.latency_jitter.one_way_latency_p95_ms:.2f} ms")
-    
-    print(f"\nO. System (GCS):")
-    print(f"   CPU avg: {final_metrics.system_gcs.cpu_usage_avg_percent:.1f}%")
-    print(f"   Memory: {final_metrics.system_gcs.memory_rss_mb:.1f} MB")
-    
     print(f"\nQ. Observability:")
     print(f"   Samples: {final_metrics.observability.log_sample_count}")
     print(f"   Duration: {final_metrics.observability.collection_duration_ms:.2f} ms")

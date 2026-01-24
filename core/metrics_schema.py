@@ -75,17 +75,12 @@ class SuiteCryptoIdentity:
     """Cryptographic identity and parameters for the suite."""
     kem_algorithm: str = ""
     kem_family: str = ""
-    kem_parameter_set: str = ""
     kem_nist_level: str = ""
     sig_algorithm: str = ""
     sig_family: str = ""
-    sig_parameter_set: str = ""
     sig_nist_level: str = ""
     aead_algorithm: str = ""
-    aead_mode: str = ""
     suite_security_level: str = ""
-    suite_tier: str = ""
-    suite_order_index: int = 0
 
 
 # =============================================================================
@@ -97,15 +92,9 @@ class SuiteLifecycleTimeline:
     """Timeline of suite activation and operation."""
     suite_selected_time: float = 0.0
     suite_activated_time: float = 0.0
-    suite_traffic_start_time: float = 0.0
-    suite_traffic_end_time: float = 0.0
-    suite_rekey_start_time: float = 0.0
-    suite_rekey_end_time: float = 0.0
     suite_deactivated_time: float = 0.0
     suite_total_duration_ms: float = 0.0
     suite_active_duration_ms: float = 0.0
-    suite_blackout_count: int = 0
-    suite_blackout_total_ms: float = 0.0
 
 
 # =============================================================================
@@ -117,10 +106,7 @@ class HandshakeMetrics:
     """Handshake timing and status."""
     handshake_start_time_drone: float = 0.0
     handshake_end_time_drone: float = 0.0
-    handshake_start_time_gcs: float = 0.0
-    handshake_end_time_gcs: float = 0.0
     handshake_total_duration_ms: float = 0.0
-    handshake_rtt_ms: float = 0.0
     handshake_success: bool = False
     handshake_failure_reason: str = ""
 
@@ -137,8 +123,6 @@ class CryptoPrimitiveBreakdown:
     kem_decapsulation_time_ms: float = 0.0
     signature_sign_time_ms: float = 0.0
     signature_verify_time_ms: float = 0.0
-    hkdf_extract_time_ms: float = 0.0
-    hkdf_expand_time_ms: float = 0.0
     total_crypto_time_ms: float = 0.0
     
     # Extended primitive timing (nanoseconds for precision)
@@ -178,7 +162,6 @@ class RekeyMetrics:
 @dataclass
 class DataPlaneMetrics:
     """Proxy-level data plane metrics."""
-    target_throughput_mbps: float = 0.0
     achieved_throughput_mbps: float = 0.0
     goodput_mbps: float = 0.0
     wire_rate_mbps: float = 0.0
@@ -215,23 +198,6 @@ class DataPlaneMetrics:
 # =============================================================================
 
 @dataclass
-class LatencyJitterMetrics:
-    """Transport layer latency and jitter statistics."""
-    one_way_latency_avg_ms: float = 0.0
-    one_way_latency_p50_ms: float = 0.0
-    one_way_latency_p95_ms: float = 0.0
-    one_way_latency_max_ms: float = 0.0
-    round_trip_latency_avg_ms: float = 0.0
-    round_trip_latency_p50_ms: float = 0.0
-    round_trip_latency_p95_ms: float = 0.0
-    round_trip_latency_max_ms: float = 0.0
-    jitter_avg_ms: float = 0.0
-    jitter_p95_ms: float = 0.0
-    
-    # Raw samples for post-processing
-    latency_samples: List[float] = field(default_factory=list)
-
-
 # =============================================================================
 # I. MAVPROXY APPLICATION LAYER — DRONE SIDE
 # =============================================================================
@@ -249,13 +215,11 @@ class MavProxyDroneMetrics:
     mavproxy_drone_heartbeat_interval_ms: float = 0.0
     mavproxy_drone_heartbeat_loss_count: int = 0
     mavproxy_drone_seq_gap_count: int = 0
-    mavproxy_drone_reconnect_count: int = 0
     mavproxy_drone_cmd_sent_count: int = 0
     mavproxy_drone_cmd_ack_received_count: int = 0
     mavproxy_drone_cmd_ack_latency_avg_ms: float = 0.0
     mavproxy_drone_cmd_ack_latency_p95_ms: float = 0.0
     mavproxy_drone_stream_rate_hz: float = 0.0
-    mavproxy_drone_log_path: str = ""
 
 
 # =============================================================================
@@ -287,24 +251,6 @@ class MavProxyGcsMetrics:
     # VALIDATION metrics (retained)
     mavproxy_gcs_total_msgs_received: int = 0
     mavproxy_gcs_seq_gap_count: int = 0
-    
-    # DEPRECATED fields below - retained for schema compatibility
-    # These are NO LONGER COLLECTED
-    mavproxy_gcs_start_time: float = 0.0  # timing context only
-    mavproxy_gcs_end_time: float = 0.0  # timing context only
-    mavproxy_gcs_tx_pps: float = 0.0  # DEPRECATED
-    mavproxy_gcs_rx_pps: float = 0.0  # DEPRECATED
-    mavproxy_gcs_total_msgs_sent: int = 0  # DEPRECATED
-    mavproxy_gcs_msg_type_counts: Dict[str, int] = field(default_factory=dict)  # DEPRECATED
-    mavproxy_gcs_heartbeat_interval_ms: float = 0.0  # DEPRECATED
-    mavproxy_gcs_heartbeat_loss_count: int = 0  # DEPRECATED
-    mavproxy_gcs_reconnect_count: int = 0  # DEPRECATED
-    mavproxy_gcs_cmd_sent_count: int = 0  # DEPRECATED
-    mavproxy_gcs_cmd_ack_received_count: int = 0  # DEPRECATED
-    mavproxy_gcs_cmd_ack_latency_avg_ms: float = 0.0  # DEPRECATED
-    mavproxy_gcs_cmd_ack_latency_p95_ms: float = 0.0  # DEPRECATED
-    mavproxy_gcs_stream_rate_hz: float = 0.0  # DEPRECATED
-    mavproxy_gcs_log_path: str = ""  # DEPRECATED
 
 
 # =============================================================================
@@ -323,7 +269,6 @@ class MavLinkIntegrityMetrics:
     mavlink_out_of_order_count: int = 0
     mavlink_duplicate_count: int = 0
     mavlink_message_latency_avg_ms: float = 0.0
-    mavlink_message_latency_p95_ms: float = 0.0
 
 
 # =============================================================================
@@ -343,12 +288,6 @@ class FlightControllerTelemetry:
     fc_battery_remaining_percent: float = 0.0
     fc_cpu_load_percent: float = 0.0
     fc_sensor_health_flags: int = 0
-    
-    # Extended telemetry
-    fc_gps_fix_type: int = 0
-    fc_gps_satellites: int = 0
-    fc_altitude_m: float = 0.0
-    fc_groundspeed_mps: float = 0.0
 
 
 # =============================================================================
@@ -359,14 +298,6 @@ class FlightControllerTelemetry:
 class ControlPlaneMetrics:
     """Scheduler and control plane metrics."""
     scheduler_tick_interval_ms: float = 0.0
-    scheduler_decision_latency_ms: float = 0.0
-    scheduler_action_type: str = ""
-    scheduler_action_reason: str = ""
-    scheduler_cooldown_remaining_ms: float = 0.0
-    control_channel_rtt_ms: float = 0.0
-    control_channel_disconnect_count: int = 0
-    
-    # Policy state
     policy_name: str = ""
     policy_state: str = ""
     policy_suite_index: int = 0
@@ -387,16 +318,12 @@ class SystemResourcesDrone:
     memory_vms_mb: float = 0.0
     thread_count: int = 0
     temperature_c: float = 0.0
-    thermal_throttle_events: int = 0
     
     # Extended system info
     uptime_s: float = 0.0
     load_avg_1m: float = 0.0
     load_avg_5m: float = 0.0
     load_avg_15m: float = 0.0
-    disk_usage_percent: float = 0.0
-    network_rx_bytes: int = 0
-    network_tx_bytes: int = 0
 
 
 # =============================================================================
@@ -416,26 +343,6 @@ class SystemResourcesDrone:
 # without explicit policy justification.
 # =============================================================================
 
-@dataclass
-class SystemResourcesGcs:
-    """
-    DEPRECATED: GCS system resource metrics.
-    
-    These metrics are NO LONGER COLLECTED per policy realignment.
-    GCS is non-constrained; only drone-side resources influence policy.
-    """
-    cpu_usage_avg_percent: float = 0.0  # DEPRECATED - not collected
-    cpu_usage_peak_percent: float = 0.0  # DEPRECATED - not collected
-    cpu_freq_mhz: float = 0.0  # DEPRECATED - not collected
-    memory_rss_mb: float = 0.0  # DEPRECATED - not collected
-    memory_vms_mb: float = 0.0  # DEPRECATED - not collected
-    thread_count: int = 0  # DEPRECATED - not collected
-    
-    # Extended system info
-    uptime_s: float = 0.0  # DEPRECATED - not collected
-    disk_usage_percent: float = 0.0  # DEPRECATED - not collected
-
-
 # =============================================================================
 # P. POWER & ENERGY (DRONE)
 # =============================================================================
@@ -451,11 +358,6 @@ class PowerEnergyMetrics:
     power_peak_w: float = 0.0
     energy_total_j: float = 0.0
     energy_per_handshake_j: float = 0.0
-    energy_per_rekey_j: float = 0.0
-    energy_per_second_j: float = 0.0
-    
-    # Raw power samples
-    power_samples: List[Dict[str, float]] = field(default_factory=list)
 
 
 # =============================================================================
@@ -466,11 +368,7 @@ class PowerEnergyMetrics:
 class ObservabilityMetrics:
     """Logging and observability metrics."""
     log_sample_count: int = 0
-    log_drop_count: int = 0
     metrics_sampling_rate_hz: float = 0.0
-    trace_file_path: str = ""
-    power_trace_file_path: str = ""
-    traffic_trace_file_path: str = ""
     
     # Collection timestamps
     collection_start_time: float = 0.0
@@ -490,11 +388,6 @@ class ValidationMetrics:
     lost_samples: int = 0
     success_rate_percent: float = 0.0
     benchmark_pass_fail: str = ""
-    termination_reason: str = ""
-    
-    # Data quality
-    data_completeness_percent: float = 0.0
-    schema_validation_errors: List[str] = field(default_factory=list)
 
 
 # =============================================================================
@@ -528,9 +421,6 @@ class ComprehensiveSuiteMetrics:
     # G. Data Plane (Proxy Level)
     data_plane: DataPlaneMetrics = field(default_factory=DataPlaneMetrics)
     
-    # H. Latency & Jitter
-    latency_jitter: LatencyJitterMetrics = field(default_factory=LatencyJitterMetrics)
-    
     # I. MAVProxy Drone
     mavproxy_drone: MavProxyDroneMetrics = field(default_factory=MavProxyDroneMetrics)
     
@@ -548,9 +438,6 @@ class ComprehensiveSuiteMetrics:
     
     # N. System Resources Drone
     system_drone: SystemResourcesDrone = field(default_factory=SystemResourcesDrone)
-    
-    # O. System Resources GCS
-    system_gcs: SystemResourcesGcs = field(default_factory=SystemResourcesGcs)
     
     # P. Power & Energy
     power_energy: PowerEnergyMetrics = field(default_factory=PowerEnergyMetrics)
@@ -593,8 +480,6 @@ class ComprehensiveSuiteMetrics:
             metrics.rekey = RekeyMetrics(**data['rekey'])
         if 'data_plane' in data:
             metrics.data_plane = DataPlaneMetrics(**data['data_plane'])
-        if 'latency_jitter' in data:
-            metrics.latency_jitter = LatencyJitterMetrics(**data['latency_jitter'])
         if 'mavproxy_drone' in data:
             metrics.mavproxy_drone = MavProxyDroneMetrics(**data['mavproxy_drone'])
         if 'mavproxy_gcs' in data:
@@ -607,8 +492,6 @@ class ComprehensiveSuiteMetrics:
             metrics.control_plane = ControlPlaneMetrics(**data['control_plane'])
         if 'system_drone' in data:
             metrics.system_drone = SystemResourcesDrone(**data['system_drone'])
-        if 'system_gcs' in data:
-            metrics.system_gcs = SystemResourcesGcs(**data['system_gcs'])
         if 'power_energy' in data:
             metrics.power_energy = PowerEnergyMetrics(**data['power_energy'])
         if 'observability' in data:
@@ -646,14 +529,12 @@ def count_metrics() -> Dict[str, int]:
         'E. Crypto Primitive Breakdown': CryptoPrimitiveBreakdown,
         'F. Rekey Metrics': RekeyMetrics,
         'G. Data Plane': DataPlaneMetrics,
-        'H. Latency & Jitter': LatencyJitterMetrics,
         'I. MAVProxy Drone': MavProxyDroneMetrics,
         'J. MAVProxy GCS': MavProxyGcsMetrics,
         'K. MAVLink Integrity': MavLinkIntegrityMetrics,
         'L. Flight Controller': FlightControllerTelemetry,
         'M. Control Plane': ControlPlaneMetrics,
         'N. System Drone': SystemResourcesDrone,
-        'O. System GCS': SystemResourcesGcs,
         'P. Power & Energy': PowerEnergyMetrics,
         'Q. Observability': ObservabilityMetrics,
         'R. Validation': ValidationMetrics,

@@ -708,12 +708,6 @@ class DroneBenchmarkController:
             
             # Extract metrics from final_metrics
             if final_metrics:
-                # Latency
-                result.latency_avg_ms = final_metrics.latency_jitter.one_way_latency_avg_ms
-                result.latency_p50_ms = final_metrics.latency_jitter.one_way_latency_p50_ms
-                result.latency_p95_ms = final_metrics.latency_jitter.one_way_latency_p95_ms
-                result.latency_max_ms = final_metrics.latency_jitter.one_way_latency_max_ms
-                
                 # Drone system
                 result.drone_cpu_avg_percent = final_metrics.system_drone.cpu_usage_avg_percent
                 result.drone_cpu_peak_percent = final_metrics.system_drone.cpu_usage_peak_percent

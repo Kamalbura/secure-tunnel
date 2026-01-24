@@ -196,13 +196,6 @@ class MetricsConsolidator:
     
     def _merge_gcs_metrics(self, result: Dict[str, Any], gcs_data: Dict[str, Any]):
         """Merge GCS-specific metrics into result."""
-        # System metrics
-        sys_gcs = gcs_data.get("system_gcs", {})
-        if sys_gcs:
-            result["gcs_cpu_avg_percent"] = sys_gcs.get("cpu_usage_avg_percent", 0)
-            result["gcs_cpu_peak_percent"] = sys_gcs.get("cpu_usage_peak_percent", 0)
-            result["gcs_memory_rss_mb"] = sys_gcs.get("memory_rss_mb", 0)
-        
         # Handshake timing (GCS side)
         handshake = gcs_data.get("handshake", {})
         if handshake:
@@ -245,14 +238,6 @@ class MetricsConsolidator:
             result["aead_algorithm"] = crypto.get("aead_algorithm", "")
             result["nist_level"] = crypto.get("suite_security_level", "")
         
-        # Latency
-        latency = drone_data.get("latency_jitter", {})
-        if latency:
-            result["latency_avg_ms"] = latency.get("one_way_latency_avg_ms", 0)
-            result["latency_p50_ms"] = latency.get("one_way_latency_p50_ms", 0)
-            result["latency_p95_ms"] = latency.get("one_way_latency_p95_ms", 0)
-            result["latency_max_ms"] = latency.get("one_way_latency_max_ms", 0)
-
 
 # =============================================================================
 # Main

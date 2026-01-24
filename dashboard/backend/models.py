@@ -61,17 +61,12 @@ class SuiteCryptoIdentity(BaseModel):
     """Cryptographic identity and parameters for the suite."""
     kem_algorithm: str = ""
     kem_family: str = ""
-    kem_parameter_set: str = ""
     kem_nist_level: str = ""
     sig_algorithm: str = ""
     sig_family: str = ""
-    sig_parameter_set: str = ""
     sig_nist_level: str = ""
     aead_algorithm: str = ""
-    aead_mode: str = ""
     suite_security_level: str = ""
-    suite_tier: str = ""
-    suite_order_index: int = 0
 
     class Config:
         extra = "forbid"
@@ -85,15 +80,9 @@ class SuiteLifecycleTimeline(BaseModel):
     """Timeline of suite activation and operation."""
     suite_selected_time: float = 0.0
     suite_activated_time: float = 0.0
-    suite_traffic_start_time: float = 0.0
-    suite_traffic_end_time: float = 0.0
-    suite_rekey_start_time: float = 0.0
-    suite_rekey_end_time: float = 0.0
     suite_deactivated_time: float = 0.0
     suite_total_duration_ms: float = 0.0
     suite_active_duration_ms: float = 0.0
-    suite_blackout_count: int = 0
-    suite_blackout_total_ms: float = 0.0
 
     class Config:
         extra = "forbid"
@@ -107,10 +96,7 @@ class HandshakeMetrics(BaseModel):
     """Handshake timing and status."""
     handshake_start_time_drone: float = 0.0
     handshake_end_time_drone: float = 0.0
-    handshake_start_time_gcs: float = 0.0
-    handshake_end_time_gcs: float = 0.0
     handshake_total_duration_ms: float = 0.0
-    handshake_rtt_ms: float = 0.0
     handshake_success: bool = False
     handshake_failure_reason: str = ""
 
@@ -129,8 +115,6 @@ class CryptoPrimitiveBreakdown(BaseModel):
     kem_decapsulation_time_ms: float = 0.0
     signature_sign_time_ms: float = 0.0
     signature_verify_time_ms: float = 0.0
-    hkdf_extract_time_ms: float = 0.0
-    hkdf_expand_time_ms: float = 0.0
     total_crypto_time_ms: float = 0.0
     kem_keygen_ns: int = 0
     kem_encaps_ns: int = 0
@@ -170,7 +154,6 @@ class RekeyMetrics(BaseModel):
 
 class DataPlaneMetrics(BaseModel):
     """Proxy-level data plane metrics."""
-    target_throughput_mbps: float = 0.0
     achieved_throughput_mbps: float = 0.0
     goodput_mbps: float = 0.0
     wire_rate_mbps: float = 0.0
@@ -203,24 +186,6 @@ class DataPlaneMetrics(BaseModel):
 # H. LATENCY & JITTER (TRANSPORT)
 # =============================================================================
 
-class LatencyJitterMetrics(BaseModel):
-    """Transport layer latency and jitter statistics."""
-    one_way_latency_avg_ms: float = 0.0
-    one_way_latency_p50_ms: float = 0.0
-    one_way_latency_p95_ms: float = 0.0
-    one_way_latency_max_ms: float = 0.0
-    round_trip_latency_avg_ms: float = 0.0
-    round_trip_latency_p50_ms: float = 0.0
-    round_trip_latency_p95_ms: float = 0.0
-    round_trip_latency_max_ms: float = 0.0
-    jitter_avg_ms: float = 0.0
-    jitter_p95_ms: float = 0.0
-    latency_samples: List[float] = Field(default_factory=list)
-
-    class Config:
-        extra = "forbid"
-
-
 # =============================================================================
 # I. MAVPROXY APPLICATION LAYER — DRONE SIDE
 # =============================================================================
@@ -237,13 +202,11 @@ class MavProxyDroneMetrics(BaseModel):
     mavproxy_drone_heartbeat_interval_ms: float = 0.0
     mavproxy_drone_heartbeat_loss_count: int = 0
     mavproxy_drone_seq_gap_count: int = 0
-    mavproxy_drone_reconnect_count: int = 0
     mavproxy_drone_cmd_sent_count: int = 0
     mavproxy_drone_cmd_ack_received_count: int = 0
     mavproxy_drone_cmd_ack_latency_avg_ms: float = 0.0
     mavproxy_drone_cmd_ack_latency_p95_ms: float = 0.0
     mavproxy_drone_stream_rate_hz: float = 0.0
-    mavproxy_drone_log_path: str = ""
 
     class Config:
         extra = "forbid"
@@ -260,25 +223,8 @@ class MavProxyGcsMetrics(BaseModel):
     POLICY: Pruned to validation-only metrics.
     Fields marked DEPRECATED are retained for schema compatibility but not collected.
     """
-    # VERIFIED metrics
     mavproxy_gcs_total_msgs_received: int = 0
     mavproxy_gcs_seq_gap_count: int = 0
-    # DEPRECATED fields (schema compatibility)
-    mavproxy_gcs_start_time: float = 0.0
-    mavproxy_gcs_end_time: float = 0.0
-    mavproxy_gcs_tx_pps: float = 0.0
-    mavproxy_gcs_rx_pps: float = 0.0
-    mavproxy_gcs_total_msgs_sent: int = 0
-    mavproxy_gcs_msg_type_counts: Dict[str, int] = Field(default_factory=dict)
-    mavproxy_gcs_heartbeat_interval_ms: float = 0.0
-    mavproxy_gcs_heartbeat_loss_count: int = 0
-    mavproxy_gcs_reconnect_count: int = 0
-    mavproxy_gcs_cmd_sent_count: int = 0
-    mavproxy_gcs_cmd_ack_received_count: int = 0
-    mavproxy_gcs_cmd_ack_latency_avg_ms: float = 0.0
-    mavproxy_gcs_cmd_ack_latency_p95_ms: float = 0.0
-    mavproxy_gcs_stream_rate_hz: float = 0.0
-    mavproxy_gcs_log_path: str = ""
 
     class Config:
         extra = "forbid"
@@ -299,7 +245,6 @@ class MavLinkIntegrityMetrics(BaseModel):
     mavlink_out_of_order_count: int = 0
     mavlink_duplicate_count: int = 0
     mavlink_message_latency_avg_ms: float = 0.0
-    mavlink_message_latency_p95_ms: float = 0.0
 
     class Config:
         extra = "forbid"
@@ -321,10 +266,6 @@ class FlightControllerTelemetry(BaseModel):
     fc_battery_remaining_percent: float = 0.0
     fc_cpu_load_percent: float = 0.0
     fc_sensor_health_flags: int = 0
-    fc_gps_fix_type: int = 0
-    fc_gps_satellites: int = 0
-    fc_altitude_m: float = 0.0
-    fc_groundspeed_mps: float = 0.0
 
     class Config:
         extra = "forbid"
@@ -337,12 +278,6 @@ class FlightControllerTelemetry(BaseModel):
 class ControlPlaneMetrics(BaseModel):
     """Scheduler and control plane metrics."""
     scheduler_tick_interval_ms: float = 0.0
-    scheduler_decision_latency_ms: float = 0.0
-    scheduler_action_type: str = ""
-    scheduler_action_reason: str = ""
-    scheduler_cooldown_remaining_ms: float = 0.0
-    control_channel_rtt_ms: float = 0.0
-    control_channel_disconnect_count: int = 0
     policy_name: str = ""
     policy_state: str = ""
     policy_suite_index: int = 0
@@ -365,14 +300,10 @@ class SystemResourcesDrone(BaseModel):
     memory_vms_mb: float = 0.0
     thread_count: int = 0
     temperature_c: float = 0.0
-    thermal_throttle_events: int = 0
     uptime_s: float = 0.0
     load_avg_1m: float = 0.0
     load_avg_5m: float = 0.0
     load_avg_15m: float = 0.0
-    disk_usage_percent: float = 0.0
-    network_rx_bytes: int = 0
-    network_tx_bytes: int = 0
 
     class Config:
         extra = "forbid"
@@ -381,24 +312,6 @@ class SystemResourcesDrone(BaseModel):
 # =============================================================================
 # O. SYSTEM RESOURCES — GCS (DEPRECATED)
 # =============================================================================
-
-class SystemResourcesGcs(BaseModel):
-    """
-    DEPRECATED: GCS system resource metrics.
-    These metrics are NO LONGER COLLECTED per policy realignment.
-    """
-    cpu_usage_avg_percent: float = 0.0
-    cpu_usage_peak_percent: float = 0.0
-    cpu_freq_mhz: float = 0.0
-    memory_rss_mb: float = 0.0
-    memory_vms_mb: float = 0.0
-    thread_count: int = 0
-    uptime_s: float = 0.0
-    disk_usage_percent: float = 0.0
-
-    class Config:
-        extra = "forbid"
-
 
 # =============================================================================
 # P. POWER & ENERGY (DRONE)
@@ -414,9 +327,6 @@ class PowerEnergyMetrics(BaseModel):
     power_peak_w: float = 0.0
     energy_total_j: float = 0.0
     energy_per_handshake_j: float = 0.0
-    energy_per_rekey_j: float = 0.0
-    energy_per_second_j: float = 0.0
-    power_samples: List[Dict[str, float]] = Field(default_factory=list)
 
     class Config:
         extra = "forbid"
@@ -429,11 +339,7 @@ class PowerEnergyMetrics(BaseModel):
 class ObservabilityMetrics(BaseModel):
     """Logging and observability metrics."""
     log_sample_count: int = 0
-    log_drop_count: int = 0
     metrics_sampling_rate_hz: float = 0.0
-    trace_file_path: str = ""
-    power_trace_file_path: str = ""
-    traffic_trace_file_path: str = ""
     collection_start_time: float = 0.0
     collection_end_time: float = 0.0
     collection_duration_ms: float = 0.0
@@ -453,9 +359,6 @@ class ValidationMetrics(BaseModel):
     lost_samples: int = 0
     success_rate_percent: float = 0.0
     benchmark_pass_fail: str = ""
-    termination_reason: str = ""
-    data_completeness_percent: float = 0.0
-    schema_validation_errors: List[str] = Field(default_factory=list)
 
     class Config:
         extra = "forbid"
@@ -477,14 +380,12 @@ class ComprehensiveSuiteMetrics(BaseModel):
     crypto_primitives: CryptoPrimitiveBreakdown = Field(default_factory=CryptoPrimitiveBreakdown)
     rekey: RekeyMetrics = Field(default_factory=RekeyMetrics)
     data_plane: DataPlaneMetrics = Field(default_factory=DataPlaneMetrics)
-    latency_jitter: LatencyJitterMetrics = Field(default_factory=LatencyJitterMetrics)
     mavproxy_drone: MavProxyDroneMetrics = Field(default_factory=MavProxyDroneMetrics)
     mavproxy_gcs: MavProxyGcsMetrics = Field(default_factory=MavProxyGcsMetrics)
     mavlink_integrity: MavLinkIntegrityMetrics = Field(default_factory=MavLinkIntegrityMetrics)
     fc_telemetry: FlightControllerTelemetry = Field(default_factory=FlightControllerTelemetry)
     control_plane: ControlPlaneMetrics = Field(default_factory=ControlPlaneMetrics)
     system_drone: SystemResourcesDrone = Field(default_factory=SystemResourcesDrone)
-    system_gcs: SystemResourcesGcs = Field(default_factory=SystemResourcesGcs)
     power_energy: PowerEnergyMetrics = Field(default_factory=PowerEnergyMetrics)
     observability: ObservabilityMetrics = Field(default_factory=ObservabilityMetrics)
     validation: ValidationMetrics = Field(default_factory=ValidationMetrics)

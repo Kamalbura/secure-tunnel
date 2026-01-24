@@ -24,29 +24,7 @@ from models import (
 
 # Fields that are DEPRECATED/CONDITIONAL (from policy realignment)
 DEPRECATED_FIELDS = {
-    # GCS MAVProxy (pruned)
-    "mavproxy_gcs.mavproxy_gcs_tx_pps",
-    "mavproxy_gcs.mavproxy_gcs_rx_pps",
-    "mavproxy_gcs.mavproxy_gcs_total_msgs_sent",
-    "mavproxy_gcs.mavproxy_gcs_msg_type_counts",
-    "mavproxy_gcs.mavproxy_gcs_heartbeat_interval_ms",
-    "mavproxy_gcs.mavproxy_gcs_heartbeat_loss_count",
-    "mavproxy_gcs.mavproxy_gcs_reconnect_count",
-    "mavproxy_gcs.mavproxy_gcs_cmd_sent_count",
-    "mavproxy_gcs.mavproxy_gcs_cmd_ack_received_count",
-    "mavproxy_gcs.mavproxy_gcs_cmd_ack_latency_avg_ms",
-    "mavproxy_gcs.mavproxy_gcs_cmd_ack_latency_p95_ms",
-    "mavproxy_gcs.mavproxy_gcs_stream_rate_hz",
-    "mavproxy_gcs.mavproxy_gcs_log_path",
-    # GCS System Resources (all deprecated)
-    "system_gcs.cpu_usage_avg_percent",
-    "system_gcs.cpu_usage_peak_percent",
-    "system_gcs.cpu_freq_mhz",
-    "system_gcs.memory_rss_mb",
-    "system_gcs.memory_vms_mb",
-    "system_gcs.thread_count",
-    "system_gcs.uptime_s",
-    "system_gcs.disk_usage_percent",
+    # No deprecated fields in current canonical schema
 }
 
 # Fields that are validation-only from GCS
@@ -58,7 +36,6 @@ CONDITIONAL_FIELDS = {
 # Metric units
 METRIC_UNITS = {
     "handshake_total_duration_ms": "ms",
-    "handshake_rtt_ms": "ms",
     "kem_keygen_time_ms": "ms",
     "kem_encapsulation_time_ms": "ms",
     "kem_decapsulation_time_ms": "ms",
@@ -74,9 +51,6 @@ METRIC_UNITS = {
     "cpu_usage_peak_percent": "%",
     "memory_rss_mb": "MB",
     "temperature_c": "°C",
-    "jitter_avg_ms": "ms",
-    "one_way_latency_avg_ms": "ms",
-    "round_trip_latency_avg_ms": "ms",
     "packets_sent": "count",
     "packets_received": "count",
     "packets_dropped": "count",
@@ -217,11 +191,10 @@ def extract_gcs_metrics(suite: ComprehensiveSuiteMetrics) -> Dict[str, Any]:
     """
     Extract GCS-side metrics from a suite.
     
-    Note: Most GCS metrics are DEPRECATED per policy realignment.
+    Note: Only validation-only MAVProxy metrics are available.
     """
     return {
         "mavproxy": suite.mavproxy_gcs.model_dump(),
-        "system": suite.system_gcs.model_dump(),
     }
 
 

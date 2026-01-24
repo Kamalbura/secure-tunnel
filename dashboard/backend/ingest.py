@@ -43,10 +43,10 @@ def flatten_comprehensive(comp_data: Dict) -> Dict:
     
     # Sections to flatten
     sections = [
-        "run_context", "crypto_identity", "lifecycle", "handshake", 
-        "crypto_primitives", "rekey_metrics", "data_plane", "latency_jitter",
-        "mavproxy_drone", "mavproxy_gcs", "mavlink_integrity", 
-        "flight_controller", "control_plane", "system_resources_drone",
+        "run_context", "crypto_identity", "lifecycle", "handshake",
+        "crypto_primitives", "rekey", "data_plane",
+        "mavproxy_drone", "mavproxy_gcs", "mavlink_integrity",
+        "fc_telemetry", "control_plane", "system_drone",
         "power_energy", "validation", "observability"
     ]
     
@@ -54,7 +54,7 @@ def flatten_comprehensive(comp_data: Dict) -> Dict:
         flat.update(comp_data.get(sec, {}))
         
     # Remap specifics
-    sys = comp_data.get("system_resources_drone", {})
+    sys = comp_data.get("system_drone", {})
     if "cpu_usage_avg" in sys: flat["cpu_usage_avg_percent"] = sys["cpu_usage_avg"]
     if "cpu_usage_peak" in sys: flat["cpu_usage_peak_percent"] = sys["cpu_usage_peak"]
     
@@ -123,7 +123,7 @@ def get_run_details(run_id: str) -> List[CanonicalMetrics]:
                 "suite_index": i,
                 "run_id": run_id,
                 "handshake_total_duration_ms": basic.get("handshake_ms", 0.0),
-                "success": basic.get("success", False),
+                "handshake_success": basic.get("success", False),
                 # Set required defaults if missing
                 "run_start_time_wall": ts,
                 "run_end_time_wall": ts,
@@ -132,10 +132,6 @@ def get_run_details(run_id: str) -> List[CanonicalMetrics]:
                 "packets_dropped": flat.get("packets_dropped", 0),
                 "packet_loss_ratio": flat.get("packet_loss_ratio", 0.0),
                 "packet_delivery_ratio": flat.get("packet_delivery_ratio", 0.0),
-                "one_way_latency_avg_ms": flat.get("one_way_latency_avg_ms", 0.0),
-                "one_way_latency_p50_ms": flat.get("one_way_latency_p50_ms", 0.0),
-                "one_way_latency_p95_ms": flat.get("one_way_latency_p95_ms", 0.0),
-                "one_way_latency_max_ms": flat.get("one_way_latency_max_ms", 0.0),
                  # Schema enforcement fix: fill missing required fields with 0/empty
                 "git_commit_hash": flat.get("git_commit_hash", "unknown"),
                 "git_dirty_flag": flat.get("git_dirty_flag", False),
@@ -154,11 +150,9 @@ def get_run_details(run_id: str) -> List[CanonicalMetrics]:
                  "sig_nist_level": basic.get("nist_level", "unknown"),
                   "suite_security_level": basic.get("nist_level", "unknown"),
                   "suite_selected_time": 0.0, "suite_activated_time": 0.0,
-                   "suite_traffic_start_time": 0.0, "suite_traffic_end_time": 0.0,
                    "suite_deactivated_time": 0.0,
                    "suite_total_duration_ms": 0.0, "suite_active_duration_ms": 0.0,
-                    "handshake_start_time_drone": 0.0, "handshake_end_time_drone": 0.0,
-                     "handshake_start_time_gcs": 0.0, "handshake_end_time_gcs": 0.0,
+                                        "handshake_start_time_drone": 0.0, "handshake_end_time_drone": 0.0,
                       "handshake_failure_reason": basic.get("error", ""),
                       "total_crypto_time_ms": 0.0,
                       "mavproxy_drone_start_time": 0.0, "mavproxy_drone_end_time": 0.0,
@@ -170,23 +164,19 @@ def get_run_details(run_id: str) -> List[CanonicalMetrics]:
                         "mavproxy_drone_cmd_sent_count": 0, "mavproxy_drone_cmd_ack_received_count": 0,
                          "mavproxy_drone_cmd_ack_latency_avg_ms": 0.0, "mavproxy_drone_cmd_ack_latency_p95_ms": 0.0,
                           "mavproxy_drone_stream_rate_hz": 0.0,
-                          "mavproxy_gcs_start_time": 0.0, "mavproxy_gcs_end_time": 0.0,
-                           "mavproxy_gcs_tx_pps": 0.0, "mavproxy_gcs_rx_pps": 0.0,
-                            "mavproxy_gcs_total_msgs_sent": 0, "mavproxy_gcs_total_msgs_received": 0,
-                             "mavproxy_gcs_seq_gap_count": 0,
-                              "mavproxy_gcs_cmd_sent_count": 0, "mavproxy_gcs_cmd_ack_received_count": 0,
-                               "mavproxy_gcs_cmd_ack_latency_avg_ms": 0.0, "mavproxy_gcs_cmd_ack_latency_p95_ms": 0.0,
+                                                    "mavproxy_gcs_total_msgs_received": 0,
+                                                     "mavproxy_gcs_seq_gap_count": 0,
                                 "mavlink_sysid": 0, "mavlink_compid": 0, "mavlink_protocol_version": 2,
                                  "mavlink_packet_crc_error_count": 0, "mavlink_decode_error_count": 0,
                                   "mavlink_msg_drop_count": 0, "mavlink_out_of_order_count": 0,
-                                   "mavlink_duplicate_count": 0, "mavlink_message_latency_avg_ms": 0.0,
+                                                                     "mavlink_duplicate_count": 0, "mavlink_message_latency_avg_ms": 0.0,
                                     "cpu_usage_avg_percent": 0.0, "cpu_usage_peak_percent": 0.0,
                                      "cpu_freq_mhz": 0.0, "memory_rss_mb": 0.0, "memory_vms_mb": 0.0,
                                       "thread_count": 0, "temperature_c": 0.0,
                                        "power_sensor_type": "none", "power_sampling_rate_hz": 0.0,
-                                        "power_avg_w": 0.0, "power_peak_w": 0.0,
-                                         "energy_total_j": 0.0, "energy_per_handshake_j": 0.0,
-                                          "log_sample_count": 0, "log_drop_count": 0, "metrics_sampling_rate_hz": 0.0,
+                                                                                "power_avg_w": 0.0, "power_peak_w": 0.0,
+                                                                                 "energy_total_j": 0.0, "energy_per_handshake_j": 0.0,
+                                                                                    "log_sample_count": 0, "metrics_sampling_rate_hz": 0.0,
                                            "expected_samples": 0, "collected_samples": 0, "lost_samples": 0,
                                             "success_rate_percent": 0.0, "benchmark_pass_fail": "FAIL"
             })

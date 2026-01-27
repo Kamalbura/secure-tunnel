@@ -46,6 +46,11 @@ from core.config import CONFIG
 from core.suites import get_suite, list_suites
 from core.process import ManagedProcess
 from core.clock_sync import ClockSync
+from core.mavlink_collector import MavLinkMetricsCollector, HAS_PYMAVLINK
+# GCS system metrics collection (runtime)
+from core.metrics_collectors import SystemCollector
+# Comprehensive metrics aggregator (GCS side)
+from core.metrics_aggregator import MetricsAggregator
 # NOTE: GCS system resource metrics removed per POLICY REALIGNMENT
 # GCS is non-constrained observer; only validation metrics retained
 
@@ -305,6 +310,66 @@ class GcsMavProxyManager:
 # influence policy decisions, suite ranking, or scheduler choices.
 # Collecting them adds overhead without policy value.
 # =============================================================================
+
+class GcsSystemMetricsCollector:
+    """Collects GCS system metrics during a suite run."""
+
+    def __init__(self, sample_interval_s: float = 0.5):
+        self._collector = SystemCollector()
+        self._interval = sample_interval_s
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._samples: List[Dict[str, Any]] = []
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._samples = []
+
+        def loop():
+            while self._running:
+                sample = self._collector.collect()
+                with self._lock:
+                    self._samples.append(sample)
+                time.sleep(self._interval)
+
+        self._thread = threading.Thread(target=loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> Dict[str, Any]:
+        if not self._running:
+            return {}
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1.0)
+
+        with self._lock:
+            samples = list(self._samples)
+
+        if not samples:
+            return {}
+
+        def _numeric(values: List[Any]) -> List[float]:
+            return [v for v in values if isinstance(v, (int, float))]
+
+        cpu_vals = _numeric([s.get("cpu_percent") for s in samples])
+        last = samples[-1]
+
+        return {
+            "cpu_usage_avg_percent": sum(cpu_vals) / len(cpu_vals) if cpu_vals else None,
+            "cpu_usage_peak_percent": max(cpu_vals) if cpu_vals else None,
+            "cpu_freq_mhz": last.get("cpu_freq_mhz"),
+            "memory_rss_mb": last.get("memory_rss_mb"),
+            "memory_vms_mb": last.get("memory_vms_mb"),
+            "thread_count": last.get("thread_count"),
+            "temperature_c": last.get("temperature_c"),
+            "uptime_s": last.get("uptime_s"),
+            "load_avg_1m": last.get("load_avg_1m"),
+            "load_avg_5m": last.get("load_avg_5m"),
+            "load_avg_15m": last.get("load_avg_15m"),
+        }
 # REMOVED METRICS:
 #   - cpu_avg_percent
 #   - cpu_peak_percent  
@@ -509,9 +574,15 @@ class GcsBenchmarkServer:
         # Components
         self.proxy = GcsProxyManager(logs_dir)
         self.mavproxy = GcsMavProxyManager(logs_dir, enable_gui=enable_gui)
-        # NOTE: GcsSystemMetricsCollector REMOVED - GCS resources not policy-relevant
-        self.mavlink_monitor = GcsMavLinkCollector()
+        self.mavlink_monitor = MavLinkMetricsCollector(role="gcs") if HAS_PYMAVLINK else None
+        self.mavlink_available = HAS_PYMAVLINK
         self.clock_sync = ClockSync()
+        self.system_metrics = GcsSystemMetricsCollector()
+        self.metrics_aggregator = MetricsAggregator(
+            role="gcs",
+            output_dir=str(LOGS_DIR / "comprehensive")
+        )
+        self.metrics_aggregator.set_run_id(run_id)
         
         # Server state
         self.server_sock: Optional[socket.socket] = None
@@ -522,6 +593,8 @@ class GcsBenchmarkServer:
         self.current_suite: Optional[str] = None
         self.handshake_start_time = 0.0
         self.suite_log = self.logs_dir / "gcs_suite_metrics.jsonl"
+
+        self._handshake_timeout_s = 45.0
     
     def start(self):
         """Start the benchmark server."""
@@ -614,9 +687,22 @@ class GcsBenchmarkServer:
             log(f"CMD: start_proxy({suite})")
             
             # Reset MAVLink validation counters
-            self.mavlink_monitor.reset()
+            if self.mavlink_monitor:
+                self.mavlink_monitor.start_sniffing(port=MAVLINK_SNIFF_PORT)
+
+            # Start GCS system sampling
+            self.system_metrics.start()
             
-            # Record handshake start
+            # Record suite start + handshake start (monotonic)
+            suite_config = get_suite(suite)
+            self.metrics_aggregator.start_suite(suite, suite_config)
+            self.metrics_aggregator.record_handshake_start()
+            self.metrics_aggregator.record_control_plane_metrics(
+                scheduler_action_type=cmd,
+                scheduler_action_reason="command",
+                policy_name="GcsBenchmarkServer",
+                policy_state="ACTIVE",
+            )
             self.handshake_start_time = time.time()
             
             # Ensure MAVProxy is running (restart if crashed)
@@ -629,6 +715,15 @@ class GcsBenchmarkServer:
                 return {"status": "error", "message": "proxy_start_failed"}
             
             self.current_suite = suite
+
+            # Wait for handshake completion to mark end time
+            if self._wait_for_handshake_ok(timeout_s=self._handshake_timeout_s):
+                self.metrics_aggregator.record_handshake_end(success=True)
+            else:
+                self.metrics_aggregator.record_handshake_end(
+                    success=False,
+                    failure_reason="handshake_timeout"
+                )
             
             return {
                 "status": "ok",
@@ -644,22 +739,58 @@ class GcsBenchmarkServer:
         elif cmd == "stop_suite":
             log("CMD: stop_suite")
             # Collect validation-only MAVLink metrics
-            mavlink_metrics = self.mavlink_monitor.stop()
+            mavlink_metrics = None
+            if self.mavlink_monitor:
+                mavlink_metrics = self.mavlink_monitor.stop()
+
+            # Collect GCS system metrics
+            system_gcs = self.system_metrics.stop()
 
             # Stop proxy
             self.proxy.stop()
             
             # Restart MAVLink monitor for next suite
-            self.mavlink_monitor = GcsMavLinkCollector()
-            self.mavlink_monitor.start()
+            if self.mavlink_available:
+                self.mavlink_monitor = MavLinkMetricsCollector(role="gcs")
+                self.mavlink_monitor.start_sniffing(port=MAVLINK_SNIFF_PORT)
 
             proxy_status = self._read_proxy_status()
+            mavlink_validation = None
+            latency_metrics = None
+            if mavlink_metrics:
+                mavlink_validation = {
+                    "total_msgs_received": mavlink_metrics.get("total_msgs_received"),
+                    "seq_gap_count": mavlink_metrics.get("seq_gap_count"),
+                }
+                latency_metrics = {
+                    "one_way_latency_avg_ms": mavlink_metrics.get("one_way_latency_avg_ms"),
+                    "one_way_latency_p95_ms": mavlink_metrics.get("one_way_latency_p95_ms"),
+                    "jitter_avg_ms": mavlink_metrics.get("jitter_avg_ms"),
+                    "jitter_p95_ms": mavlink_metrics.get("jitter_p95_ms"),
+                    "latency_sample_count": mavlink_metrics.get("latency_sample_count"),
+                    "latency_invalid_reason": mavlink_metrics.get("latency_invalid_reason"),
+                    "rtt_avg_ms": mavlink_metrics.get("rtt_avg_ms"),
+                    "rtt_p95_ms": mavlink_metrics.get("rtt_p95_ms"),
+                    "rtt_sample_count": mavlink_metrics.get("rtt_sample_count"),
+                    "rtt_invalid_reason": mavlink_metrics.get("rtt_invalid_reason"),
+                }
+
             payload = {
                 "status": "ok",
                 "suite": self.current_suite,
-                "mavlink_validation": mavlink_metrics,
+                "mavlink_validation": mavlink_validation,
+                "latency_jitter": latency_metrics,
+                "system_gcs": system_gcs,
                 "proxy_status": proxy_status,
             }
+
+            self.metrics_aggregator.record_control_plane_metrics(
+                scheduler_action_type=cmd,
+                scheduler_action_reason="command",
+                policy_name="GcsBenchmarkServer",
+                policy_state="ADVANCE",
+            )
+            self.metrics_aggregator.finalize_suite()
 
             try:
                 with open(self.suite_log, "a", encoding="utf-8") as fh:
@@ -706,6 +837,17 @@ class GcsBenchmarkServer:
                 return json.load(fh)
         except Exception:
             return {}
+
+    def _wait_for_handshake_ok(self, timeout_s: float = 45.0) -> bool:
+        """Wait for proxy status to show handshake completion."""
+        deadline = time.monotonic() + float(timeout_s)
+        while time.monotonic() < deadline:
+            status = self._read_proxy_status()
+            state = status.get("status") if isinstance(status, dict) else None
+            if state in {"handshake_ok", "running"}:
+                return True
+            time.sleep(0.2)
+        return False
 
 # =============================================================================
 # Main Entry Point

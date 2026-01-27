@@ -41,7 +41,10 @@ router = APIRouter(prefix="/api", tags=["api"])
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     return HealthResponse(
         status="ok",
         suites_loaded=store.suite_count,
@@ -56,7 +59,10 @@ async def health_check():
 @router.get("/runs", response_model=List[RunSummary])
 async def list_runs():
     """List all benchmark runs."""
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     return store.list_runs()
 
 
@@ -73,7 +79,10 @@ async def list_suites(
     run_id: Optional[str] = Query(None, description="Filter by run ID")
 ):
     """List all suites with optional filtering."""
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     return store.list_suites(
         kem_family=kem_family,
         sig_family=sig_family,
@@ -86,7 +95,10 @@ async def list_suites(
 @router.get("/suites/filters")
 async def get_suite_filters():
     """Get available filter values."""
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     return {
         "kem_families": store.get_unique_values("kem_family"),
         "sig_families": store.get_unique_values("sig_family"),
@@ -104,7 +116,10 @@ async def get_suite(suite_key: str):
     - Composite key: "run_id:suite_id"
     - Just suite_id (returns first match)
     """
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     
     if ":" in suite_key:
         suite = store.get_suite_by_key(suite_key)
@@ -120,7 +135,10 @@ async def get_suite(suite_key: str):
 @router.get("/suite/{suite_key}/drone-vs-gcs")
 async def get_suite_drone_vs_gcs(suite_key: str):
     """Get drone vs GCS comparison for a suite."""
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     
     if ":" in suite_key:
         suite = store.get_suite_by_key(suite_key)
@@ -147,7 +165,10 @@ async def compare_two_suites(
     
     Returns both suite data and computed differences.
     """
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     
     # Get suite A
     if ":" in suite_a:
@@ -189,7 +210,10 @@ async def aggregate_by_kem(
     
     This is an explicit aggregation - data is grouped only when requested.
     """
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     suites = [
         store.get_suite_by_key(key) 
         for key in store._suites.keys()
@@ -226,7 +250,10 @@ async def aggregate_by_nist(
     
     This is an explicit aggregation - data is grouped only when requested.
     """
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     suites = [
         store.get_suite_by_key(key) 
         for key in store._suites.keys()
@@ -266,7 +293,10 @@ async def get_schema():
 @router.get("/metrics/load-errors")
 async def get_load_errors():
     """Get any errors encountered during data loading."""
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     return {
         "errors": [
             {"file": f, "line": l, "error": e}
@@ -305,7 +335,10 @@ async def get_comparison_buckets(
     
     All buckets contain suite keys in format "run_id:suite_id".
     """
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     suites = store.list_suites(run_id=run_id)
     
     # Initialize bucket structures

@@ -522,6 +522,11 @@ class BenchmarkScheduler:
             return True
         else:
             log(f"  Handshake timeout/failed", "WARN")
+            if self.metrics_aggregator:
+                try:
+                    self.metrics_aggregator.record_handshake_end(success=False, failure_reason="handshake_timeout")
+                except Exception:
+                    pass
             self._log_result(suite_name, {}, success=False, error="handshake_timeout")
             self._finalize_metrics(success=False, error="handshake_timeout")
             return False

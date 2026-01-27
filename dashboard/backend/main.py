@@ -5,11 +5,11 @@ import logging
 
 # Handle imports depending on how run (module vs script)
 try:
-    from .schemas import RunSummary, CanonicalMetrics
-    from .ingest import ingest_all_runs, get_run_details
+    from .models import RunSummary, ComprehensiveSuiteMetrics
+    from .ingest import get_store
 except ImportError:
-    from schemas import RunSummary, CanonicalMetrics
-    from ingest import ingest_all_runs, get_run_details
+    from models import RunSummary, ComprehensiveSuiteMetrics
+    from ingest import get_store
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dashboard")
@@ -36,13 +36,14 @@ def read_root():
 @app.get("/api/runs", response_model=List[RunSummary])
 def list_runs():
     """List all available benchmark runs."""
-    runs = ingest_all_runs()
-    return runs
+    store = get_store()
+    return store.list_runs()
 
-@app.get("/api/runs/{run_id}/suites", response_model=List[CanonicalMetrics])
+@app.get("/api/runs/{run_id}/suites", response_model=List[ComprehensiveSuiteMetrics])
 def get_run_suites(run_id: str):
     """Get detailed forensic metrics for a run."""
-    suites = get_run_details(run_id)
+    store = get_store()
+    suites = [s for s in store._suites.values() if s.run_context.run_id == run_id]
     if not suites:
         raise HTTPException(status_code=404, detail="Run not found or invalid data")
     return suites

@@ -56,6 +56,12 @@ METRIC_UNITS = {
     "packets_dropped": "count",
     "suite_total_duration_ms": "ms",
     "suite_active_duration_ms": "ms",
+    "one_way_latency_avg_ms": "ms",
+    "one_way_latency_p95_ms": "ms",
+    "jitter_avg_ms": "ms",
+    "jitter_p95_ms": "ms",
+    "rtt_avg_ms": "ms",
+    "rtt_p95_ms": "ms",
 }
 
 
@@ -114,18 +120,17 @@ def compare_suites(
     
     Returns a ComparisonResult with both suites and computed differences.
     """
-    diff_handshake = (
-        suite_b.handshake.handshake_total_duration_ms -
-        suite_a.handshake.handshake_total_duration_ms
-    )
-    diff_power = (
-        suite_b.power_energy.power_avg_w -
-        suite_a.power_energy.power_avg_w
-    )
-    diff_energy = (
-        suite_b.power_energy.energy_total_j -
-        suite_a.power_energy.energy_total_j
-    )
+    diff_handshake = None
+    if suite_a.handshake.handshake_total_duration_ms is not None and suite_b.handshake.handshake_total_duration_ms is not None:
+        diff_handshake = suite_b.handshake.handshake_total_duration_ms - suite_a.handshake.handshake_total_duration_ms
+
+    diff_power = None
+    if suite_a.power_energy.power_avg_w is not None and suite_b.power_energy.power_avg_w is not None:
+        diff_power = suite_b.power_energy.power_avg_w - suite_a.power_energy.power_avg_w
+
+    diff_energy = None
+    if suite_a.power_energy.energy_total_j is not None and suite_b.power_energy.energy_total_j is not None:
+        diff_energy = suite_b.power_energy.energy_total_j - suite_a.power_energy.energy_total_j
     
     return ComparisonResult(
         suite_a=suite_a,
@@ -195,6 +200,7 @@ def extract_gcs_metrics(suite: ComprehensiveSuiteMetrics) -> Dict[str, Any]:
     """
     return {
         "mavproxy": suite.mavproxy_gcs.model_dump(),
+        "system": suite.system_gcs.model_dump(),
     }
 
 
@@ -219,7 +225,7 @@ def get_drone_vs_gcs_summary(suite: ComprehensiveSuiteMetrics) -> Dict[str, Any]
             "seq_gaps_reliability": ReliabilityClass.CONDITIONAL.value,
         },
         "cross_side": {
-            "msg_delivery_ratio": gcs_msgs / drone_msgs if drone_msgs > 0 else None,
+            "msg_delivery_ratio": gcs_msgs / drone_msgs if isinstance(drone_msgs, (int, float)) and drone_msgs > 0 and isinstance(gcs_msgs, (int, float)) else None,
         }
     }
 

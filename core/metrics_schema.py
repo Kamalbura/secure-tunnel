@@ -47,19 +47,19 @@ class RunContextMetrics:
     run_id: str = ""
     suite_id: str = ""
     suite_index: int = 0
-    git_commit_hash: str = ""
-    git_dirty_flag: bool = False
-    gcs_hostname: str = ""
-    drone_hostname: str = ""
-    gcs_ip: str = ""
-    drone_ip: str = ""
-    python_env_gcs: str = ""
-    python_env_drone: str = ""
-    liboqs_version: str = ""
-    kernel_version_gcs: str = ""
-    kernel_version_drone: str = ""
-    clock_offset_ms: float = 0.0
-    clock_offset_method: str = "ntp"
+    git_commit_hash: Optional[str] = None
+    git_dirty_flag: Optional[bool] = None
+    gcs_hostname: Optional[str] = None
+    drone_hostname: Optional[str] = None
+    gcs_ip: Optional[str] = None
+    drone_ip: Optional[str] = None
+    python_env_gcs: Optional[str] = None
+    python_env_drone: Optional[str] = None
+    liboqs_version: Optional[str] = None
+    kernel_version_gcs: Optional[str] = None
+    kernel_version_drone: Optional[str] = None
+    clock_offset_ms: Optional[float] = None
+    clock_offset_method: Optional[str] = None
     run_start_time_wall: str = ""
     run_end_time_wall: str = ""
     run_start_time_mono: float = 0.0
@@ -73,14 +73,14 @@ class RunContextMetrics:
 @dataclass
 class SuiteCryptoIdentity:
     """Cryptographic identity and parameters for the suite."""
-    kem_algorithm: str = ""
-    kem_family: str = ""
-    kem_nist_level: str = ""
-    sig_algorithm: str = ""
-    sig_family: str = ""
-    sig_nist_level: str = ""
-    aead_algorithm: str = ""
-    suite_security_level: str = ""
+    kem_algorithm: Optional[str] = None
+    kem_family: Optional[str] = None
+    kem_nist_level: Optional[str] = None
+    sig_algorithm: Optional[str] = None
+    sig_family: Optional[str] = None
+    sig_nist_level: Optional[str] = None
+    aead_algorithm: Optional[str] = None
+    suite_security_level: Optional[str] = None
 
 
 # =============================================================================
@@ -104,11 +104,11 @@ class SuiteLifecycleTimeline:
 @dataclass
 class HandshakeMetrics:
     """Handshake timing and status."""
-    handshake_start_time_drone: float = 0.0
-    handshake_end_time_drone: float = 0.0
-    handshake_total_duration_ms: float = 0.0
-    handshake_success: bool = False
-    handshake_failure_reason: str = ""
+    handshake_start_time_drone: Optional[float] = None
+    handshake_end_time_drone: Optional[float] = None
+    handshake_total_duration_ms: Optional[float] = None
+    handshake_success: Optional[bool] = None
+    handshake_failure_reason: Optional[str] = None
 
 
 # =============================================================================
@@ -118,25 +118,25 @@ class HandshakeMetrics:
 @dataclass
 class CryptoPrimitiveBreakdown:
     """Detailed timing for each cryptographic primitive."""
-    kem_keygen_time_ms: float = 0.0
-    kem_encapsulation_time_ms: float = 0.0
-    kem_decapsulation_time_ms: float = 0.0
-    signature_sign_time_ms: float = 0.0
-    signature_verify_time_ms: float = 0.0
-    total_crypto_time_ms: float = 0.0
+    kem_keygen_time_ms: Optional[float] = None
+    kem_encapsulation_time_ms: Optional[float] = None
+    kem_decapsulation_time_ms: Optional[float] = None
+    signature_sign_time_ms: Optional[float] = None
+    signature_verify_time_ms: Optional[float] = None
+    total_crypto_time_ms: Optional[float] = None
     
     # Extended primitive timing (nanoseconds for precision)
-    kem_keygen_ns: int = 0
-    kem_encaps_ns: int = 0
-    kem_decaps_ns: int = 0
-    sig_sign_ns: int = 0
-    sig_verify_ns: int = 0
+    kem_keygen_ns: Optional[int] = None
+    kem_encaps_ns: Optional[int] = None
+    kem_decaps_ns: Optional[int] = None
+    sig_sign_ns: Optional[int] = None
+    sig_verify_ns: Optional[int] = None
     
     # Artifact sizes
-    pub_key_size_bytes: int = 0
-    ciphertext_size_bytes: int = 0
-    sig_size_bytes: int = 0
-    shared_secret_size_bytes: int = 0
+    pub_key_size_bytes: Optional[int] = None
+    ciphertext_size_bytes: Optional[int] = None
+    sig_size_bytes: Optional[int] = None
+    shared_secret_size_bytes: Optional[int] = None
 
 
 # =============================================================================
@@ -146,13 +146,13 @@ class CryptoPrimitiveBreakdown:
 @dataclass
 class RekeyMetrics:
     """Rekey operation metrics."""
-    rekey_attempts: int = 0
-    rekey_success: int = 0
-    rekey_failure: int = 0
-    rekey_interval_ms: float = 0.0
-    rekey_duration_ms: float = 0.0
-    rekey_blackout_duration_ms: float = 0.0
-    rekey_trigger_reason: str = ""
+    rekey_attempts: Optional[int] = None
+    rekey_success: Optional[int] = None
+    rekey_failure: Optional[int] = None
+    rekey_interval_ms: Optional[float] = None
+    rekey_duration_ms: Optional[float] = None
+    rekey_blackout_duration_ms: Optional[float] = None
+    rekey_trigger_reason: Optional[str] = None
 
 
 # =============================================================================
@@ -162,35 +162,35 @@ class RekeyMetrics:
 @dataclass
 class DataPlaneMetrics:
     """Proxy-level data plane metrics."""
-    achieved_throughput_mbps: float = 0.0
-    goodput_mbps: float = 0.0
-    wire_rate_mbps: float = 0.0
-    packets_sent: int = 0
-    packets_received: int = 0
-    packets_dropped: int = 0
-    packet_loss_ratio: float = 0.0
-    packet_delivery_ratio: float = 0.0
-    replay_drop_count: int = 0
-    decode_failure_count: int = 0
+    achieved_throughput_mbps: Optional[float] = None
+    goodput_mbps: Optional[float] = None
+    wire_rate_mbps: Optional[float] = None
+    packets_sent: Optional[int] = None
+    packets_received: Optional[int] = None
+    packets_dropped: Optional[int] = None
+    packet_loss_ratio: Optional[float] = None
+    packet_delivery_ratio: Optional[float] = None
+    replay_drop_count: Optional[int] = None
+    decode_failure_count: Optional[int] = None
     
     # Detailed packet counters
-    ptx_in: int = 0  # Plaintext in
-    ptx_out: int = 0  # Plaintext out
-    enc_in: int = 0  # Encrypted in
-    enc_out: int = 0  # Encrypted out
-    drop_replay: int = 0
-    drop_auth: int = 0
-    drop_header: int = 0
+    ptx_in: Optional[int] = None  # Plaintext in
+    ptx_out: Optional[int] = None  # Plaintext out
+    enc_in: Optional[int] = None  # Encrypted in
+    enc_out: Optional[int] = None  # Encrypted out
+    drop_replay: Optional[int] = None
+    drop_auth: Optional[int] = None
+    drop_header: Optional[int] = None
     
     # Byte counters
-    bytes_sent: int = 0
-    bytes_received: int = 0
+    bytes_sent: Optional[int] = None
+    bytes_received: Optional[int] = None
     
     # AEAD timing
-    aead_encrypt_avg_ns: float = 0.0
-    aead_decrypt_avg_ns: float = 0.0
-    aead_encrypt_count: int = 0
-    aead_decrypt_count: int = 0
+    aead_encrypt_avg_ns: Optional[float] = None
+    aead_decrypt_avg_ns: Optional[float] = None
+    aead_encrypt_count: Optional[int] = None
+    aead_decrypt_count: Optional[int] = None
 
 
 # =============================================================================
@@ -198,6 +198,21 @@ class DataPlaneMetrics:
 # =============================================================================
 
 @dataclass
+class LatencyJitterMetrics:
+    """Latency and jitter derived from MAVLink traffic."""
+    one_way_latency_avg_ms: Optional[float] = None
+    one_way_latency_p95_ms: Optional[float] = None
+    jitter_avg_ms: Optional[float] = None
+    jitter_p95_ms: Optional[float] = None
+    latency_sample_count: Optional[int] = None
+    latency_invalid_reason: Optional[str] = None
+
+    rtt_avg_ms: Optional[float] = None
+    rtt_p95_ms: Optional[float] = None
+    rtt_sample_count: Optional[int] = None
+    rtt_invalid_reason: Optional[str] = None
+
+
 # =============================================================================
 # I. MAVPROXY APPLICATION LAYER — DRONE SIDE
 # =============================================================================
@@ -205,21 +220,21 @@ class DataPlaneMetrics:
 @dataclass
 class MavProxyDroneMetrics:
     """MAVProxy metrics from the drone side."""
-    mavproxy_drone_start_time: float = 0.0
-    mavproxy_drone_end_time: float = 0.0
-    mavproxy_drone_tx_pps: float = 0.0
-    mavproxy_drone_rx_pps: float = 0.0
-    mavproxy_drone_total_msgs_sent: int = 0
-    mavproxy_drone_total_msgs_received: int = 0
-    mavproxy_drone_msg_type_counts: Dict[str, int] = field(default_factory=dict)
-    mavproxy_drone_heartbeat_interval_ms: float = 0.0
-    mavproxy_drone_heartbeat_loss_count: int = 0
-    mavproxy_drone_seq_gap_count: int = 0
-    mavproxy_drone_cmd_sent_count: int = 0
-    mavproxy_drone_cmd_ack_received_count: int = 0
-    mavproxy_drone_cmd_ack_latency_avg_ms: float = 0.0
-    mavproxy_drone_cmd_ack_latency_p95_ms: float = 0.0
-    mavproxy_drone_stream_rate_hz: float = 0.0
+    mavproxy_drone_start_time: Optional[float] = None
+    mavproxy_drone_end_time: Optional[float] = None
+    mavproxy_drone_tx_pps: Optional[float] = None
+    mavproxy_drone_rx_pps: Optional[float] = None
+    mavproxy_drone_total_msgs_sent: Optional[int] = None
+    mavproxy_drone_total_msgs_received: Optional[int] = None
+    mavproxy_drone_msg_type_counts: Optional[Dict[str, int]] = None
+    mavproxy_drone_heartbeat_interval_ms: Optional[float] = None
+    mavproxy_drone_heartbeat_loss_count: Optional[int] = None
+    mavproxy_drone_seq_gap_count: Optional[int] = None
+    mavproxy_drone_cmd_sent_count: Optional[int] = None
+    mavproxy_drone_cmd_ack_received_count: Optional[int] = None
+    mavproxy_drone_cmd_ack_latency_avg_ms: Optional[float] = None
+    mavproxy_drone_cmd_ack_latency_p95_ms: Optional[float] = None
+    mavproxy_drone_stream_rate_hz: Optional[float] = None
 
 
 # =============================================================================
@@ -249,8 +264,8 @@ class MavProxyGcsMetrics:
     GCS deep introspection removed as non-policy-relevant.
     """
     # VALIDATION metrics (retained)
-    mavproxy_gcs_total_msgs_received: int = 0
-    mavproxy_gcs_seq_gap_count: int = 0
+    mavproxy_gcs_total_msgs_received: Optional[int] = None
+    mavproxy_gcs_seq_gap_count: Optional[int] = None
 
 
 # =============================================================================
@@ -260,15 +275,15 @@ class MavProxyGcsMetrics:
 @dataclass
 class MavLinkIntegrityMetrics:
     """MAVLink protocol integrity metrics."""
-    mavlink_sysid: int = 0
-    mavlink_compid: int = 0
-    mavlink_protocol_version: str = ""
-    mavlink_packet_crc_error_count: int = 0
-    mavlink_decode_error_count: int = 0
-    mavlink_msg_drop_count: int = 0
-    mavlink_out_of_order_count: int = 0
-    mavlink_duplicate_count: int = 0
-    mavlink_message_latency_avg_ms: float = 0.0
+    mavlink_sysid: Optional[int] = None
+    mavlink_compid: Optional[int] = None
+    mavlink_protocol_version: Optional[str] = None
+    mavlink_packet_crc_error_count: Optional[int] = None
+    mavlink_decode_error_count: Optional[int] = None
+    mavlink_msg_drop_count: Optional[int] = None
+    mavlink_out_of_order_count: Optional[int] = None
+    mavlink_duplicate_count: Optional[int] = None
+    mavlink_message_latency_avg_ms: Optional[float] = None
 
 
 # =============================================================================
@@ -278,16 +293,16 @@ class MavLinkIntegrityMetrics:
 @dataclass
 class FlightControllerTelemetry:
     """Flight controller telemetry from the drone."""
-    fc_mode: str = ""
-    fc_armed_state: bool = False
-    fc_heartbeat_age_ms: float = 0.0
-    fc_attitude_update_rate_hz: float = 0.0
-    fc_position_update_rate_hz: float = 0.0
-    fc_battery_voltage_v: float = 0.0
-    fc_battery_current_a: float = 0.0
-    fc_battery_remaining_percent: float = 0.0
-    fc_cpu_load_percent: float = 0.0
-    fc_sensor_health_flags: int = 0
+    fc_mode: Optional[str] = None
+    fc_armed_state: Optional[bool] = None
+    fc_heartbeat_age_ms: Optional[float] = None
+    fc_attitude_update_rate_hz: Optional[float] = None
+    fc_position_update_rate_hz: Optional[float] = None
+    fc_battery_voltage_v: Optional[float] = None
+    fc_battery_current_a: Optional[float] = None
+    fc_battery_remaining_percent: Optional[float] = None
+    fc_cpu_load_percent: Optional[float] = None
+    fc_sensor_health_flags: Optional[int] = None
 
 
 # =============================================================================
@@ -297,11 +312,13 @@ class FlightControllerTelemetry:
 @dataclass
 class ControlPlaneMetrics:
     """Scheduler and control plane metrics."""
-    scheduler_tick_interval_ms: float = 0.0
-    policy_name: str = ""
-    policy_state: str = ""
-    policy_suite_index: int = 0
-    policy_total_suites: int = 0
+    scheduler_tick_interval_ms: Optional[float] = None
+    scheduler_action_type: Optional[str] = None
+    scheduler_action_reason: Optional[str] = None
+    policy_name: Optional[str] = None
+    policy_state: Optional[str] = None
+    policy_suite_index: Optional[int] = None
+    policy_total_suites: Optional[int] = None
 
 
 # =============================================================================
@@ -311,19 +328,19 @@ class ControlPlaneMetrics:
 @dataclass
 class SystemResourcesDrone:
     """System resource metrics from the drone."""
-    cpu_usage_avg_percent: float = 0.0
-    cpu_usage_peak_percent: float = 0.0
-    cpu_freq_mhz: float = 0.0
-    memory_rss_mb: float = 0.0
-    memory_vms_mb: float = 0.0
-    thread_count: int = 0
-    temperature_c: float = 0.0
+    cpu_usage_avg_percent: Optional[float] = None
+    cpu_usage_peak_percent: Optional[float] = None
+    cpu_freq_mhz: Optional[float] = None
+    memory_rss_mb: Optional[float] = None
+    memory_vms_mb: Optional[float] = None
+    thread_count: Optional[int] = None
+    temperature_c: Optional[float] = None
     
     # Extended system info
-    uptime_s: float = 0.0
-    load_avg_1m: float = 0.0
-    load_avg_5m: float = 0.0
-    load_avg_15m: float = 0.0
+    uptime_s: Optional[float] = None
+    load_avg_1m: Optional[float] = None
+    load_avg_5m: Optional[float] = None
+    load_avg_15m: Optional[float] = None
 
 
 # =============================================================================
@@ -343,6 +360,22 @@ class SystemResourcesDrone:
 # without explicit policy justification.
 # =============================================================================
 
+
+@dataclass
+class SystemResourcesGcs:
+    """System resource metrics from the GCS."""
+    cpu_usage_avg_percent: Optional[float] = None
+    cpu_usage_peak_percent: Optional[float] = None
+    cpu_freq_mhz: Optional[float] = None
+    memory_rss_mb: Optional[float] = None
+    memory_vms_mb: Optional[float] = None
+    thread_count: Optional[int] = None
+    temperature_c: Optional[float] = None
+    uptime_s: Optional[float] = None
+    load_avg_1m: Optional[float] = None
+    load_avg_5m: Optional[float] = None
+    load_avg_15m: Optional[float] = None
+
 # =============================================================================
 # P. POWER & ENERGY (DRONE)
 # =============================================================================
@@ -350,14 +383,14 @@ class SystemResourcesDrone:
 @dataclass
 class PowerEnergyMetrics:
     """Power and energy measurements from the drone."""
-    power_sensor_type: str = ""  # "ina219", "rpi5_pmic", "rpi5_hwmon", "none"
-    power_sampling_rate_hz: float = 0.0
-    voltage_avg_v: float = 0.0
-    current_avg_a: float = 0.0
-    power_avg_w: float = 0.0
-    power_peak_w: float = 0.0
-    energy_total_j: float = 0.0
-    energy_per_handshake_j: float = 0.0
+    power_sensor_type: Optional[str] = None  # "ina219", "rpi5_pmic", "rpi5_hwmon", "none"
+    power_sampling_rate_hz: Optional[float] = None
+    voltage_avg_v: Optional[float] = None
+    current_avg_a: Optional[float] = None
+    power_avg_w: Optional[float] = None
+    power_peak_w: Optional[float] = None
+    energy_total_j: Optional[float] = None
+    energy_per_handshake_j: Optional[float] = None
 
 
 # =============================================================================
@@ -367,13 +400,13 @@ class PowerEnergyMetrics:
 @dataclass
 class ObservabilityMetrics:
     """Logging and observability metrics."""
-    log_sample_count: int = 0
-    metrics_sampling_rate_hz: float = 0.0
+    log_sample_count: Optional[int] = None
+    metrics_sampling_rate_hz: Optional[float] = None
     
     # Collection timestamps
-    collection_start_time: float = 0.0
-    collection_end_time: float = 0.0
-    collection_duration_ms: float = 0.0
+    collection_start_time: Optional[float] = None
+    collection_end_time: Optional[float] = None
+    collection_duration_ms: Optional[float] = None
 
 
 # =============================================================================
@@ -383,11 +416,12 @@ class ObservabilityMetrics:
 @dataclass
 class ValidationMetrics:
     """Validation and integrity check results."""
-    expected_samples: int = 0
-    collected_samples: int = 0
-    lost_samples: int = 0
-    success_rate_percent: float = 0.0
-    benchmark_pass_fail: str = ""
+    expected_samples: Optional[int] = None
+    collected_samples: Optional[int] = None
+    lost_samples: Optional[int] = None
+    success_rate_percent: Optional[float] = None
+    benchmark_pass_fail: Optional[str] = None
+    metric_status: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -420,6 +454,9 @@ class ComprehensiveSuiteMetrics:
     
     # G. Data Plane (Proxy Level)
     data_plane: DataPlaneMetrics = field(default_factory=DataPlaneMetrics)
+
+    # H. Latency & Jitter
+    latency_jitter: LatencyJitterMetrics = field(default_factory=LatencyJitterMetrics)
     
     # I. MAVProxy Drone
     mavproxy_drone: MavProxyDroneMetrics = field(default_factory=MavProxyDroneMetrics)
@@ -438,6 +475,9 @@ class ComprehensiveSuiteMetrics:
     
     # N. System Resources Drone
     system_drone: SystemResourcesDrone = field(default_factory=SystemResourcesDrone)
+
+    # O. System Resources GCS
+    system_gcs: SystemResourcesGcs = field(default_factory=SystemResourcesGcs)
     
     # P. Power & Energy
     power_energy: PowerEnergyMetrics = field(default_factory=PowerEnergyMetrics)
@@ -480,6 +520,8 @@ class ComprehensiveSuiteMetrics:
             metrics.rekey = RekeyMetrics(**data['rekey'])
         if 'data_plane' in data:
             metrics.data_plane = DataPlaneMetrics(**data['data_plane'])
+        if 'latency_jitter' in data:
+            metrics.latency_jitter = LatencyJitterMetrics(**data['latency_jitter'])
         if 'mavproxy_drone' in data:
             metrics.mavproxy_drone = MavProxyDroneMetrics(**data['mavproxy_drone'])
         if 'mavproxy_gcs' in data:
@@ -492,6 +534,8 @@ class ComprehensiveSuiteMetrics:
             metrics.control_plane = ControlPlaneMetrics(**data['control_plane'])
         if 'system_drone' in data:
             metrics.system_drone = SystemResourcesDrone(**data['system_drone'])
+        if 'system_gcs' in data:
+            metrics.system_gcs = SystemResourcesGcs(**data['system_gcs'])
         if 'power_energy' in data:
             metrics.power_energy = PowerEnergyMetrics(**data['power_energy'])
         if 'observability' in data:

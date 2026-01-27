@@ -9,6 +9,7 @@
 // =============================================================================
 
 export type ReliabilityClass = 'VERIFIED' | 'CONDITIONAL' | 'DEPRECATED' | 'MISSING';
+export type MetricStatus = { status: 'not_collected' | 'invalid' | 'not_implemented'; reason?: string };
 
 // =============================================================================
 // A. RUN & CONTEXT METRICS
@@ -18,19 +19,19 @@ export interface RunContextMetrics {
     run_id: string;
     suite_id: string;
     suite_index: number;
-    git_commit_hash: string;
-    git_dirty_flag: boolean;
-    gcs_hostname: string;
-    drone_hostname: string;
-    gcs_ip: string;
-    drone_ip: string;
-    python_env_gcs: string;
-    python_env_drone: string;
-    liboqs_version: string;
-    kernel_version_gcs: string;
-    kernel_version_drone: string;
-    clock_offset_ms: number;
-    clock_offset_method: string;
+    git_commit_hash: string | null;
+    git_dirty_flag: boolean | null;
+    gcs_hostname: string | null;
+    drone_hostname: string | null;
+    gcs_ip: string | null;
+    drone_ip: string | null;
+    python_env_gcs: string | null;
+    python_env_drone: string | null;
+    liboqs_version: string | null;
+    kernel_version_gcs: string | null;
+    kernel_version_drone: string | null;
+    clock_offset_ms: number | null;
+    clock_offset_method: string | null;
     run_start_time_wall: string;
     run_end_time_wall: string;
     run_start_time_mono: number;
@@ -42,14 +43,14 @@ export interface RunContextMetrics {
 // =============================================================================
 
 export interface SuiteCryptoIdentity {
-    kem_algorithm: string;
-    kem_family: string;
-    kem_nist_level: string;
-    sig_algorithm: string;
-    sig_family: string;
-    sig_nist_level: string;
-    aead_algorithm: string;
-    suite_security_level: string;
+    kem_algorithm: string | null;
+    kem_family: string | null;
+    kem_nist_level: string | null;
+    sig_algorithm: string | null;
+    sig_family: string | null;
+    sig_nist_level: string | null;
+    aead_algorithm: string | null;
+    suite_security_level: string | null;
 }
 
 // =============================================================================
@@ -69,11 +70,11 @@ export interface SuiteLifecycleTimeline {
 // =============================================================================
 
 export interface HandshakeMetrics {
-    handshake_start_time_drone: number;
-    handshake_end_time_drone: number;
-    handshake_total_duration_ms: number;
-    handshake_success: boolean;
-    handshake_failure_reason: string;
+    handshake_start_time_drone: number | null;
+    handshake_end_time_drone: number | null;
+    handshake_total_duration_ms: number | null;
+    handshake_success: boolean | null;
+    handshake_failure_reason: string | null;
 }
 
 // =============================================================================
@@ -81,21 +82,21 @@ export interface HandshakeMetrics {
 // =============================================================================
 
 export interface CryptoPrimitiveBreakdown {
-    kem_keygen_time_ms: number;
-    kem_encapsulation_time_ms: number;
-    kem_decapsulation_time_ms: number;
-    signature_sign_time_ms: number;
-    signature_verify_time_ms: number;
-    total_crypto_time_ms: number;
-    kem_keygen_ns: number;
-    kem_encaps_ns: number;
-    kem_decaps_ns: number;
-    sig_sign_ns: number;
-    sig_verify_ns: number;
-    pub_key_size_bytes: number;
-    ciphertext_size_bytes: number;
-    sig_size_bytes: number;
-    shared_secret_size_bytes: number;
+    kem_keygen_time_ms: number | null;
+    kem_encapsulation_time_ms: number | null;
+    kem_decapsulation_time_ms: number | null;
+    signature_sign_time_ms: number | null;
+    signature_verify_time_ms: number | null;
+    total_crypto_time_ms: number | null;
+    kem_keygen_ns: number | null;
+    kem_encaps_ns: number | null;
+    kem_decaps_ns: number | null;
+    sig_sign_ns: number | null;
+    sig_verify_ns: number | null;
+    pub_key_size_bytes: number | null;
+    ciphertext_size_bytes: number | null;
+    sig_size_bytes: number | null;
+    shared_secret_size_bytes: number | null;
 }
 
 // =============================================================================
@@ -103,13 +104,13 @@ export interface CryptoPrimitiveBreakdown {
 // =============================================================================
 
 export interface RekeyMetrics {
-    rekey_attempts: number;
-    rekey_success: number;
-    rekey_failure: number;
-    rekey_interval_ms: number;
-    rekey_duration_ms: number;
-    rekey_blackout_duration_ms: number;
-    rekey_trigger_reason: string;
+    rekey_attempts: number | null;
+    rekey_success: number | null;
+    rekey_failure: number | null;
+    rekey_interval_ms: number | null;
+    rekey_duration_ms: number | null;
+    rekey_blackout_duration_ms: number | null;
+    rekey_trigger_reason: string | null;
 }
 
 // =============================================================================
@@ -117,55 +118,68 @@ export interface RekeyMetrics {
 // =============================================================================
 
 export interface DataPlaneMetrics {
-    achieved_throughput_mbps: number;
-    goodput_mbps: number;
-    wire_rate_mbps: number;
-    packets_sent: number;
-    packets_received: number;
-    packets_dropped: number;
-    packet_loss_ratio: number;
-    packet_delivery_ratio: number;
-    replay_drop_count: number;
-    decode_failure_count: number;
-    ptx_in: number;
-    ptx_out: number;
-    enc_in: number;
-    enc_out: number;
-    drop_replay: number;
-    drop_auth: number;
-    drop_header: number;
-    bytes_sent: number;
-    bytes_received: number;
-    aead_encrypt_avg_ns: number;
-    aead_decrypt_avg_ns: number;
-    aead_encrypt_count: number;
-    aead_decrypt_count: number;
+    achieved_throughput_mbps: number | null;
+    goodput_mbps: number | null;
+    wire_rate_mbps: number | null;
+    packets_sent: number | null;
+    packets_received: number | null;
+    packets_dropped: number | null;
+    packet_loss_ratio: number | null;
+    packet_delivery_ratio: number | null;
+    replay_drop_count: number | null;
+    decode_failure_count: number | null;
+    ptx_in: number | null;
+    ptx_out: number | null;
+    enc_in: number | null;
+    enc_out: number | null;
+    drop_replay: number | null;
+    drop_auth: number | null;
+    drop_header: number | null;
+    bytes_sent: number | null;
+    bytes_received: number | null;
+    aead_encrypt_avg_ns: number | null;
+    aead_decrypt_avg_ns: number | null;
+    aead_encrypt_count: number | null;
+    aead_decrypt_count: number | null;
 }
 
 // =============================================================================
 // H. LATENCY & JITTER
 // =============================================================================
 
+export interface LatencyJitterMetrics {
+    one_way_latency_avg_ms: number | null;
+    one_way_latency_p95_ms: number | null;
+    jitter_avg_ms: number | null;
+    jitter_p95_ms: number | null;
+    latency_sample_count: number | null;
+    latency_invalid_reason: string | null;
+    rtt_avg_ms: number | null;
+    rtt_p95_ms: number | null;
+    rtt_sample_count: number | null;
+    rtt_invalid_reason: string | null;
+}
+
 // =============================================================================
 // I. MAVPROXY DRONE
 // =============================================================================
 
 export interface MavProxyDroneMetrics {
-    mavproxy_drone_start_time: number;
-    mavproxy_drone_end_time: number;
-    mavproxy_drone_tx_pps: number;
-    mavproxy_drone_rx_pps: number;
-    mavproxy_drone_total_msgs_sent: number;
-    mavproxy_drone_total_msgs_received: number;
-    mavproxy_drone_msg_type_counts: Record<string, number>;
-    mavproxy_drone_heartbeat_interval_ms: number;
-    mavproxy_drone_heartbeat_loss_count: number;
-    mavproxy_drone_seq_gap_count: number;
-    mavproxy_drone_cmd_sent_count: number;
-    mavproxy_drone_cmd_ack_received_count: number;
-    mavproxy_drone_cmd_ack_latency_avg_ms: number;
-    mavproxy_drone_cmd_ack_latency_p95_ms: number;
-    mavproxy_drone_stream_rate_hz: number;
+    mavproxy_drone_start_time: number | null;
+    mavproxy_drone_end_time: number | null;
+    mavproxy_drone_tx_pps: number | null;
+    mavproxy_drone_rx_pps: number | null;
+    mavproxy_drone_total_msgs_sent: number | null;
+    mavproxy_drone_total_msgs_received: number | null;
+    mavproxy_drone_msg_type_counts: Record<string, number> | null;
+    mavproxy_drone_heartbeat_interval_ms: number | null;
+    mavproxy_drone_heartbeat_loss_count: number | null;
+    mavproxy_drone_seq_gap_count: number | null;
+    mavproxy_drone_cmd_sent_count: number | null;
+    mavproxy_drone_cmd_ack_received_count: number | null;
+    mavproxy_drone_cmd_ack_latency_avg_ms: number | null;
+    mavproxy_drone_cmd_ack_latency_p95_ms: number | null;
+    mavproxy_drone_stream_rate_hz: number | null;
 }
 
 // =============================================================================
@@ -173,8 +187,8 @@ export interface MavProxyDroneMetrics {
 // =============================================================================
 
 export interface MavProxyGcsMetrics {
-    mavproxy_gcs_total_msgs_received: number;
-    mavproxy_gcs_seq_gap_count: number;
+    mavproxy_gcs_total_msgs_received: number | null;
+    mavproxy_gcs_seq_gap_count: number | null;
 }
 
 // =============================================================================
@@ -182,15 +196,15 @@ export interface MavProxyGcsMetrics {
 // =============================================================================
 
 export interface MavLinkIntegrityMetrics {
-    mavlink_sysid: number;
-    mavlink_compid: number;
-    mavlink_protocol_version: string;
-    mavlink_packet_crc_error_count: number;
-    mavlink_decode_error_count: number;
-    mavlink_msg_drop_count: number;
-    mavlink_out_of_order_count: number;
-    mavlink_duplicate_count: number;
-    mavlink_message_latency_avg_ms: number;
+    mavlink_sysid: number | null;
+    mavlink_compid: number | null;
+    mavlink_protocol_version: string | null;
+    mavlink_packet_crc_error_count: number | null;
+    mavlink_decode_error_count: number | null;
+    mavlink_msg_drop_count: number | null;
+    mavlink_out_of_order_count: number | null;
+    mavlink_duplicate_count: number | null;
+    mavlink_message_latency_avg_ms: number | null;
 }
 
 // =============================================================================
@@ -198,16 +212,16 @@ export interface MavLinkIntegrityMetrics {
 // =============================================================================
 
 export interface FlightControllerTelemetry {
-    fc_mode: string;
-    fc_armed_state: boolean;
-    fc_heartbeat_age_ms: number;
-    fc_attitude_update_rate_hz: number;
-    fc_position_update_rate_hz: number;
-    fc_battery_voltage_v: number;
-    fc_battery_current_a: number;
-    fc_battery_remaining_percent: number;
-    fc_cpu_load_percent: number;
-    fc_sensor_health_flags: number;
+    fc_mode: string | null;
+    fc_armed_state: boolean | null;
+    fc_heartbeat_age_ms: number | null;
+    fc_attitude_update_rate_hz: number | null;
+    fc_position_update_rate_hz: number | null;
+    fc_battery_voltage_v: number | null;
+    fc_battery_current_a: number | null;
+    fc_battery_remaining_percent: number | null;
+    fc_cpu_load_percent: number | null;
+    fc_sensor_health_flags: number | null;
 }
 
 // =============================================================================
@@ -215,11 +229,13 @@ export interface FlightControllerTelemetry {
 // =============================================================================
 
 export interface ControlPlaneMetrics {
-    scheduler_tick_interval_ms: number;
-    policy_name: string;
-    policy_state: string;
-    policy_suite_index: number;
-    policy_total_suites: number;
+    scheduler_tick_interval_ms: number | null;
+    scheduler_action_type: string | null;
+    scheduler_action_reason: string | null;
+    policy_name: string | null;
+    policy_state: string | null;
+    policy_suite_index: number | null;
+    policy_total_suites: number | null;
 }
 
 // =============================================================================
@@ -227,36 +243,50 @@ export interface ControlPlaneMetrics {
 // =============================================================================
 
 export interface SystemResourcesDrone {
-    cpu_usage_avg_percent: number;
-    cpu_usage_peak_percent: number;
-    cpu_freq_mhz: number;
-    memory_rss_mb: number;
-    memory_vms_mb: number;
-    thread_count: number;
-    temperature_c: number;
-    uptime_s: number;
-    load_avg_1m: number;
-    load_avg_5m: number;
-    load_avg_15m: number;
+    cpu_usage_avg_percent: number | null;
+    cpu_usage_peak_percent: number | null;
+    cpu_freq_mhz: number | null;
+    memory_rss_mb: number | null;
+    memory_vms_mb: number | null;
+    thread_count: number | null;
+    temperature_c: number | null;
+    uptime_s: number | null;
+    load_avg_1m: number | null;
+    load_avg_5m: number | null;
+    load_avg_15m: number | null;
 }
 
 // =============================================================================
 // O. SYSTEM RESOURCES GCS (DEPRECATED)
 // =============================================================================
 
+export interface SystemResourcesGcs {
+    cpu_usage_avg_percent: number | null;
+    cpu_usage_peak_percent: number | null;
+    cpu_freq_mhz: number | null;
+    memory_rss_mb: number | null;
+    memory_vms_mb: number | null;
+    thread_count: number | null;
+    temperature_c: number | null;
+    uptime_s: number | null;
+    load_avg_1m: number | null;
+    load_avg_5m: number | null;
+    load_avg_15m: number | null;
+}
+
 // =============================================================================
 // P. POWER & ENERGY
 // =============================================================================
 
 export interface PowerEnergyMetrics {
-    power_sensor_type: string;
-    power_sampling_rate_hz: number;
-    voltage_avg_v: number;
-    current_avg_a: number;
-    power_avg_w: number;
-    power_peak_w: number;
-    energy_total_j: number;
-    energy_per_handshake_j: number;
+    power_sensor_type: string | null;
+    power_sampling_rate_hz: number | null;
+    voltage_avg_v: number | null;
+    current_avg_a: number | null;
+    power_avg_w: number | null;
+    power_peak_w: number | null;
+    energy_total_j: number | null;
+    energy_per_handshake_j: number | null;
 }
 
 // =============================================================================
@@ -264,11 +294,11 @@ export interface PowerEnergyMetrics {
 // =============================================================================
 
 export interface ObservabilityMetrics {
-    log_sample_count: number;
-    metrics_sampling_rate_hz: number;
-    collection_start_time: number;
-    collection_end_time: number;
-    collection_duration_ms: number;
+    log_sample_count: number | null;
+    metrics_sampling_rate_hz: number | null;
+    collection_start_time: number | null;
+    collection_end_time: number | null;
+    collection_duration_ms: number | null;
 }
 
 // =============================================================================
@@ -276,11 +306,12 @@ export interface ObservabilityMetrics {
 // =============================================================================
 
 export interface ValidationMetrics {
-    expected_samples: number;
-    collected_samples: number;
-    lost_samples: number;
-    success_rate_percent: number;
-    benchmark_pass_fail: string;
+    expected_samples: number | null;
+    collected_samples: number | null;
+    lost_samples: number | null;
+    success_rate_percent: number | null;
+    benchmark_pass_fail: string | null;
+    metric_status?: Record<string, MetricStatus>;
 }
 
 // =============================================================================
@@ -295,12 +326,14 @@ export interface ComprehensiveSuiteMetrics {
     crypto_primitives: CryptoPrimitiveBreakdown;
     rekey: RekeyMetrics;
     data_plane: DataPlaneMetrics;
+    latency_jitter: LatencyJitterMetrics;
     mavproxy_drone: MavProxyDroneMetrics;
     mavproxy_gcs: MavProxyGcsMetrics;
     mavlink_integrity: MavLinkIntegrityMetrics;
     fc_telemetry: FlightControllerTelemetry;
     control_plane: ControlPlaneMetrics;
     system_drone: SystemResourcesDrone;
+    system_gcs: SystemResourcesGcs;
     power_energy: PowerEnergyMetrics;
     observability: ObservabilityMetrics;
     validation: ValidationMetrics;
@@ -318,20 +351,20 @@ export interface SuiteSummary {
     sig_algorithm: string;
     aead_algorithm: string;
     suite_security_level: string;
-    handshake_success: boolean;
-    handshake_total_duration_ms: number;
-    power_avg_w: number;
-    energy_total_j: number;
-    benchmark_pass_fail: string;
+    handshake_success: boolean | null;
+    handshake_total_duration_ms: number | null;
+    power_avg_w: number | null;
+    energy_total_j: number | null;
+    benchmark_pass_fail: string | null;
 }
 
 export interface RunSummary {
     run_id: string;
-    run_start_time_wall: string;
-    gcs_hostname: string;
-    drone_hostname: string;
-    suite_count: number;
-    git_commit_hash: string;
+    run_start_time_wall: string | null;
+    gcs_hostname: string | null;
+    drone_hostname: string | null;
+    suite_count: number | null;
+    git_commit_hash: string | null;
 }
 
 export interface SchemaField {

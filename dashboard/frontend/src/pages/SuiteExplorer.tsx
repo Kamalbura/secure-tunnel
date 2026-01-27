@@ -154,19 +154,19 @@ export default function SuiteExplorer() {
                                         ) : '—'}
                                     </td>
                                     <td className="text-right font-mono">
-                                        {suite.handshake_total_duration_ms > 0
+                                        {suite.handshake_total_duration_ms !== null && suite.handshake_total_duration_ms !== undefined
                                             ? suite.handshake_total_duration_ms.toFixed(2)
-                                            : '—'}
+                                            : 'Not collected'}
                                     </td>
                                     <td className="text-right font-mono">
-                                        {suite.power_avg_w > 0
+                                        {suite.power_avg_w !== null && suite.power_avg_w !== undefined
                                             ? suite.power_avg_w.toFixed(2)
-                                            : '—'}
+                                            : 'Not collected'}
                                     </td>
                                     <td className="text-right font-mono">
-                                        {suite.energy_total_j > 0
+                                        {suite.energy_total_j !== null && suite.energy_total_j !== undefined
                                             ? suite.energy_total_j.toFixed(2)
-                                            : '—'}
+                                            : 'Not collected'}
                                     </td>
                                     <td>
                                         <span className={getPassBadge(suite.benchmark_pass_fail)}>

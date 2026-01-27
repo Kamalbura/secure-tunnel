@@ -43,7 +43,12 @@ export default function ComparisonView() {
             'Suite A': comparisonSuiteA.system_drone.cpu_usage_avg_percent,
             'Suite B': comparisonSuiteB.system_drone.cpu_usage_avg_percent,
         },
-    ] : [];
+    ].filter(row => row['Suite A'] !== null && row['Suite A'] !== undefined && row['Suite B'] !== null && row['Suite B'] !== undefined) : [];
+
+    const formatValue = (value: number | null | undefined, unit?: string) => {
+        if (value === null || value === undefined) return 'Not collected';
+        return `${value.toFixed(2)}${unit ? ` ${unit}` : ''}`;
+    };
 
     return (
         <div className="space-y-6">
@@ -117,19 +122,23 @@ export default function ComparisonView() {
                     <div className="card">
                         <h3 className="card-header">Metric Comparison</h3>
                         <div className="h-80">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={comparisonData} layout="vertical">
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                                    <XAxis type="number" stroke="#9ca3af" />
-                                    <YAxis dataKey="metric" type="category" width={120} stroke="#9ca3af" />
-                                    <Tooltip
-                                        contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151' }}
-                                    />
-                                    <Legend />
-                                    <Bar dataKey="Suite A" fill="#3b82f6" />
-                                    <Bar dataKey="Suite B" fill="#a855f7" />
-                                </BarChart>
-                            </ResponsiveContainer>
+                            {comparisonData.length === 0 ? (
+                                <div className="text-gray-400 text-sm">No comparable metrics with collected data.</div>
+                            ) : (
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={comparisonData} layout="vertical">
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                                        <XAxis type="number" stroke="#9ca3af" />
+                                        <YAxis dataKey="metric" type="category" width={120} stroke="#9ca3af" />
+                                        <Tooltip
+                                            contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151' }}
+                                        />
+                                        <Legend />
+                                        <Bar dataKey="Suite A" fill="#3b82f6" />
+                                        <Bar dataKey="Suite B" fill="#a855f7" />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            )}
                         </div>
                     </div>
 
@@ -147,33 +156,33 @@ export default function ComparisonView() {
                             <tbody>
                                 <tr>
                                     <td>Handshake Duration</td>
-                                    <td className="text-right font-mono">{comparisonSuiteA.handshake.handshake_total_duration_ms.toFixed(2)} ms</td>
-                                    <td className="text-right font-mono">{comparisonSuiteB.handshake.handshake_total_duration_ms.toFixed(2)} ms</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.handshake.handshake_total_duration_ms, 'ms')}</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.handshake.handshake_total_duration_ms, 'ms')}</td>
                                 </tr>
                                 <tr>
                                     <td>Power Avg</td>
-                                    <td className="text-right font-mono">{comparisonSuiteA.power_energy.power_avg_w.toFixed(2)} W</td>
-                                    <td className="text-right font-mono">{comparisonSuiteB.power_energy.power_avg_w.toFixed(2)} W</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.power_energy.power_avg_w, 'W')}</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.power_energy.power_avg_w, 'W')}</td>
                                 </tr>
                                 <tr>
                                     <td>Energy Total</td>
-                                    <td className="text-right font-mono">{comparisonSuiteA.power_energy.energy_total_j.toFixed(2)} J</td>
-                                    <td className="text-right font-mono">{comparisonSuiteB.power_energy.energy_total_j.toFixed(2)} J</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.power_energy.energy_total_j, 'J')}</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.power_energy.energy_total_j, 'J')}</td>
                                 </tr>
                                 <tr>
                                     <td>Packets Sent</td>
-                                    <td className="text-right font-mono">{comparisonSuiteA.data_plane.packets_sent}</td>
-                                    <td className="text-right font-mono">{comparisonSuiteB.data_plane.packets_sent}</td>
+                                    <td className="text-right font-mono">{comparisonSuiteA.data_plane.packets_sent ?? 'Not collected'}</td>
+                                    <td className="text-right font-mono">{comparisonSuiteB.data_plane.packets_sent ?? 'Not collected'}</td>
                                 </tr>
                                 <tr>
                                     <td>CPU Avg</td>
-                                    <td className="text-right font-mono">{comparisonSuiteA.system_drone.cpu_usage_avg_percent.toFixed(1)}%</td>
-                                    <td className="text-right font-mono">{comparisonSuiteB.system_drone.cpu_usage_avg_percent.toFixed(1)}%</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.system_drone.cpu_usage_avg_percent, '%')}</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.system_drone.cpu_usage_avg_percent, '%')}</td>
                                 </tr>
                                 <tr>
                                     <td>Memory RSS</td>
-                                    <td className="text-right font-mono">{comparisonSuiteA.system_drone.memory_rss_mb.toFixed(2)} MB</td>
-                                    <td className="text-right font-mono">{comparisonSuiteB.system_drone.memory_rss_mb.toFixed(2)} MB</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.system_drone.memory_rss_mb, 'MB')}</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.system_drone.memory_rss_mb, 'MB')}</td>
                                 </tr>
                             </tbody>
                         </table>

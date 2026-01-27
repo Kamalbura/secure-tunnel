@@ -37,19 +37,19 @@ export default function IntegrityMonitor() {
             }
 
             // Check for handshake failures
-            if (!suite.handshake_success) {
+            if (suite.handshake_success === false) {
                 suiteIssues.push('Handshake did not succeed');
                 severity = 'high';
             }
 
             // Check for missing power data
-            if (suite.power_avg_w === 0) {
+            if (suite.power_avg_w === null || suite.power_avg_w === undefined) {
                 suiteIssues.push('Missing power data');
                 if (severity !== 'high') severity = 'medium';
             }
 
             // Check for very high handshake times (>10s)
-            if (suite.handshake_total_duration_ms > 10000) {
+            if (suite.handshake_total_duration_ms !== null && suite.handshake_total_duration_ms !== undefined && suite.handshake_total_duration_ms > 10000) {
                 suiteIssues.push(`Unusually high handshake duration: ${suite.handshake_total_duration_ms.toFixed(2)}ms`);
                 if (severity !== 'high') severity = 'medium';
             }

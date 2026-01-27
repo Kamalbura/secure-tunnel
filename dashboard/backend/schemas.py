@@ -28,7 +28,7 @@ class CanonicalMetrics(BaseModel):
     kernel_version_gcs: str
     kernel_version_drone: str
     clock_offset_ms: Optional[float] = 0.0  # PRUNED
-    clock_offset_method: Optional[str] = "" # PRUNED
+    clock_offset_method: Optional[str] = None # PRUNED
     run_start_time_wall: str
     run_end_time_wall: str
     run_start_time_mono: float
@@ -52,11 +52,11 @@ class CanonicalMetrics(BaseModel):
     suite_active_duration_ms: float
 
     # --- D. HANDSHAKE (8) ---
-    handshake_start_time_drone: float
-    handshake_end_time_drone: float
-    handshake_total_duration_ms: float
-    handshake_success: bool
-    handshake_failure_reason: str
+    handshake_start_time_drone: Optional[float] = None
+    handshake_end_time_drone: Optional[float] = None
+    handshake_total_duration_ms: Optional[float] = None
+    handshake_success: Optional[bool] = None
+    handshake_failure_reason: Optional[str] = None
 
     # --- E. CRYPTO PRIMITIVES (8) ---
     # Marked CONDITIONAL in Arch - Use Optional
@@ -65,7 +65,7 @@ class CanonicalMetrics(BaseModel):
     kem_decapsulation_time_ms: Optional[float] = 0.0
     signature_sign_time_ms: Optional[float] = 0.0
     signature_verify_time_ms: Optional[float] = 0.0
-    total_crypto_time_ms: float
+    total_crypto_time_ms: Optional[float] = None
 
     # --- F. REKEY METRICS (7) ---
     # All PRUNED/FORBIDDEN - Optional/0
@@ -81,16 +81,27 @@ class CanonicalMetrics(BaseModel):
     achieved_throughput_mbps: Optional[float] = 0.0 # PRUNED
     goodput_mbps: Optional[float] = 0.0 # PRUNED
     wire_rate_mbps: Optional[float] = 0.0 # PRUNED
-    packets_sent: int
-    packets_received: int
-    packets_dropped: int
-    packet_loss_ratio: float
-    packet_delivery_ratio: float
+    packets_sent: Optional[int] = None
+    packets_received: Optional[int] = None
+    packets_dropped: Optional[int] = None
+    packet_loss_ratio: Optional[float] = None
+    packet_delivery_ratio: Optional[float] = None
     replay_drop_count: Optional[int] = 0 # CONDITIONAL
     decode_failure_count: Optional[int] = 0 # PRUNED
 
     # --- H. LATENCY & JITTER (10) ---
-    # Latency/Jitter removed (no runtime source)
+    # --- H. LATENCY & JITTER (REAL, MAVLink-derived) ---
+    one_way_latency_avg_ms: Optional[float] = None
+    one_way_latency_p95_ms: Optional[float] = None
+    jitter_avg_ms: Optional[float] = None
+    jitter_p95_ms: Optional[float] = None
+    latency_sample_count: Optional[int] = None
+    latency_invalid_reason: Optional[str] = None
+
+    rtt_avg_ms: Optional[float] = None
+    rtt_p95_ms: Optional[float] = None
+    rtt_sample_count: Optional[int] = None
+    rtt_invalid_reason: Optional[str] = None
 
     # --- I. MAVPROXY DRONE (17) ---
     mavproxy_drone_start_time: float
@@ -105,25 +116,25 @@ class CanonicalMetrics(BaseModel):
     mavproxy_drone_seq_gap_count: int
     mavproxy_drone_cmd_sent_count: int
     mavproxy_drone_cmd_ack_received_count: int
-    mavproxy_drone_cmd_ack_latency_avg_ms: float
-    mavproxy_drone_cmd_ack_latency_p95_ms: float
-    mavproxy_drone_stream_rate_hz: float
+    mavproxy_drone_cmd_ack_latency_avg_ms: Optional[float] = None
+    mavproxy_drone_cmd_ack_latency_p95_ms: Optional[float] = None
+    mavproxy_drone_stream_rate_hz: Optional[float] = None
 
     # --- J. MAVPROXY GCS (13) ---
     # Mirrored structure
-    mavproxy_gcs_total_msgs_received: int
-    mavproxy_gcs_seq_gap_count: int
+    mavproxy_gcs_total_msgs_received: Optional[int] = None
+    mavproxy_gcs_seq_gap_count: Optional[int] = None
 
     # --- K. MAVLINK INTEGRITY (10) ---
-    mavlink_sysid: int
-    mavlink_compid: int
-    mavlink_protocol_version: int
-    mavlink_packet_crc_error_count: int
-    mavlink_decode_error_count: int
-    mavlink_msg_drop_count: int
-    mavlink_out_of_order_count: int
-    mavlink_duplicate_count: int
-    mavlink_message_latency_avg_ms: float
+    mavlink_sysid: Optional[int] = None
+    mavlink_compid: Optional[int] = None
+    mavlink_protocol_version: Optional[str] = None
+    mavlink_packet_crc_error_count: Optional[int] = None
+    mavlink_decode_error_count: Optional[int] = None
+    mavlink_msg_drop_count: Optional[int] = None
+    mavlink_out_of_order_count: Optional[int] = None
+    mavlink_duplicate_count: Optional[int] = None
+    mavlink_message_latency_avg_ms: Optional[float] = None
 
     # --- L. FC TELEMETRY (10) ---
     # ALL PRUNED
@@ -139,40 +150,57 @@ class CanonicalMetrics(BaseModel):
     fc_sensor_health_flags: Optional[int] = 0
 
     # --- M. CONTROL PLANE (7) ---
-    scheduler_tick_interval_ms: Optional[float] = 0.0
-    policy_name: Optional[str] = ""
-    policy_state: Optional[str] = ""
-    policy_suite_index: Optional[int] = 0
-    policy_total_suites: Optional[int] = 0
+    scheduler_tick_interval_ms: Optional[float] = None
+    scheduler_action_type: Optional[str] = None
+    scheduler_action_reason: Optional[str] = None
+    policy_name: Optional[str] = None
+    policy_state: Optional[str] = None
+    policy_suite_index: Optional[int] = None
+    policy_total_suites: Optional[int] = None
 
     # --- N. SYSTEM RESOURCES (8) ---
-    cpu_usage_avg_percent: float
-    cpu_usage_peak_percent: float
-    cpu_freq_mhz: float
-    memory_rss_mb: float
-    memory_vms_mb: float
-    thread_count: int
-    temperature_c: float
-    uptime_s: Optional[float] = 0.0
+    cpu_usage_avg_percent: Optional[float] = None
+    cpu_usage_peak_percent: Optional[float] = None
+    cpu_freq_mhz: Optional[float] = None
+    memory_rss_mb: Optional[float] = None
+    memory_vms_mb: Optional[float] = None
+    thread_count: Optional[int] = None
+    temperature_c: Optional[float] = None
+    uptime_s: Optional[float] = None
+
+    # --- O. SYSTEM RESOURCES GCS (NEW) ---
+    gcs_cpu_usage_avg_percent: Optional[float] = None
+    gcs_cpu_usage_peak_percent: Optional[float] = None
+    gcs_cpu_freq_mhz: Optional[float] = None
+    gcs_memory_rss_mb: Optional[float] = None
+    gcs_memory_vms_mb: Optional[float] = None
+    gcs_thread_count: Optional[int] = None
+    gcs_temperature_c: Optional[float] = None
+    gcs_uptime_s: Optional[float] = None
+    gcs_load_avg_1m: Optional[float] = None
+    gcs_load_avg_5m: Optional[float] = None
+    gcs_load_avg_15m: Optional[float] = None
 
     # --- P. POWER & ENERGY (10) ---
-    power_sensor_type: str
-    power_sampling_rate_hz: float
-    voltage_avg_v: Optional[float] = 0.0
-    current_avg_a: Optional[float] = 0.0
-    power_avg_w: float
-    power_peak_w: float
-    energy_total_j: float
-    energy_per_handshake_j: float
+    power_sensor_type: Optional[str] = None
+    power_sampling_rate_hz: Optional[float] = None
+    voltage_avg_v: Optional[float] = None
+    current_avg_a: Optional[float] = None
+    power_avg_w: Optional[float] = None
+    power_peak_w: Optional[float] = None
+    energy_total_j: Optional[float] = None
+    energy_per_handshake_j: Optional[float] = None
 
     # --- Q-R. OBSERVABILITY & VALIDATION (10) ---
-    log_sample_count: int
-    metrics_sampling_rate_hz: float
-    expected_samples: int
-    collected_samples: int
-    lost_samples: int
-    success_rate_percent: float
-    benchmark_pass_fail: str
+    log_sample_count: Optional[int] = None
+    metrics_sampling_rate_hz: Optional[float] = None
+    expected_samples: Optional[int] = None
+    collected_samples: Optional[int] = None
+    lost_samples: Optional[int] = None
+    success_rate_percent: Optional[float] = None
+    benchmark_pass_fail: Optional[str] = None
+
+    metric_status: Optional[Dict[str, Dict[str, str]]] = None
 
     # --- Derived / Augmented Fields (Not in Schema but needed for Dashboard) ---
     # These will be computed during ingestion

@@ -35,12 +35,14 @@ from core.metrics_schema import (
     CryptoPrimitiveBreakdown,
     RekeyMetrics,
     DataPlaneMetrics,
+    LatencyJitterMetrics,
     MavProxyDroneMetrics,
     MavProxyGcsMetrics,
     MavLinkIntegrityMetrics,
     FlightControllerTelemetry,
     ControlPlaneMetrics,
     SystemResourcesDrone,
+    SystemResourcesGcs,
     PowerEnergyMetrics,
     ObservabilityMetrics,
     ValidationMetrics,
@@ -126,6 +128,16 @@ class MetricsAggregator:
         # Callbacks for external data
         self._proxy_metrics_callback: Optional[Callable[[], Dict[str, Any]]] = None
         self._mavlink_metrics_callback: Optional[Callable[[], Dict[str, Any]]] = None
+        self._metric_status: Dict[str, Dict[str, str]] = {}
+
+    def _mark_metric_status(self, field_path: str, status: str, reason: str) -> None:
+        """Record metric status and reason for transparency."""
+        if not field_path:
+            return
+        self._metric_status[field_path] = {
+            "status": str(status),
+            "reason": str(reason),
+        }
     
     def _detect_role(self) -> str:
         """Detect role from platform."""
@@ -198,6 +210,36 @@ class MetricsAggregator:
         if self._clock_offset_ms is not None:
             m.run_context.clock_offset_ms = self._clock_offset_ms
             m.run_context.clock_offset_method = self._clock_offset_method
+        else:
+            m.run_context.clock_offset_ms = None
+            m.run_context.clock_offset_method = None
+            self._mark_metric_status(
+                "run_context.clock_offset_ms",
+                "not_collected",
+                "clock_sync_not_performed"
+            )
+
+        # Normalize empty strings to None for run context fields
+        for field_name in (
+            "git_commit_hash",
+            "gcs_hostname",
+            "drone_hostname",
+            "gcs_ip",
+            "drone_ip",
+            "python_env_gcs",
+            "python_env_drone",
+            "liboqs_version",
+            "kernel_version_gcs",
+            "kernel_version_drone",
+        ):
+            value = getattr(m.run_context, field_name, None)
+            if isinstance(value, str) and not value.strip():
+                setattr(m.run_context, field_name, None)
+                self._mark_metric_status(
+                    f"run_context.{field_name}",
+                    "not_collected",
+                    "missing_environment_value"
+                )
         
         # B. Suite Crypto Identity (from config)
         if suite_config:
@@ -224,6 +266,26 @@ class MetricsAggregator:
                 m.crypto_identity.sig_family = "ML-DSA"
             elif "SPHINCS" in sig_name:
                 m.crypto_identity.sig_family = "SPHINCS+"
+
+        # Normalize empty crypto identity fields
+        for field_name in (
+            "kem_algorithm",
+            "kem_family",
+            "kem_nist_level",
+            "sig_algorithm",
+            "sig_family",
+            "sig_nist_level",
+            "aead_algorithm",
+            "suite_security_level",
+        ):
+            value = getattr(m.crypto_identity, field_name, None)
+            if isinstance(value, str) and not value.strip():
+                setattr(m.crypto_identity, field_name, None)
+                self._mark_metric_status(
+                    f"crypto_identity.{field_name}",
+                    "not_collected",
+                    "missing_suite_config"
+                )
         
         # C. Lifecycle - mark selection time
         m.lifecycle.suite_selected_time = time.monotonic()
@@ -253,10 +315,7 @@ class MetricsAggregator:
         """Mark handshake start time."""
         if self._current_metrics:
             now = time.monotonic()
-            if self.role == "gcs":
-                self._current_metrics.handshake.handshake_start_time_gcs = now
-            else:
-                self._current_metrics.handshake.handshake_start_time_drone = now
+            self._current_metrics.handshake.handshake_start_time_drone = now
     
     def record_handshake_end(self, success: bool = True, failure_reason: str = ""):
         """Mark handshake end and record status.
@@ -278,14 +337,9 @@ class MetricsAggregator:
             
             now = time.monotonic()
             
-            if self.role == "gcs":
-                h.handshake_end_time_gcs = now
-                if h.handshake_start_time_gcs > 0:
-                    h.handshake_total_duration_ms = (now - h.handshake_start_time_gcs) * 1000
-            else:
-                h.handshake_end_time_drone = now
-                if h.handshake_start_time_drone > 0:
-                    h.handshake_total_duration_ms = (now - h.handshake_start_time_drone) * 1000
+            h.handshake_end_time_drone = now
+            if h.handshake_start_time_drone and h.handshake_start_time_drone > 0:
+                h.handshake_total_duration_ms = (now - h.handshake_start_time_drone) * 1000
             
             h.handshake_success = success
             h.handshake_failure_reason = failure_reason
@@ -338,19 +392,27 @@ class MetricsAggregator:
                 setattr(cp, dst_field, float(primitives[src_key]))
         
         # Artifact sizes
-        cp.pub_key_size_bytes = primitives.get("pub_key_size_bytes", 0)
-        cp.ciphertext_size_bytes = primitives.get("ciphertext_size_bytes", 0)
-        cp.sig_size_bytes = primitives.get("sig_size_bytes", 0)
-        cp.shared_secret_size_bytes = primitives.get("shared_secret_size_bytes", 0)
-        
+        pub_key_size = primitives.get("pub_key_size_bytes")
+        ciphertext_size = primitives.get("ciphertext_size_bytes")
+        sig_size = primitives.get("sig_size_bytes")
+        shared_secret_size = primitives.get("shared_secret_size_bytes")
+        cp.pub_key_size_bytes = int(pub_key_size) if pub_key_size is not None else None
+        cp.ciphertext_size_bytes = int(ciphertext_size) if ciphertext_size is not None else None
+        cp.sig_size_bytes = int(sig_size) if sig_size is not None else None
+        cp.shared_secret_size_bytes = int(shared_secret_size) if shared_secret_size is not None else None
+
         # Calculate total
-        cp.total_crypto_time_ms = (
-            cp.kem_keygen_time_ms + 
-            cp.kem_encapsulation_time_ms + 
-            cp.kem_decapsulation_time_ms +
-            cp.signature_sign_time_ms +
-            cp.signature_verify_time_ms
-        )
+        total_parts = [
+            cp.kem_keygen_time_ms,
+            cp.kem_encapsulation_time_ms,
+            cp.kem_decapsulation_time_ms,
+            cp.signature_sign_time_ms,
+            cp.signature_verify_time_ms,
+        ]
+        if all(part is not None for part in total_parts):
+            cp.total_crypto_time_ms = sum(total_parts)
+        else:
+            cp.total_crypto_time_ms = None
     
     def record_data_plane_metrics(self, counters: Dict[str, Any]):
         """
@@ -368,39 +430,54 @@ class MetricsAggregator:
         dp = self._current_metrics.data_plane
         self._last_proxy_counters = counters
         
-        dp.ptx_in = counters.get("ptx_in", 0)
-        dp.ptx_out = counters.get("ptx_out", 0)
-        dp.enc_in = counters.get("enc_in", 0)
-        dp.enc_out = counters.get("enc_out", 0)
-        dp.drop_replay = counters.get("drop_replay", 0)
-        dp.drop_auth = counters.get("drop_auth", 0)
-        dp.drop_header = counters.get("drop_header", 0)
+        dp.ptx_in = counters.get("ptx_in")
+        dp.ptx_out = counters.get("ptx_out")
+        dp.enc_in = counters.get("enc_in")
+        dp.enc_out = counters.get("enc_out")
+        dp.drop_replay = counters.get("drop_replay")
+        dp.drop_auth = counters.get("drop_auth")
+        dp.drop_header = counters.get("drop_header")
 
-        dp.replay_drop_count = dp.drop_replay
-        dp.decode_failure_count = dp.drop_auth + dp.drop_header + counters.get("drop_session_epoch", 0)
-        
+        dp.replay_drop_count = dp.drop_replay if dp.drop_replay is not None else None
+        drop_session_epoch = counters.get("drop_session_epoch")
+        if dp.drop_auth is not None and dp.drop_header is not None and drop_session_epoch is not None:
+            dp.decode_failure_count = dp.drop_auth + dp.drop_header + drop_session_epoch
+        else:
+            dp.decode_failure_count = None
+
         dp.packets_sent = dp.enc_out
         dp.packets_received = dp.enc_in
-        dp.packets_dropped = dp.drop_replay + dp.drop_auth + dp.drop_header
-        
+        if dp.drop_replay is not None and dp.drop_auth is not None and dp.drop_header is not None:
+            dp.packets_dropped = dp.drop_replay + dp.drop_auth + dp.drop_header
+        else:
+            dp.packets_dropped = None
+
         # Calculate ratios
-        if dp.packets_sent > 0:
+        if dp.packets_sent is not None and dp.packets_dropped is not None and dp.packets_sent > 0:
             dp.packet_loss_ratio = dp.packets_dropped / dp.packets_sent
             dp.packet_delivery_ratio = 1.0 - dp.packet_loss_ratio
-        
+        else:
+            dp.packet_loss_ratio = None
+            dp.packet_delivery_ratio = None
+
         # Byte counters
-        dp.bytes_sent = counters.get("ptx_bytes_out", counters.get("bytes_out", 0))
-        dp.bytes_received = counters.get("ptx_bytes_in", counters.get("bytes_in", 0))
+        dp.bytes_sent = counters.get("ptx_bytes_out") if "ptx_bytes_out" in counters else counters.get("bytes_out")
+        dp.bytes_received = counters.get("ptx_bytes_in") if "ptx_bytes_in" in counters else counters.get("bytes_in")
 
         # Rekey metrics (proxy counters)
         rk = self._current_metrics.rekey
-        rk.rekey_success = counters.get("rekeys_ok", 0)
-        rk.rekey_failure = counters.get("rekeys_fail", 0)
-        rk.rekey_attempts = rk.rekey_success + rk.rekey_failure
-        rk.rekey_interval_ms = counters.get("rekey_interval_ms", 0)
-        rk.rekey_duration_ms = counters.get("rekey_duration_ms", counters.get("last_rekey_ms", 0))
-        rk.rekey_blackout_duration_ms = counters.get("rekey_blackout_duration_ms", 0)
-        rk.rekey_trigger_reason = counters.get("rekey_trigger_reason", "")
+        rk.rekey_success = counters.get("rekeys_ok")
+        rk.rekey_failure = counters.get("rekeys_fail")
+        if rk.rekey_success is not None or rk.rekey_failure is not None:
+            rk.rekey_attempts = (rk.rekey_success or 0) + (rk.rekey_failure or 0)
+        else:
+            rk.rekey_attempts = None
+        rk.rekey_interval_ms = counters.get("rekey_interval_ms")
+        rk.rekey_duration_ms = counters.get("rekey_duration_ms")
+        if rk.rekey_duration_ms is None:
+            rk.rekey_duration_ms = counters.get("last_rekey_ms")
+        rk.rekey_blackout_duration_ms = counters.get("rekey_blackout_duration_ms")
+        rk.rekey_trigger_reason = counters.get("rekey_trigger_reason")
         
         # AEAD timing from primitive_metrics (nested structure)
         prim = counters.get("primitive_metrics", {})
@@ -530,27 +607,106 @@ class MetricsAggregator:
             duration_s = m.lifecycle.suite_active_duration_ms / 1000.0
         elif m.lifecycle.suite_total_duration_ms > 0:
             duration_s = m.lifecycle.suite_total_duration_ms / 1000.0
-        if duration_s > 0:
-            ptx_out = 0
-            ptx_in = 0
-            enc_out = 0
-            enc_in = 0
-            if self._last_proxy_counters:
-                ptx_out = int(self._last_proxy_counters.get("ptx_bytes_out", m.data_plane.bytes_sent) or 0)
-                ptx_in = int(self._last_proxy_counters.get("ptx_bytes_in", m.data_plane.bytes_received) or 0)
-                enc_out = int(self._last_proxy_counters.get("enc_bytes_out", self._last_proxy_counters.get("bytes_out", 0)) or 0)
-                enc_in = int(self._last_proxy_counters.get("enc_bytes_in", self._last_proxy_counters.get("bytes_in", 0)) or 0)
+        if duration_s > 0 and self._last_proxy_counters is not None:
+            def _get_counter_int(name: str) -> Optional[int]:
+                value = self._last_proxy_counters.get(name)
+                if value is None:
+                    return None
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return None
 
-            total_payload_bytes = max(0, ptx_out + ptx_in)
-            total_wire_bytes = max(0, enc_out + enc_in)
+            ptx_out = _get_counter_int("ptx_bytes_out")
+            ptx_in = _get_counter_int("ptx_bytes_in")
+            enc_out = _get_counter_int("enc_bytes_out")
+            if enc_out is None:
+                enc_out = _get_counter_int("bytes_out")
+            enc_in = _get_counter_int("enc_bytes_in")
+            if enc_in is None:
+                enc_in = _get_counter_int("bytes_in")
 
-            m.data_plane.goodput_mbps = (total_payload_bytes * 8.0) / (duration_s * 1_000_000.0)
-            m.data_plane.achieved_throughput_mbps = m.data_plane.goodput_mbps
-            m.data_plane.wire_rate_mbps = (total_wire_bytes * 8.0) / (duration_s * 1_000_000.0)
+            if ptx_out is not None and ptx_in is not None:
+                total_payload_bytes = max(0, ptx_out + ptx_in)
+                m.data_plane.goodput_mbps = (total_payload_bytes * 8.0) / (duration_s * 1_000_000.0)
+                m.data_plane.achieved_throughput_mbps = m.data_plane.goodput_mbps
+            else:
+                m.data_plane.goodput_mbps = None
+                m.data_plane.achieved_throughput_mbps = None
+
+            if enc_out is not None and enc_in is not None:
+                total_wire_bytes = max(0, enc_out + enc_in)
+                m.data_plane.wire_rate_mbps = (total_wire_bytes * 8.0) / (duration_s * 1_000_000.0)
+            else:
+                m.data_plane.wire_rate_mbps = None
+        elif self._last_proxy_counters is None:
+            self._mark_metric_status(
+                "data_plane",
+                "not_collected",
+                "proxy_counters_missing"
+            )
+            m.data_plane.achieved_throughput_mbps = None
+            m.data_plane.goodput_mbps = None
+            m.data_plane.wire_rate_mbps = None
+            m.data_plane.packets_sent = None
+            m.data_plane.packets_received = None
+            m.data_plane.packets_dropped = None
+            m.data_plane.packet_loss_ratio = None
+            m.data_plane.packet_delivery_ratio = None
+            m.data_plane.replay_drop_count = None
+            m.data_plane.decode_failure_count = None
+            m.data_plane.ptx_in = None
+            m.data_plane.ptx_out = None
+            m.data_plane.enc_in = None
+            m.data_plane.enc_out = None
+            m.data_plane.drop_replay = None
+            m.data_plane.drop_auth = None
+            m.data_plane.drop_header = None
+            m.data_plane.bytes_sent = None
+            m.data_plane.bytes_received = None
+            m.data_plane.aead_encrypt_avg_ns = None
+            m.data_plane.aead_decrypt_avg_ns = None
+            m.data_plane.aead_encrypt_count = None
+            m.data_plane.aead_decrypt_count = None
+
+            m.rekey.rekey_attempts = None
+            m.rekey.rekey_success = None
+            m.rekey.rekey_failure = None
+            m.rekey.rekey_interval_ms = None
+            m.rekey.rekey_duration_ms = None
+            m.rekey.rekey_blackout_duration_ms = None
+            m.rekey.rekey_trigger_reason = None
+            self._mark_metric_status(
+                "rekey",
+                "not_collected",
+                "proxy_counters_missing"
+            )
+
+        if all(
+            getattr(m.rekey, field) is None
+            for field in (
+                "rekey_attempts",
+                "rekey_success",
+                "rekey_failure",
+                "rekey_interval_ms",
+                "rekey_duration_ms",
+                "rekey_blackout_duration_ms",
+                "rekey_trigger_reason",
+            )
+        ):
+            self._mark_metric_status(
+                "rekey",
+                "not_collected",
+                "proxy_rekey_counters_missing"
+            )
         
         # N. System resources
         if self._system_samples:
-            cpu_samples = [s["cpu_percent"] for s in self._system_samples if "cpu_percent" in s]
+            cpu_samples = [
+                s["cpu_percent"]
+                for s in self._system_samples
+                if isinstance(s.get("cpu_percent"), (int, float))
+            ]
             
             sys_m = m.system_drone
             
@@ -560,32 +716,98 @@ class MetricsAggregator:
             
             # Use last sample for other metrics
             last = self._system_samples[-1]
-            sys_m.cpu_freq_mhz = last.get("cpu_freq_mhz", 0)
-            sys_m.memory_rss_mb = last.get("memory_rss_mb", 0)
-            sys_m.memory_vms_mb = last.get("memory_vms_mb", 0)
-            sys_m.thread_count = last.get("thread_count", 0)
-            sys_m.uptime_s = last.get("uptime_s", 0.0)
-            
-            sys_m.temperature_c = last.get("temperature_c", 0)
-            sys_m.load_avg_1m = last.get("load_avg_1m", 0)
-            sys_m.load_avg_5m = last.get("load_avg_5m", 0)
-            sys_m.load_avg_15m = last.get("load_avg_15m", 0)
+            sys_m.cpu_freq_mhz = last.get("cpu_freq_mhz")
+            sys_m.memory_rss_mb = last.get("memory_rss_mb")
+            sys_m.memory_vms_mb = last.get("memory_vms_mb")
+            sys_m.thread_count = last.get("thread_count")
+            sys_m.uptime_s = last.get("uptime_s")
+
+            sys_m.temperature_c = last.get("temperature_c")
+            sys_m.load_avg_1m = last.get("load_avg_1m")
+            sys_m.load_avg_5m = last.get("load_avg_5m")
+            sys_m.load_avg_15m = last.get("load_avg_15m")
+        else:
+            self._mark_metric_status(
+                "system_drone",
+                "not_collected",
+                "no_system_samples"
+            )
+            m.system_drone.cpu_usage_avg_percent = None
+            m.system_drone.cpu_usage_peak_percent = None
+            m.system_drone.cpu_freq_mhz = None
+            m.system_drone.memory_rss_mb = None
+            m.system_drone.memory_vms_mb = None
+            m.system_drone.thread_count = None
+            m.system_drone.uptime_s = None
+            m.system_drone.temperature_c = None
+            m.system_drone.load_avg_1m = None
+            m.system_drone.load_avg_5m = None
+            m.system_drone.load_avg_15m = None
         
         # P. Power & Energy
         if power_samples:
             energy_stats = self.power_collector.get_energy_stats(power_samples)
             m.power_energy.power_sensor_type = self.power_collector.backend
             m.power_energy.power_sampling_rate_hz = 1000.0
-            m.power_energy.power_avg_w = energy_stats["power_avg_w"]
-            m.power_energy.power_peak_w = energy_stats["power_peak_w"]
-            m.power_energy.energy_total_j = energy_stats["energy_total_j"]
-            m.power_energy.voltage_avg_v = energy_stats.get("voltage_avg_v", 0.0)
-            m.power_energy.current_avg_a = energy_stats.get("current_avg_a", 0.0)
+            m.power_energy.power_avg_w = energy_stats.get("power_avg_w")
+            m.power_energy.power_peak_w = energy_stats.get("power_peak_w")
+            m.power_energy.energy_total_j = energy_stats.get("energy_total_j")
+            m.power_energy.voltage_avg_v = energy_stats.get("voltage_avg_v")
+            m.power_energy.current_avg_a = energy_stats.get("current_avg_a")
             
             # Calculate per-handshake energy
             if m.handshake.handshake_total_duration_ms > 0:
                 hs_duration_s = m.handshake.handshake_total_duration_ms / 1000.0
                 m.power_energy.energy_per_handshake_j = m.power_energy.power_avg_w * hs_duration_s
+            else:
+                m.power_energy.energy_per_handshake_j = None
+        else:
+            m.power_energy.power_sensor_type = None
+            m.power_energy.power_sampling_rate_hz = None
+            m.power_energy.power_avg_w = None
+            m.power_energy.power_peak_w = None
+            m.power_energy.energy_total_j = None
+            m.power_energy.energy_per_handshake_j = None
+            m.power_energy.voltage_avg_v = None
+            m.power_energy.current_avg_a = None
+            self._mark_metric_status(
+                "power_energy",
+                "not_collected",
+                f"no_power_samples (backend={self.power_collector.backend if self.power_collector else 'none'})"
+            )
+
+        # E. Crypto primitive breakdown (null when not collected)
+        cp = m.crypto_primitives
+        if (
+            (cp.kem_keygen_time_ms or 0) == 0 and
+            (cp.kem_encapsulation_time_ms or 0) == 0 and
+            (cp.kem_decapsulation_time_ms or 0) == 0 and
+            (cp.signature_sign_time_ms or 0) == 0 and
+            (cp.signature_verify_time_ms or 0) == 0 and
+            (cp.pub_key_size_bytes or 0) == 0 and
+            (cp.ciphertext_size_bytes or 0) == 0 and
+            (cp.sig_size_bytes or 0) == 0
+        ):
+            cp.kem_keygen_time_ms = None
+            cp.kem_encapsulation_time_ms = None
+            cp.kem_decapsulation_time_ms = None
+            cp.signature_sign_time_ms = None
+            cp.signature_verify_time_ms = None
+            cp.total_crypto_time_ms = None
+            cp.kem_keygen_ns = None
+            cp.kem_encaps_ns = None
+            cp.kem_decaps_ns = None
+            cp.sig_sign_ns = None
+            cp.sig_verify_ns = None
+            cp.pub_key_size_bytes = None
+            cp.ciphertext_size_bytes = None
+            cp.sig_size_bytes = None
+            cp.shared_secret_size_bytes = None
+            self._mark_metric_status(
+                "crypto_primitives",
+                "not_collected",
+                "handshake_primitives_missing"
+            )
         
         # I/J. MAVLink metrics
         if self.mavlink_collector:
@@ -596,9 +818,48 @@ class MetricsAggregator:
                     self.mavlink_collector.populate_schema_metrics(m.mavproxy_gcs, "gcs")
                 else:
                     self.mavlink_collector.populate_schema_metrics(m.mavproxy_drone, "drone")
+
+                    if (m.mavproxy_drone.mavproxy_drone_cmd_sent_count or 0) <= 0:
+                        self._mark_metric_status(
+                            "mavproxy_drone.mavproxy_drone_cmd_ack_latency_avg_ms",
+                            "invalid",
+                            "no_command_sent"
+                        )
                 
                 # K. MAVLink integrity
                 self.mavlink_collector.populate_mavlink_integrity(m.mavlink_integrity)
+
+                # H. Latency & Jitter (from MAVLink metrics)
+                m.latency_jitter.one_way_latency_avg_ms = mavlink_metrics.get("one_way_latency_avg_ms")
+                m.latency_jitter.one_way_latency_p95_ms = mavlink_metrics.get("one_way_latency_p95_ms")
+                m.latency_jitter.jitter_avg_ms = mavlink_metrics.get("jitter_avg_ms")
+                m.latency_jitter.jitter_p95_ms = mavlink_metrics.get("jitter_p95_ms")
+                m.latency_jitter.latency_sample_count = mavlink_metrics.get("latency_sample_count")
+                m.latency_jitter.latency_invalid_reason = mavlink_metrics.get("latency_invalid_reason", "")
+
+                m.latency_jitter.rtt_avg_ms = mavlink_metrics.get("rtt_avg_ms")
+                m.latency_jitter.rtt_p95_ms = mavlink_metrics.get("rtt_p95_ms")
+                m.latency_jitter.rtt_sample_count = mavlink_metrics.get("rtt_sample_count")
+                m.latency_jitter.rtt_invalid_reason = mavlink_metrics.get("rtt_invalid_reason", "")
+
+                if m.latency_jitter.latency_invalid_reason:
+                    self._mark_metric_status(
+                        "latency_jitter.one_way_latency_avg_ms",
+                        "invalid",
+                        m.latency_jitter.latency_invalid_reason,
+                    )
+                    if m.mavlink_integrity.mavlink_message_latency_avg_ms is None:
+                        self._mark_metric_status(
+                            "mavlink_integrity.mavlink_message_latency_avg_ms",
+                            "invalid",
+                            m.latency_jitter.latency_invalid_reason,
+                        )
+                if m.latency_jitter.rtt_invalid_reason:
+                    self._mark_metric_status(
+                        "latency_jitter.rtt_avg_ms",
+                        "invalid",
+                        m.latency_jitter.rtt_invalid_reason,
+                    )
 
                 # L. Flight controller telemetry (drone only)
                 if self.role == "drone":
@@ -615,24 +876,158 @@ class MetricsAggregator:
                     m.flight_controller.fc_sensor_health_flags = int(fc.get("fc_sensor_health_flags", 0) or 0)
             except Exception:
                 pass
+        else:
+            self._mark_metric_status(
+                "latency_jitter",
+                "not_collected",
+                "mavlink_collector_unavailable"
+            )
+            # Null out MAVLink-dependent metrics
+            m.mavproxy_drone.mavproxy_drone_start_time = None
+            m.mavproxy_drone.mavproxy_drone_end_time = None
+            m.mavproxy_drone.mavproxy_drone_tx_pps = None
+            m.mavproxy_drone.mavproxy_drone_rx_pps = None
+            m.mavproxy_drone.mavproxy_drone_total_msgs_sent = None
+            m.mavproxy_drone.mavproxy_drone_total_msgs_received = None
+            m.mavproxy_drone.mavproxy_drone_msg_type_counts = None
+            m.mavproxy_drone.mavproxy_drone_heartbeat_interval_ms = None
+            m.mavproxy_drone.mavproxy_drone_heartbeat_loss_count = None
+            m.mavproxy_drone.mavproxy_drone_seq_gap_count = None
+            m.mavproxy_drone.mavproxy_drone_cmd_sent_count = None
+            m.mavproxy_drone.mavproxy_drone_cmd_ack_received_count = None
+            m.mavproxy_drone.mavproxy_drone_cmd_ack_latency_avg_ms = None
+            m.mavproxy_drone.mavproxy_drone_cmd_ack_latency_p95_ms = None
+            m.mavproxy_drone.mavproxy_drone_stream_rate_hz = None
+
+            m.mavlink_integrity.mavlink_sysid = None
+            m.mavlink_integrity.mavlink_compid = None
+            m.mavlink_integrity.mavlink_protocol_version = None
+            m.mavlink_integrity.mavlink_packet_crc_error_count = None
+            m.mavlink_integrity.mavlink_decode_error_count = None
+            m.mavlink_integrity.mavlink_msg_drop_count = None
+            m.mavlink_integrity.mavlink_out_of_order_count = None
+            m.mavlink_integrity.mavlink_duplicate_count = None
+            m.mavlink_integrity.mavlink_message_latency_avg_ms = None
+
+            self._mark_metric_status(
+                "mavlink_integrity",
+                "not_collected",
+                "mavlink_collector_unavailable"
+            )
+
+            m.fc_telemetry.fc_mode = None
+            m.fc_telemetry.fc_armed_state = None
+            m.fc_telemetry.fc_heartbeat_age_ms = None
+            m.fc_telemetry.fc_attitude_update_rate_hz = None
+            m.fc_telemetry.fc_position_update_rate_hz = None
+            m.fc_telemetry.fc_battery_voltage_v = None
+            m.fc_telemetry.fc_battery_current_a = None
+            m.fc_telemetry.fc_battery_remaining_percent = None
+            m.fc_telemetry.fc_cpu_load_percent = None
+            m.fc_telemetry.fc_sensor_health_flags = None
+
+            self._mark_metric_status(
+                "fc_telemetry",
+                "not_collected",
+                "mavlink_collector_unavailable"
+            )
         
         # Q. Observability
-        m.observability.log_sample_count = len(self._system_samples)
-        m.observability.metrics_sampling_rate_hz = 2.0
-        m.observability.collection_start_time = m.run_context.run_start_time_mono
-        m.observability.collection_end_time = now
-        m.observability.collection_duration_ms = (now - m.run_context.run_start_time_mono) * 1000
+        if self._system_samples:
+            m.observability.log_sample_count = len(self._system_samples)
+            m.observability.metrics_sampling_rate_hz = 2.0
+            m.observability.collection_start_time = m.run_context.run_start_time_mono
+            m.observability.collection_end_time = now
+            m.observability.collection_duration_ms = (now - m.run_context.run_start_time_mono) * 1000
+        else:
+            m.observability.log_sample_count = None
+            m.observability.metrics_sampling_rate_hz = None
+            m.observability.collection_start_time = None
+            m.observability.collection_end_time = None
+            m.observability.collection_duration_ms = None
+            self._mark_metric_status(
+                "observability",
+                "not_collected",
+                "no_system_samples"
+            )
         
         # R. Validation
-        m.validation.expected_samples = int(m.observability.collection_duration_ms / 500)  # 2 Hz
-        m.validation.collected_samples = len(self._system_samples)
-        m.validation.lost_samples = max(0, m.validation.expected_samples - m.validation.collected_samples)
-        m.validation.success_rate_percent = 100.0 if m.handshake.handshake_success else 0.0
-        m.validation.benchmark_pass_fail = "PASS" if m.handshake.handshake_success else "FAIL"
+        if m.observability.collection_duration_ms is not None:
+            m.validation.expected_samples = int(m.observability.collection_duration_ms / 500)  # 2 Hz
+            m.validation.collected_samples = len(self._system_samples)
+            m.validation.lost_samples = max(0, m.validation.expected_samples - m.validation.collected_samples)
+        else:
+            m.validation.expected_samples = None
+            m.validation.collected_samples = None
+            m.validation.lost_samples = None
+            self._mark_metric_status(
+                "validation.collected_samples",
+                "not_collected",
+                "no_system_samples"
+            )
+            self._mark_metric_status(
+                "validation.lost_samples",
+                "not_collected",
+                "no_system_samples"
+            )
+
+        if m.handshake.handshake_success is not None:
+            m.validation.success_rate_percent = 100.0 if m.handshake.handshake_success else 0.0
+            m.validation.benchmark_pass_fail = "PASS" if m.handshake.handshake_success else "FAIL"
+        else:
+            m.validation.success_rate_percent = None
+            m.validation.benchmark_pass_fail = None
+            self._mark_metric_status(
+                "validation.benchmark_pass_fail",
+                "not_collected",
+                "handshake_status_missing"
+            )
+            self._mark_metric_status(
+                "validation.success_rate_percent",
+                "not_collected",
+                "handshake_status_missing"
+            )
+        m.validation.metric_status = dict(self._metric_status)
         
         # Merge additional data from peer
         if merge_from:
             self._merge_peer_data(m, merge_from)
+
+        if m.latency_jitter.latency_invalid_reason:
+            self._mark_metric_status(
+                "latency_jitter.one_way_latency_avg_ms",
+                "invalid",
+                m.latency_jitter.latency_invalid_reason,
+            )
+        if m.latency_jitter.rtt_invalid_reason:
+            self._mark_metric_status(
+                "latency_jitter.rtt_avg_ms",
+                "invalid",
+                m.latency_jitter.rtt_invalid_reason,
+            )
+
+        # Flag missing GCS system metrics
+        if all(
+            getattr(m.system_gcs, field) is None
+            for field in (
+                "cpu_usage_avg_percent",
+                "cpu_usage_peak_percent",
+                "cpu_freq_mhz",
+                "memory_rss_mb",
+                "memory_vms_mb",
+                "thread_count",
+                "temperature_c",
+                "uptime_s",
+                "load_avg_1m",
+                "load_avg_5m",
+                "load_avg_15m",
+            )
+        ):
+            self._mark_metric_status(
+                "system_gcs",
+                "not_collected",
+                "gcs_system_metrics_missing"
+            )
         
         # Save to file
         self._save_metrics(m)
@@ -641,6 +1036,7 @@ class MetricsAggregator:
         self._current_metrics = None
         self._system_samples = []
         self._last_proxy_counters = None
+        self._metric_status = {}
         
         return m
     
@@ -679,6 +1075,11 @@ class MetricsAggregator:
                 if hasattr(m.system_drone, k):
                     setattr(m.system_drone, k, v)
 
+        if "system_gcs" in peer_data:
+            for k, v in peer_data["system_gcs"].items():
+                if hasattr(m.system_gcs, k):
+                    setattr(m.system_gcs, k, v)
+
         # Merge power metrics
         if "power_energy" in peer_data:
             for k, v in peer_data["power_energy"].items():
@@ -689,10 +1090,24 @@ class MetricsAggregator:
         if "mavlink_validation" in peer_data:
             d = peer_data["mavlink_validation"]
             target = m.mavproxy_gcs
+
+            if d is None:
+                self._mark_metric_status(
+                    "mavproxy_gcs",
+                    "not_collected",
+                    "gcs_mavlink_validation_missing"
+                )
+            else:
             
-            # Direct mapping from get_metrics() dict keys to MavProxyGcsMetrics fields
-            target.mavproxy_gcs_total_msgs_received = d.get("total_msgs_received", 0)
-            target.mavproxy_gcs_seq_gap_count = d.get("seq_gap_count", 0)
+                # Direct mapping from get_metrics() dict keys to MavProxyGcsMetrics fields
+                target.mavproxy_gcs_total_msgs_received = d.get("total_msgs_received")
+                target.mavproxy_gcs_seq_gap_count = d.get("seq_gap_count")
+
+        if "latency_jitter" in peer_data and isinstance(peer_data.get("latency_jitter"), dict):
+            lj = peer_data.get("latency_jitter", {})
+            for key, value in lj.items():
+                if hasattr(m.latency_jitter, key):
+                    setattr(m.latency_jitter, key, value)
     
     def _save_metrics(self, m: ComprehensiveSuiteMetrics):
         """Save metrics to JSON file."""

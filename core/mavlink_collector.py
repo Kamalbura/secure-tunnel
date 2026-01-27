@@ -151,12 +151,19 @@ class MavLinkMetricsCollector:
         
         # Latency tracking (for timestamped messages)
         self._latency_samples: List[float] = []
+        self._latency_jitter_samples: List[float] = []
+        self._last_latency_ms: Optional[float] = None
+        self._boot_to_unix_offset_s: Optional[float] = None
+        self._boot_to_unix_last_mono: float = 0.0
+
+        # RTT tracking (COMMAND_LONG -> COMMAND_ACK)
+        self._rtt_samples_ms: List[float] = []
         
         # Raw message log (bounded)
         self._msg_log: deque = deque(maxlen=10000)
         
         # Protocol info
-        self._protocol_version = ""
+        self._protocol_version: Optional[str] = None
         
         # Chronos Telemetry Store
         self._last_telemetry = {
@@ -246,12 +253,19 @@ class MavLinkMetricsCollector:
 
             # Latency tracking
             self._latency_samples = []
+            self._latency_jitter_samples = []
+            self._last_latency_ms = None
+            self._boot_to_unix_offset_s = None
+            self._boot_to_unix_last_mono = 0.0
+
+            # RTT samples
+            self._rtt_samples_ms = []
 
             # Raw message log
             self._msg_log = deque(maxlen=10000)
 
             # Protocol info
-            self._protocol_version = ""
+            self._protocol_version = None
 
             # Flight controller telemetry fields
             self._fc_mode = ""
@@ -320,14 +334,15 @@ class MavLinkMetricsCollector:
     def _process_one(self):
         """Process one MAVLink message."""
         now = time.monotonic()
+        now_wall = time.time()
         
         if self._mav_conn:
             msg = self._mav_conn.recv_match(blocking=True, timeout=0.1)
             if msg:
-                self._handle_message(msg, now)
+                self._handle_message(msg, now, now_wall)
         
     
-    def _handle_message(self, msg, now: float):
+    def _handle_message(self, msg, now: float, now_wall: float):
         """Handle a parsed MAVLink message."""
         with self._lock:
             msg_type = msg.get_type()
@@ -376,8 +391,19 @@ class MavLinkMetricsCollector:
             # Heartbeat tracking
             if msg_type == "HEARTBEAT":
                 self._handle_heartbeat(msg, now)
+
+            # Track MAVLink one-way latency (timestamped messages)
+            self._track_message_latency(msg, now_wall)
             
-            # Command ACK tracking
+            # Command tracking / RTT
+            elif msg_type in {"COMMAND_LONG", "COMMAND_INT"}:
+                try:
+                    cmd_id = int(getattr(msg, "command", 0) or 0)
+                except Exception:
+                    cmd_id = 0
+                if cmd_id > 0:
+                    self._commands.cmd_sent += 1
+                    self._commands.ack_pending[cmd_id] = now
             elif msg_type == "COMMAND_ACK":
                 self._handle_command_ack(msg, now)
             
@@ -506,6 +532,7 @@ class MavLinkMetricsCollector:
                 send_time = self._commands.ack_pending.pop(cmd_id)
                 latency_ms = (now - send_time) * 1000.0
                 self._commands.latency_samples.append(latency_ms)
+                self._rtt_samples_ms.append(latency_ms)
         except:
             pass
     
@@ -528,16 +555,51 @@ class MavLinkMetricsCollector:
                         first_seen_mono=time.monotonic()
                     )
                 self._msg_stats[msg_id].count_tx += 1
+
+    def _track_message_latency(self, msg, now_wall: float) -> None:
+        """Track one-way latency for MAVLink messages when timestamp is available."""
+        # Update boot->unix mapping from SYSTEM_TIME
+        try:
+            if msg.get_type() == "SYSTEM_TIME":
+                time_unix_usec = getattr(msg, "time_unix_usec", 0) or 0
+                time_boot_ms = getattr(msg, "time_boot_ms", 0) or 0
+                if time_unix_usec and time_boot_ms:
+                    self._boot_to_unix_offset_s = (time_unix_usec / 1_000_000.0) - (time_boot_ms / 1000.0)
+                    self._boot_to_unix_last_mono = time.monotonic()
+        except Exception:
+            pass
+
+        # Prefer unix microsecond timestamps if present and plausible
+        timestamp_us = getattr(msg, "time_usec", None)
+        if isinstance(timestamp_us, (int, float)) and timestamp_us > 1_000_000_000_000:
+            sent_time = float(timestamp_us) / 1_000_000.0
+            latency_ms = (now_wall - sent_time) * 1000.0
+        else:
+            # Use boot time + SYSTEM_TIME offset when available
+            time_boot_ms = getattr(msg, "time_boot_ms", None)
+            if time_boot_ms is None or self._boot_to_unix_offset_s is None:
+                return
+            sent_time = self._boot_to_unix_offset_s + (float(time_boot_ms) / 1000.0)
+            latency_ms = (now_wall - sent_time) * 1000.0
+
+        # Filter out implausible samples (negative or extreme)
+        if latency_ms < 0 or latency_ms > 60_000:
+            return
+
+        self._latency_samples.append(latency_ms)
+        if self._last_latency_ms is not None:
+            self._latency_jitter_samples.append(abs(latency_ms - self._last_latency_ms))
+        self._last_latency_ms = latency_ms
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get comprehensive MAVLink metrics."""
         with self._lock:
             end_time = self._end_time_mono if self._end_time_mono > 0 else time.monotonic()
-            duration_s = end_time - self._start_time_mono if self._start_time_mono > 0 else 1.0
+            duration_s = end_time - self._start_time_mono if self._start_time_mono > 0 else 0.0
             
             # Calculate rates
-            rx_pps = self._total_rx / duration_s if duration_s > 0 else 0.0
-            tx_pps = self._total_tx / duration_s if duration_s > 0 else 0.0
+            rx_pps = self._total_rx / duration_s if duration_s > 0 else None
+            tx_pps = self._total_tx / duration_s if duration_s > 0 else None
             
             # Heartbeat stats
             hb_interval_avg = 0.0
@@ -557,14 +619,45 @@ class MavLinkMetricsCollector:
                 p95_idx = int(len(samples) * 0.95)
                 cmd_latency_p95 = samples[min(p95_idx, len(samples) - 1)]
             
-            # Message latency stats (if we have timestamped messages)
-            msg_latency_avg = 0.0
-            msg_latency_p95 = 0.0
+            # Message latency stats (timestamped messages)
+            msg_latency_avg = None
+            msg_latency_p95 = None
             if self._latency_samples:
                 samples = sorted(self._latency_samples)
                 msg_latency_avg = sum(samples) / len(samples)
                 p95_idx = int(len(samples) * 0.95)
                 msg_latency_p95 = samples[min(p95_idx, len(samples) - 1)]
+
+            # Jitter stats
+            jitter_avg = None
+            jitter_p95 = None
+            if self._latency_jitter_samples:
+                jitter_samples = sorted(self._latency_jitter_samples)
+                jitter_avg = sum(jitter_samples) / len(jitter_samples)
+                j95_idx = int(len(jitter_samples) * 0.95)
+                jitter_p95 = jitter_samples[min(j95_idx, len(jitter_samples) - 1)]
+
+            latency_invalid_reason = None
+            if not self._latency_samples:
+                if self._boot_to_unix_offset_s is None:
+                    latency_invalid_reason = "missing_system_time_reference"
+                else:
+                    latency_invalid_reason = "no_timestamped_messages"
+
+            # RTT stats (command -> ack)
+            rtt_avg = None
+            rtt_p95 = None
+            if self._rtt_samples_ms:
+                rtt_samples = sorted(self._rtt_samples_ms)
+                rtt_avg = sum(rtt_samples) / len(rtt_samples)
+                r95_idx = int(len(rtt_samples) * 0.95)
+                rtt_p95 = rtt_samples[min(r95_idx, len(rtt_samples) - 1)]
+
+            rtt_invalid_reason = None
+            if self._commands.cmd_sent <= 0:
+                rtt_invalid_reason = "no_command_sent"
+            elif not self._rtt_samples_ms:
+                rtt_invalid_reason = "no_command_ack"
             
             # Message type counts
             msg_type_counts = {
@@ -577,7 +670,7 @@ class MavLinkMetricsCollector:
                 stats.count_rx for stats in self._msg_stats.values()
                 if stats.msg_name != "HEARTBEAT"
             )
-            stream_rate = non_hb_msgs / duration_s if duration_s > 0 else 0.0
+            stream_rate = non_hb_msgs / duration_s if duration_s > 0 else None
             
             return {
                 # Basic counts
@@ -587,9 +680,9 @@ class MavLinkMetricsCollector:
                 "total_bytes_received": self._total_bytes_rx,
                 
                 # Rates
-                "tx_pps": round(tx_pps, 2),
-                "rx_pps": round(rx_pps, 2),
-                "stream_rate_hz": round(stream_rate, 2),
+                "tx_pps": None if tx_pps is None else round(tx_pps, 2),
+                "rx_pps": None if rx_pps is None else round(rx_pps, 2),
+                "stream_rate_hz": None if stream_rate is None else round(stream_rate, 2),
                 
                 # Duration
                 "start_time": self._start_time_mono,
@@ -617,8 +710,8 @@ class MavLinkMetricsCollector:
                 # Command tracking
                 "cmd_sent_count": self._commands.cmd_sent,
                 "cmd_ack_received_count": self._commands.cmd_ack_received,
-                "cmd_ack_latency_avg_ms": round(cmd_latency_avg, 2),
-                "cmd_ack_latency_p95_ms": round(cmd_latency_p95, 2),
+                "cmd_ack_latency_avg_ms": None if self._commands.cmd_sent <= 0 else round(cmd_latency_avg, 2),
+                "cmd_ack_latency_p95_ms": None if self._commands.cmd_sent <= 0 else round(cmd_latency_p95, 2),
                 
                 # Errors
                 "crc_error_count": self._crc_errors,
@@ -626,11 +719,24 @@ class MavLinkMetricsCollector:
                 "msg_drop_count": self._msg_drops,
                 
                 # Message latency (if available)
-                "message_latency_avg_ms": round(msg_latency_avg, 2),
-                "message_latency_p95_ms": round(msg_latency_p95, 2),
+                "message_latency_avg_ms": None if msg_latency_avg is None else round(msg_latency_avg, 2),
+                "message_latency_p95_ms": None if msg_latency_p95 is None else round(msg_latency_p95, 2),
+
+                # Latency / jitter summary
+                "one_way_latency_avg_ms": None if msg_latency_avg is None else round(msg_latency_avg, 2),
+                "one_way_latency_p95_ms": None if msg_latency_p95 is None else round(msg_latency_p95, 2),
+                "jitter_avg_ms": None if jitter_avg is None else round(jitter_avg, 2),
+                "jitter_p95_ms": None if jitter_p95 is None else round(jitter_p95, 2),
+                "latency_sample_count": None if not self._latency_samples else len(self._latency_samples),
+                "latency_invalid_reason": latency_invalid_reason,
+
+                "rtt_avg_ms": None if rtt_avg is None else round(rtt_avg, 2),
+                "rtt_p95_ms": None if rtt_p95 is None else round(rtt_p95, 2),
+                "rtt_sample_count": None if not self._rtt_samples_ms else len(self._rtt_samples_ms),
+                "rtt_invalid_reason": rtt_invalid_reason,
                 
                 # Protocol
-                "protocol_version": self._protocol_version,
+                "protocol_version": self._protocol_version or None,
                 "sniff_port": self._sniff_port,
             }
     
@@ -675,7 +781,7 @@ class MavLinkMetricsCollector:
         
         integrity_metrics.mavlink_sysid = m["heartbeat_sysid"]
         integrity_metrics.mavlink_compid = m["heartbeat_compid"]
-        integrity_metrics.mavlink_protocol_version = m["protocol_version"]
+        integrity_metrics.mavlink_protocol_version = m["protocol_version"] or None
         integrity_metrics.mavlink_packet_crc_error_count = m["crc_error_count"]
         integrity_metrics.mavlink_decode_error_count = m["decode_error_count"]
         integrity_metrics.mavlink_msg_drop_count = m["msg_drop_count"]

@@ -18,13 +18,16 @@ export default function PowerAnalysis() {
 
     // Group by KEM family for energy comparison
     const energyByKem = suites.reduce((acc, suite) => {
-        const family = suite.kem_algorithm.split('-')[0] || 'Unknown';
+        const kemAlg = suite.kem_algorithm || 'Unknown';
+        const family = kemAlg.split('-')[0] || 'Unknown';
         if (!acc[family]) {
             acc[family] = { name: family, total: 0, count: 0, avg: 0 };
         }
-        acc[family].total += suite.energy_total_j;
-        acc[family].count++;
-        acc[family].avg = acc[family].total / acc[family].count;
+        if (suite.energy_total_j !== null && suite.energy_total_j !== undefined) {
+            acc[family].total += suite.energy_total_j;
+            acc[family].count++;
+            acc[family].avg = acc[family].total / acc[family].count;
+        }
         return acc;
     }, {} as Record<string, { name: string; total: number; count: number; avg: number }>);
 
@@ -36,12 +39,12 @@ export default function PowerAnalysis() {
         power: s.power_avg_w,
         handshake: s.handshake_total_duration_ms,
         energy: s.energy_total_j,
-    })).filter(d => d.power > 0 && d.handshake > 0);
+    })).filter(d => d.power !== null && d.power !== undefined && d.handshake !== null && d.handshake !== undefined);
 
     // Top energy consumers
     const topEnergy = [...suites]
-        .filter(s => s.energy_total_j > 0)
-        .sort((a, b) => b.energy_total_j - a.energy_total_j)
+        .filter(s => s.energy_total_j !== null && s.energy_total_j !== undefined)
+        .sort((a, b) => (b.energy_total_j || 0) - (a.energy_total_j || 0))
         .slice(0, 10);
 
     if (isLoading && suites.length === 0) {
@@ -61,21 +64,29 @@ export default function PowerAnalysis() {
                 <div className="card">
                     <div className="text-gray-400 text-sm">Avg Power</div>
                     <div className="text-3xl font-bold text-green-400">
-                        {suites.length > 0
-                            ? (suites.reduce((sum, s) => sum + s.power_avg_w, 0) / suites.length).toFixed(2)
-                            : '—'} W
+                        {(() => {
+                            const values = suites.map(s => s.power_avg_w).filter(v => v !== null && v !== undefined) as number[];
+                            if (values.length === 0) return 'Not collected';
+                            const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+                            return `${avg.toFixed(2)} W`;
+                        })()}
                     </div>
                 </div>
                 <div className="card">
                     <div className="text-gray-400 text-sm">Total Energy</div>
                     <div className="text-3xl font-bold text-blue-400">
-                        {suites.reduce((sum, s) => sum + s.energy_total_j, 0).toFixed(1)} J
+                        {(() => {
+                            const values = suites.map(s => s.energy_total_j).filter(v => v !== null && v !== undefined) as number[];
+                            if (values.length === 0) return 'Not collected';
+                            const total = values.reduce((sum, v) => sum + v, 0);
+                            return `${total.toFixed(1)} J`;
+                        })()}
                     </div>
                 </div>
                 <div className="card">
                     <div className="text-gray-400 text-sm">Suites with Power Data</div>
                     <div className="text-3xl font-bold text-purple-400">
-                        {suites.filter(s => s.power_avg_w > 0).length}
+                        {suites.filter(s => s.power_avg_w !== null && s.power_avg_w !== undefined).length}
                     </div>
                 </div>
                 <div className="card">
@@ -166,9 +177,9 @@ export default function PowerAnalysis() {
                                 <td className="text-gray-500">{idx + 1}</td>
                                 <td className="font-mono text-sm">{suite.suite_id}</td>
                                 <td className="text-blue-400">{suite.kem_algorithm}</td>
-                                <td className="text-right font-mono text-green-400">{suite.energy_total_j.toFixed(2)}</td>
-                                <td className="text-right font-mono">{suite.power_avg_w.toFixed(2)}</td>
-                                <td className="text-right font-mono">{suite.handshake_total_duration_ms.toFixed(2)}</td>
+                                <td className="text-right font-mono text-green-400">{suite.energy_total_j !== null && suite.energy_total_j !== undefined ? suite.energy_total_j.toFixed(2) : 'Not collected'}</td>
+                                <td className="text-right font-mono">{suite.power_avg_w !== null && suite.power_avg_w !== undefined ? suite.power_avg_w.toFixed(2) : 'Not collected'}</td>
+                                <td className="text-right font-mono">{suite.handshake_total_duration_ms !== null && suite.handshake_total_duration_ms !== undefined ? suite.handshake_total_duration_ms.toFixed(2) : 'Not collected'}</td>
                             </tr>
                         ))}
                     </tbody>

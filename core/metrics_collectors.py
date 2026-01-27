@@ -212,17 +212,17 @@ class SystemCollector(BaseCollector):
         """Collect system resource metrics."""
         metrics = {
             "timestamp": time.time(),
-            "cpu_percent": 0.0,
-            "cpu_freq_mhz": 0.0,
-            "memory_rss_mb": 0.0,
-            "memory_vms_mb": 0.0,
-            "memory_percent": 0.0,
-            "thread_count": 0,
-            "temperature_c": 0.0,
-            "load_avg_1m": 0.0,
-            "load_avg_5m": 0.0,
-            "load_avg_15m": 0.0,
-            "uptime_s": 0.0,
+            "cpu_percent": None,
+            "cpu_freq_mhz": None,
+            "memory_rss_mb": None,
+            "memory_vms_mb": None,
+            "memory_percent": None,
+            "thread_count": None,
+            "temperature_c": None,
+            "load_avg_1m": None,
+            "load_avg_5m": None,
+            "load_avg_15m": None,
+            "uptime_s": None,
         }
         
         if HAS_PSUTIL:
@@ -541,10 +541,10 @@ class PowerCollector(BaseCollector):
         
         if len(samples) < 2:
             return {
-                "energy_total_j": 0.0,
-                "power_avg_w": 0.0,
-                "power_peak_w": 0.0,
-                "duration_s": 0.0,
+                "energy_total_j": None,
+                "power_avg_w": None,
+                "power_peak_w": None,
+                "duration_s": None,
             }
         
         # Calculate energy using trapezoidal integration

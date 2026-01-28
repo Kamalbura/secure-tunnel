@@ -398,7 +398,7 @@ class MavLinkMetricsCollector:
             self._track_message_latency(msg, now_wall)
             
             # Command tracking / RTT
-            elif msg_type in {"COMMAND_LONG", "COMMAND_INT"}:
+            if msg_type in {"COMMAND_LONG", "COMMAND_INT"}:
                 try:
                     cmd_id = int(getattr(msg, "command", 0) or 0)
                 except Exception:

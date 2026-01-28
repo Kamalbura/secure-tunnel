@@ -613,7 +613,7 @@ class GcsBenchmarkServer:
             log("[WARNING] MAVProxy failed to start - continuing without it")
         
         # Start MAVLink monitor
-        self.mavlink_monitor.start()
+        self.mavlink_monitor.start_sniffing(port=MAVLINK_SNIFF_PORT)
         
         log(f"GCS Benchmark Server listening on {GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}")
         log(f"Run ID: {self.run_id}")

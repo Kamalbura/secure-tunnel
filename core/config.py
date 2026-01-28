@@ -18,7 +18,7 @@ from core.exceptions import ConfigError
 # lab runs, keep these set to the actual LAN-facing addresses.
 _DRONE_HOST_LAN = "192.168.0.103"   # uavpi drone LAN IP (wlan0 from `ip addr`)
 _DRONE_HOST_TAILSCALE = "100.101.93.23"  # Tailscale: SSH/maintenance ONLY
-_GCS_HOST_LAN = "192.168.0.100"    # GCS Windows LAN IP (from ipconfig)
+_GCS_HOST_LAN = "192.168.0.104"    # GCS Windows LAN IP (from ipconfig)
 _GCS_HOST_TAILSCALE = "100.101.93.18"  # Tailscale: SSH/maintenance ONLY
 
 # Default to LAN hosts for operational runs.

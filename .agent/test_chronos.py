@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 try:
     from core.config import CONFIG
-    HOST = str(CONFIG.get("GCS_HOST"))
+    HOST = "192.168.0.104" # LAN override
     PORT = int(CONFIG.get("GCS_CONTROL_PORT", 48080))
     print(f"Targeting GCS at {HOST}:{PORT}")
     

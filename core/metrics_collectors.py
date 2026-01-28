@@ -36,6 +36,14 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
+# Optional INA219 dependency
+try:
+    from ina219 import INA219  # type: ignore
+    HAS_INA219 = True
+except ImportError:
+    INA219 = None  # type: ignore
+    HAS_INA219 = False
+
 # =============================================================================
 # BASE COLLECTOR
 # =============================================================================
@@ -376,7 +384,8 @@ class PowerCollector(BaseCollector):
         
         # Check for INA219
         try:
-            from ina219 import INA219
+            if not HAS_INA219:
+                raise ImportError("ina219 not available")
             # Raspberry Pi stacks vary; explicitly probe common bus numbers.
             bus_candidates = []
             env_bus = os.environ.get("INA219_BUSNUM")
@@ -399,7 +408,7 @@ class PowerCollector(BaseCollector):
             for busnum in bus_candidates:
                 for addr in addr_candidates:
                     try:
-                        ina = INA219(shunt_ohms=0.1, address=addr, busnum=busnum)
+                        ina = INA219(shunt_ohms=0.1, address=addr, busnum=busnum)  # type: ignore[misc]
                         ina.configure()
                         self._ina_busnum = busnum
                         self._ina_address = addr
@@ -453,9 +462,9 @@ class PowerCollector(BaseCollector):
         metrics = {
             "timestamp": time.time(),
             "backend": self.backend,
-            "voltage_v": 0.0,
-            "current_a": 0.0,
-            "power_w": 0.0,
+            "voltage_v": None,
+            "current_a": None,
+            "power_w": None,
         }
         
         if self.backend == "ina219" and self._ina219:

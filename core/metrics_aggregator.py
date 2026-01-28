@@ -294,7 +294,7 @@ class MetricsAggregator:
         self._start_background_collection()
         
         # Start power sampling (drone only)
-        if self.power_collector and self.power_collector.backend != "none":
+        if self.role == "drone" and self.power_collector and self.power_collector.backend != "none":
             self.power_collector.start_sampling(rate_hz=1000.0)
         
         # Start MAVLink sniffing

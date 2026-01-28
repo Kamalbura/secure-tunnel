@@ -158,11 +158,20 @@ class DroneProxyManager:
         log_path = LOGS_DIR / f"drone_{suite_name}_{timestamp}.log"
         log_handle = open(log_path, "w", encoding="utf-8")
         
+        # Ensure subprocess can find 'core' package
+        env = os.environ.copy()
+        project_root = str(Path(__file__).parent.parent.absolute())
+        existing_pp = env.get("PYTHONPATH", "")
+        if project_root not in existing_pp:
+            sep = ";" if sys.platform.startswith("win") else ":"
+            env["PYTHONPATH"] = f"{project_root}{sep}{existing_pp}" if existing_pp else project_root
+
         self.managed_proc = ManagedProcess(
             cmd=cmd,
             name=f"proxy-{suite_name}",
             stdout=log_handle,
-            stderr=subprocess.STDOUT
+            stderr=subprocess.STDOUT,
+            env=env
         )
         
         if self.managed_proc.start():

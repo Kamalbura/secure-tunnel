@@ -28,7 +28,9 @@ from analysis import (
     get_drone_vs_gcs_summary,
     generate_schema_definition,
     aggregate_by_kem_family,
-    aggregate_by_nist_level
+    aggregate_by_nist_level,
+    is_suite_invalid,
+    filter_valid_suites
 )
 
 router = APIRouter(prefix="/api", tags=["api"])
@@ -45,9 +47,10 @@ async def health_check():
         store = get_store()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+    valid_count = len(filter_valid_suites(list(store._suites.values())))
     return HealthResponse(
         status="ok",
-        suites_loaded=store.suite_count,
+        suites_loaded=valid_count,
         runs_loaded=store.run_count
     )
 
@@ -187,6 +190,9 @@ async def compare_two_suites(
     
     if s_b is None:
         raise HTTPException(status_code=404, detail=f"Suite B not found: {suite_b}")
+
+    if is_suite_invalid(s_a) or is_suite_invalid(s_b):
+        raise HTTPException(status_code=400, detail="One or both suites are scientifically invalid and cannot be compared")
     
     result = compare_suites(s_a, s_b)
     comparison_table = compute_comparison_table(s_a, s_b)

@@ -125,6 +125,100 @@ export default function Overview() {
                 </div>
             </div>
 
+            {/* Link Quality Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="card">
+                    <h3 className="card-header">Avg Goodput by KEM Family (Derived, Server)</h3>
+                    <div className="h-64">
+                        {aggWarning ? (
+                            <div className="text-gray-400 text-sm">{aggWarning}</div>
+                        ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={kemFamilyData}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                                <XAxis dataKey="crypto_identity_kem_family" stroke="#9ca3af" tick={{ fontSize: 12 }} />
+                                <YAxis stroke="#9ca3af" tick={{ fontSize: 12 }} label={{ value: 'Mbps', angle: -90, position: 'insideLeft', fill: '#9ca3af' }} />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151' }}
+                                    labelStyle={{ color: '#9ca3af' }}
+                                />
+                                <Bar dataKey="data_plane_goodput_mbps_mean" fill="#0ea5e9" name="Avg Goodput (Mbps)" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                        )}
+                    </div>
+                </div>
+
+                <div className="card">
+                    <h3 className="card-header">Avg Packet Loss Ratio by KEM Family (Derived, Server)</h3>
+                    <div className="h-64">
+                        {aggWarning ? (
+                            <div className="text-gray-400 text-sm">{aggWarning}</div>
+                        ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={kemFamilyData}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                                <XAxis dataKey="crypto_identity_kem_family" stroke="#9ca3af" tick={{ fontSize: 12 }} />
+                                <YAxis stroke="#9ca3af" tick={{ fontSize: 12 }} label={{ value: 'ratio', angle: -90, position: 'insideLeft', fill: '#9ca3af' }} />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151' }}
+                                    labelStyle={{ color: '#9ca3af' }}
+                                />
+                                <Bar dataKey="data_plane_packet_loss_ratio_mean" fill="#f59e0b" name="Avg Loss Ratio" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Latency Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="card">
+                    <h3 className="card-header">Avg One-way Latency by KEM Family (Valid Only)</h3>
+                    <div className="h-64">
+                        {aggWarning ? (
+                            <div className="text-gray-400 text-sm">{aggWarning}</div>
+                        ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={kemFamilyData}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                                <XAxis dataKey="crypto_identity_kem_family" stroke="#9ca3af" tick={{ fontSize: 12 }} />
+                                <YAxis stroke="#9ca3af" tick={{ fontSize: 12 }} label={{ value: 'ms', angle: -90, position: 'insideLeft', fill: '#9ca3af' }} />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151' }}
+                                    labelStyle={{ color: '#9ca3af' }}
+                                />
+                                <Bar dataKey="latency_jitter_one_way_latency_avg_ms_mean" fill="#6366f1" name="Avg One-way (ms)" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                        )}
+                    </div>
+                </div>
+
+                <div className="card">
+                    <h3 className="card-header">Avg RTT by KEM Family (Valid Only)</h3>
+                    <div className="h-64">
+                        {aggWarning ? (
+                            <div className="text-gray-400 text-sm">{aggWarning}</div>
+                        ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={kemFamilyData}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                                <XAxis dataKey="crypto_identity_kem_family" stroke="#9ca3af" tick={{ fontSize: 12 }} />
+                                <YAxis stroke="#9ca3af" tick={{ fontSize: 12 }} label={{ value: 'ms', angle: -90, position: 'insideLeft', fill: '#9ca3af' }} />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151' }}
+                                    labelStyle={{ color: '#9ca3af' }}
+                                />
+                                <Bar dataKey="latency_jitter_rtt_avg_ms_mean" fill="#14b8a6" name="Avg RTT (ms)" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                        )}
+                    </div>
+                </div>
+            </div>
+
             {/* Recent Runs */}
             <div className="card">
                 <h3 className="card-header">Recent Benchmark Runs</h3>

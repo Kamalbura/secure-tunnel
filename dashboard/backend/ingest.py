@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 LOGS_DIR = Path("logs/benchmarks")
 COMPREHENSIVE_DIR = LOGS_DIR / "comprehensive"
+GCS_METRICS_GLOB = str(LOGS_DIR / "**" / "gcs_suite_metrics.jsonl")
 
 
 class MetricsStore:
@@ -70,6 +71,7 @@ class MetricsStore:
                     power_avg_w=suite.power_energy.power_avg_w,
                     energy_total_j=suite.power_energy.energy_total_j,
                     benchmark_pass_fail=suite.validation.benchmark_pass_fail,
+                        ingest_status=suite.ingest_status,
                 )
             )
 
@@ -110,6 +112,42 @@ def _load_json(path: Path, load_errors: List[tuple]) -> Dict[str, Any]:
         logger.warning("Failed to load JSON %s: %s", path, exc)
         load_errors.append((str(path), None, str(exc)))
         return {}
+
+
+def _parse_comprehensive_filename(path: Path) -> Optional[tuple]:
+    """Return (suite_id, run_id, role) from `suite_runid_role.json`."""
+    if path.suffix.lower() != ".json":
+        return None
+    parts = path.stem.split("_")
+    if len(parts) < 4:
+        return None
+    role = parts[-1]
+    time_part = parts[-2]
+    date_part = parts[-3]
+    run_id = f"{date_part}_{time_part}"
+    suite_id = "_".join(parts[:-3])
+    if role not in {"gcs", "drone"}:
+        return None
+    return suite_id, run_id, role
+
+
+def _build_invalid_suite(
+    suite_id: str,
+    run_id: str,
+    reason: str,
+    *,
+    ingest_status: str = "comprehensive_failed",
+) -> ComprehensiveSuiteMetrics:
+    suite = ComprehensiveSuiteMetrics()
+    suite.run_context.run_id = run_id
+    suite.run_context.suite_id = suite_id
+    suite.run_context.suite_index = 0
+    suite.validation.metric_status = {
+        "ingest": {"status": "invalid", "reason": reason},
+        "comprehensive": {"status": "invalid", "reason": reason},
+    }
+    suite.ingest_status = ingest_status
+    return suite
 
 
 def _get_path_for_status(suite: ComprehensiveSuiteMetrics, path: str) -> Any:
@@ -161,6 +199,7 @@ def _build_minimal_suite(entry: Dict[str, Any], suite_index: int) -> Comprehensi
             "reason": missing_reason,
         }
     }
+    suite.ingest_status = "jsonl_fallback"
     for field in (
         "run_context.git_commit_hash",
         "run_context.gcs_hostname",
@@ -223,22 +262,157 @@ def _build_minimal_suite(entry: Dict[str, Any], suite_index: int) -> Comprehensi
     return suite
 
 
+def _load_gcs_jsonl_entries(load_errors: List[tuple]) -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    for fpath in glob.glob(GCS_METRICS_GLOB, recursive=True):
+        path = Path(fpath)
+        run_id = path.parent.name
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    if not line.strip():
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        entry["run_id"] = run_id
+                        entries.append(entry)
+                    except Exception:
+                        continue
+        except Exception as exc:
+            logger.warning("Failed to read %s: %s", path, exc)
+            load_errors.append((str(path), None, str(exc)))
+    return entries
+
+
+def _merge_gcs_metrics(
+    suites: Dict[str, ComprehensiveSuiteMetrics],
+    entries: List[Dict[str, Any]],
+) -> None:
+    for entry in entries:
+        run_id = entry.get("run_id") or ""
+        suite_id = entry.get("suite") or entry.get("suite_id") or ""
+        if not run_id or not suite_id:
+            continue
+        key = f"{run_id}:{suite_id}"
+        suite = suites.get(key)
+        if suite is None:
+            continue
+
+        system_gcs = entry.get("system_gcs")
+        if isinstance(system_gcs, dict):
+            for k, v in system_gcs.items():
+                if hasattr(suite.system_gcs, k):
+                    setattr(suite.system_gcs, k, v)
+
+        latency_jitter = entry.get("latency_jitter")
+        if isinstance(latency_jitter, dict):
+            for k, v in latency_jitter.items():
+                if hasattr(suite.latency_jitter, k) and v is not None:
+                    setattr(suite.latency_jitter, k, v)
+            suite.latency_source = "gcs"
+
+        mavlink_validation = entry.get("mavlink_validation")
+        if isinstance(mavlink_validation, dict):
+            suite.mavproxy_gcs.mavproxy_gcs_total_msgs_received = mavlink_validation.get("total_msgs_received")
+            suite.mavproxy_gcs.mavproxy_gcs_seq_gap_count = mavlink_validation.get("seq_gap_count")
+            suite.integrity_source = "gcs"
+
+        proxy_status = entry.get("proxy_status")
+        counters = proxy_status.get("counters") if isinstance(proxy_status, dict) else None
+        if isinstance(counters, dict) and counters:
+            _apply_proxy_counters_to_data_plane(suite, counters)
+            suite.packet_counters_source = "gcs"
+
+
+def _apply_proxy_counters_to_data_plane(
+    suite: ComprehensiveSuiteMetrics,
+    counters: Dict[str, Any],
+) -> None:
+    dp = suite.data_plane
+    dp.ptx_in = counters.get("ptx_in")
+    dp.ptx_out = counters.get("ptx_out")
+    dp.enc_in = counters.get("enc_in")
+    dp.enc_out = counters.get("enc_out")
+    dp.drop_replay = counters.get("drop_replay")
+    dp.drop_auth = counters.get("drop_auth")
+    dp.drop_header = counters.get("drop_header")
+
+    dp.replay_drop_count = dp.drop_replay if dp.drop_replay is not None else None
+    drop_session_epoch = counters.get("drop_session_epoch")
+    if dp.drop_auth is not None and dp.drop_header is not None and drop_session_epoch is not None:
+        dp.decode_failure_count = dp.drop_auth + dp.drop_header + drop_session_epoch
+    else:
+        dp.decode_failure_count = None
+
+    dp.packets_sent = dp.enc_out
+    dp.packets_received = dp.enc_in
+    if dp.drop_replay is not None and dp.drop_auth is not None and dp.drop_header is not None:
+        dp.packets_dropped = dp.drop_replay + dp.drop_auth + dp.drop_header
+    else:
+        dp.packets_dropped = None
+
+    if dp.packets_sent is not None and dp.packets_dropped is not None and dp.packets_sent > 0:
+        dp.packet_loss_ratio = dp.packets_dropped / dp.packets_sent
+        dp.packet_delivery_ratio = 1.0 - dp.packet_loss_ratio
+    else:
+        dp.packet_loss_ratio = None
+        dp.packet_delivery_ratio = None
+
+    dp.bytes_sent = counters.get("ptx_bytes_out") if "ptx_bytes_out" in counters else counters.get("bytes_out")
+    dp.bytes_received = counters.get("ptx_bytes_in") if "ptx_bytes_in" in counters else counters.get("bytes_in")
+
+
+def _is_suite_scientifically_valid(suite: ComprehensiveSuiteMetrics) -> bool:
+    hs = suite.handshake
+    latency = suite.latency_jitter
+    dp = suite.data_plane
+    has_handshake = any(
+        value is not None and value != 0
+        for value in (
+            hs.handshake_total_duration_ms,
+            hs.end_to_end_handshake_duration_ms,
+            hs.protocol_handshake_duration_ms,
+        )
+    )
+    has_latency = bool(latency.one_way_latency_valid) or bool(latency.rtt_valid)
+    has_throughput = any(
+        isinstance(value, (int, float)) and value > 0
+        for value in (
+            dp.goodput_mbps,
+            dp.achieved_throughput_mbps,
+        )
+    )
+    return bool(has_handshake or has_latency or has_throughput)
+
+
 def _load_comprehensive(load_errors: List[tuple]) -> Dict[str, ComprehensiveSuiteMetrics]:
     suites: Dict[str, ComprehensiveSuiteMetrics] = {}
     for path in COMPREHENSIVE_DIR.glob("*.json"):
         payload = _load_json(path, load_errors)
-        if not payload:
-            continue
         try:
             suite = ComprehensiveSuiteMetrics(**payload)
         except Exception as exc:
             logger.warning("Invalid comprehensive metrics %s: %s", path, exc)
             load_errors.append((str(path), None, str(exc)))
+            parsed = _parse_comprehensive_filename(path)
+            if parsed:
+                suite_id, run_id, _role = parsed
+                suite = _build_invalid_suite(suite_id, run_id, str(exc))
+                key = f"{run_id}:{suite_id}"
+                suites[key] = suite
             continue
         run_id = suite.run_context.run_id or ""
         suite_id = suite.run_context.suite_id or ""
         if not run_id or not suite_id:
             logger.warning("Missing run_id or suite_id in %s", path)
+            parsed = _parse_comprehensive_filename(path)
+            if parsed:
+                parsed_suite_id, parsed_run_id, _role = parsed
+                suite = _build_invalid_suite(parsed_suite_id, parsed_run_id, "missing run_id or suite_id")
+                key = f"{parsed_run_id}:{parsed_suite_id}"
+                suites[key] = suite
+            else:
+                load_errors.append((str(path), None, "missing run_id or suite_id"))
             continue
         key = f"{run_id}:{suite_id}"
         suites[key] = suite
@@ -290,20 +464,60 @@ def build_store() -> MetricsStore:
     load_errors: List[tuple] = []
     suites = _load_comprehensive(load_errors)
 
-    entries = _load_jsonl_entries(load_errors)
-    if entries:
-        index_by_run: Dict[str, int] = {}
-        for entry in entries:
-            run_id = entry.get("run_id") or ""
-            suite_id = entry.get("suite_id") or ""
-            if not run_id or not suite_id:
-                continue
-            index_by_run.setdefault(run_id, 0)
-            suite_key = f"{run_id}:{suite_id}"
-            if suite_key not in suites:
-                suite = _build_minimal_suite(entry, index_by_run[run_id])
-                suites[suite_key] = suite
-            index_by_run[run_id] += 1
+    gcs_entries = _load_gcs_jsonl_entries(load_errors)
+    if gcs_entries:
+        _merge_gcs_metrics(suites, gcs_entries)
+
+    for suite in suites.values():
+        if suite.latency_source is None:
+            if suite.latency_jitter.one_way_latency_avg_ms is not None or suite.latency_jitter.rtt_avg_ms is not None:
+                suite.latency_source = "drone"
+        if suite.integrity_source is None:
+            if any(
+                getattr(suite.mavlink_integrity, field) is not None
+                for field in (
+                    "mavlink_packet_crc_error_count",
+                    "mavlink_decode_error_count",
+                    "mavlink_msg_drop_count",
+                    "mavlink_out_of_order_count",
+                    "mavlink_duplicate_count",
+                )
+            ):
+                suite.integrity_source = "drone"
+        if suite.packet_counters_source is None:
+            if suite.data_plane.packets_sent is not None or suite.data_plane.enc_out is not None:
+                suite.packet_counters_source = "drone"
+
+        if suite.ingest_status in {"comprehensive_failed"}:
+            continue
+        if not _is_suite_scientifically_valid(suite):
+            suite.ingest_status = "invalid_run"
+            suite.validation.metric_status["suite_validity"] = {
+                "status": "invalid",
+                "reason": "missing_valid_latency_throughput_and_handshake",
+            }
+            logger.warning(
+                "Suite marked invalid (scientific validity check failed): %s:%s",
+                suite.run_context.run_id,
+                suite.run_context.suite_id,
+            )
+
+    if not suites:
+        entries = _load_jsonl_entries(load_errors)
+        if entries:
+            logger.warning("Comprehensive metrics missing; using JSONL fallback for suite summaries")
+            index_by_run: Dict[str, int] = {}
+            for entry in entries:
+                run_id = entry.get("run_id") or ""
+                suite_id = entry.get("suite_id") or ""
+                if not run_id or not suite_id:
+                    continue
+                index_by_run.setdefault(run_id, 0)
+                suite_key = f"{run_id}:{suite_id}"
+                if suite_key not in suites:
+                    suite = _build_minimal_suite(entry, index_by_run[run_id])
+                    suites[suite_key] = suite
+                index_by_run[run_id] += 1
 
     if not suites:
         raise RuntimeError("No benchmark data found in logs/benchmarks")

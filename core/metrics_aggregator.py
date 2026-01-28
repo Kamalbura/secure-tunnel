@@ -340,6 +340,9 @@ class MetricsAggregator:
             h.handshake_end_time_drone = now
             if h.handshake_start_time_drone and h.handshake_start_time_drone > 0:
                 h.handshake_total_duration_ms = (now - h.handshake_start_time_drone) * 1000
+                h.end_to_end_handshake_duration_ms = h.handshake_total_duration_ms
+            else:
+                h.end_to_end_handshake_duration_ms = None
             
             h.handshake_success = success
             h.handshake_failure_reason = failure_reason
@@ -390,6 +393,16 @@ class MetricsAggregator:
         for src_key, dst_field in ms_field_map.items():
             if src_key in primitives and primitives[src_key]:
                 setattr(cp, dst_field, float(primitives[src_key]))
+
+        # Protocol-level handshake duration (proxy-internal)
+        hs = self._current_metrics.handshake
+        protocol_ms = primitives.get("rekey_ms")
+        if protocol_ms is None:
+            total_ns = primitives.get("handshake_total_ns")
+            if isinstance(total_ns, (int, float)) and total_ns > 0:
+                protocol_ms = total_ns / 1_000_000.0
+        if isinstance(protocol_ms, (int, float)) and protocol_ms > 0:
+            hs.protocol_handshake_duration_ms = float(protocol_ms)
         
         # Artifact sizes
         pub_key_size = primitives.get("pub_key_size_bytes")
@@ -836,11 +849,13 @@ class MetricsAggregator:
                 m.latency_jitter.jitter_p95_ms = mavlink_metrics.get("jitter_p95_ms")
                 m.latency_jitter.latency_sample_count = mavlink_metrics.get("latency_sample_count")
                 m.latency_jitter.latency_invalid_reason = mavlink_metrics.get("latency_invalid_reason", "")
+                m.latency_jitter.one_way_latency_valid = mavlink_metrics.get("one_way_latency_valid")
 
                 m.latency_jitter.rtt_avg_ms = mavlink_metrics.get("rtt_avg_ms")
                 m.latency_jitter.rtt_p95_ms = mavlink_metrics.get("rtt_p95_ms")
                 m.latency_jitter.rtt_sample_count = mavlink_metrics.get("rtt_sample_count")
                 m.latency_jitter.rtt_invalid_reason = mavlink_metrics.get("rtt_invalid_reason", "")
+                m.latency_jitter.rtt_valid = mavlink_metrics.get("rtt_valid")
 
                 if m.latency_jitter.latency_invalid_reason:
                     self._mark_metric_status(
@@ -908,6 +923,9 @@ class MetricsAggregator:
             m.mavlink_integrity.mavlink_out_of_order_count = None
             m.mavlink_integrity.mavlink_duplicate_count = None
             m.mavlink_integrity.mavlink_message_latency_avg_ms = None
+
+            m.latency_jitter.one_way_latency_valid = None
+            m.latency_jitter.rtt_valid = None
 
             self._mark_metric_status(
                 "mavlink_integrity",

@@ -97,6 +97,8 @@ class HandshakeMetrics(BaseModel):
     handshake_start_time_drone: Optional[float] = None
     handshake_end_time_drone: Optional[float] = None
     handshake_total_duration_ms: Optional[float] = None
+    protocol_handshake_duration_ms: Optional[float] = None
+    end_to_end_handshake_duration_ms: Optional[float] = None
     handshake_success: Optional[bool] = None
     handshake_failure_reason: Optional[str] = None
 
@@ -194,11 +196,13 @@ class LatencyJitterMetrics(BaseModel):
     jitter_p95_ms: Optional[float] = None
     latency_sample_count: Optional[int] = None
     latency_invalid_reason: Optional[str] = None
+    one_way_latency_valid: Optional[bool] = None
 
     rtt_avg_ms: Optional[float] = None
     rtt_p95_ms: Optional[float] = None
     rtt_sample_count: Optional[int] = None
     rtt_invalid_reason: Optional[str] = None
+    rtt_valid: Optional[bool] = None
 
     class Config:
         extra = "forbid"
@@ -422,6 +426,10 @@ class ComprehensiveSuiteMetrics(BaseModel):
     power_energy: PowerEnergyMetrics = Field(default_factory=PowerEnergyMetrics)
     observability: ObservabilityMetrics = Field(default_factory=ObservabilityMetrics)
     validation: ValidationMetrics = Field(default_factory=ValidationMetrics)
+    ingest_status: Optional[str] = None
+    latency_source: Optional[str] = None
+    integrity_source: Optional[str] = None
+    packet_counters_source: Optional[str] = None
 
     class Config:
         extra = "forbid"
@@ -445,6 +453,7 @@ class SuiteSummary(BaseModel):
     power_avg_w: Optional[float] = None
     energy_total_j: Optional[float] = None
     benchmark_pass_fail: Optional[str] = None
+    ingest_status: Optional[str] = None
 
 
 class RunSummary(BaseModel):

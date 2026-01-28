@@ -107,6 +107,8 @@ class HandshakeMetrics:
     handshake_start_time_drone: Optional[float] = None
     handshake_end_time_drone: Optional[float] = None
     handshake_total_duration_ms: Optional[float] = None
+    protocol_handshake_duration_ms: Optional[float] = None
+    end_to_end_handshake_duration_ms: Optional[float] = None
     handshake_success: Optional[bool] = None
     handshake_failure_reason: Optional[str] = None
 
@@ -206,11 +208,13 @@ class LatencyJitterMetrics:
     jitter_p95_ms: Optional[float] = None
     latency_sample_count: Optional[int] = None
     latency_invalid_reason: Optional[str] = None
+    one_way_latency_valid: Optional[bool] = None
 
     rtt_avg_ms: Optional[float] = None
     rtt_p95_ms: Optional[float] = None
     rtt_sample_count: Optional[int] = None
     rtt_invalid_reason: Optional[str] = None
+    rtt_valid: Optional[bool] = None
 
 
 # =============================================================================

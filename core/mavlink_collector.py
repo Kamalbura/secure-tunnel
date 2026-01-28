@@ -188,6 +188,8 @@ class MavLinkMetricsCollector:
         self._fc_batt_remaining_pct: float = 0.0
         self._fc_cpu_load_pct: float = 0.0
         self._fc_sensor_health_flags: int = 0
+        self._min_latency_samples = 5
+        self._min_rtt_samples = 5
         
     def _detect_role(self) -> str:
         """Detect role from platform."""
@@ -643,6 +645,8 @@ class MavLinkMetricsCollector:
                     latency_invalid_reason = "missing_system_time_reference"
                 else:
                     latency_invalid_reason = "no_timestamped_messages"
+            elif len(self._latency_samples) < self._min_latency_samples:
+                latency_invalid_reason = "insufficient_samples"
 
             # RTT stats (command -> ack)
             rtt_avg = None
@@ -658,6 +662,11 @@ class MavLinkMetricsCollector:
                 rtt_invalid_reason = "no_command_sent"
             elif not self._rtt_samples_ms:
                 rtt_invalid_reason = "no_command_ack"
+            elif len(self._rtt_samples_ms) < self._min_rtt_samples:
+                rtt_invalid_reason = "insufficient_samples"
+
+            one_way_latency_valid = latency_invalid_reason is None
+            rtt_valid = rtt_invalid_reason is None
             
             # Message type counts
             msg_type_counts = {
@@ -729,11 +738,13 @@ class MavLinkMetricsCollector:
                 "jitter_p95_ms": None if jitter_p95 is None else round(jitter_p95, 2),
                 "latency_sample_count": None if not self._latency_samples else len(self._latency_samples),
                 "latency_invalid_reason": latency_invalid_reason,
+                "one_way_latency_valid": one_way_latency_valid,
 
                 "rtt_avg_ms": None if rtt_avg is None else round(rtt_avg, 2),
                 "rtt_p95_ms": None if rtt_p95 is None else round(rtt_p95, 2),
                 "rtt_sample_count": None if not self._rtt_samples_ms else len(self._rtt_samples_ms),
                 "rtt_invalid_reason": rtt_invalid_reason,
+                "rtt_valid": rtt_valid,
                 
                 # Protocol
                 "protocol_version": self._protocol_version or None,

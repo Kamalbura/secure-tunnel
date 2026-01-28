@@ -2,7 +2,7 @@
  * Suite Detail Page - Deep-dive into single suite metrics
  */
 
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useDashboardStore } from '../state/store';
 import type { ReliabilityClass, MetricStatus } from '../types/metrics';
@@ -50,7 +50,7 @@ function MetricValue({
 }
 
 // Metric card component
-function MetricCard({ title, children, reliability = 'VERIFIED' as ReliabilityClass }: { title: string; children: React.ReactNode; reliability?: ReliabilityClass }) {
+function MetricCard({ title, children, reliability = 'VERIFIED' as ReliabilityClass }: { title: ReactNode; children: ReactNode; reliability?: ReliabilityClass }) {
     return (
         <div className="card">
             <div className="flex items-center justify-between mb-3">
@@ -131,6 +131,14 @@ export default function SuiteDetail() {
                         <div className="text-xl"><MetricValue value={suite.handshake.handshake_total_duration_ms} unit="ms" /></div>
                     </div>
                     <div>
+                        <div className="text-gray-400 text-xs">Protocol Duration</div>
+                        <div className="font-mono"><MetricValue value={suite.handshake.protocol_handshake_duration_ms} unit="ms" /></div>
+                    </div>
+                    <div>
+                        <div className="text-gray-400 text-xs">End-to-end Duration</div>
+                        <div className="font-mono"><MetricValue value={suite.handshake.end_to_end_handshake_duration_ms} unit="ms" /></div>
+                    </div>
+                    <div>
                         <div className="text-gray-400 text-xs">Success</div>
                         <div className="text-xl"><MetricValue value={suite.handshake.handshake_success} /></div>
                     </div>
@@ -193,8 +201,44 @@ export default function SuiteDetail() {
                 </div>
             </MetricCard>
 
+            {/* Link Quality */}
+            <MetricCard title="Link Quality">
+                <div className="text-xs text-gray-500 mb-2">Source: {suite.packet_counters_source || 'unknown'}</div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                        <div className="text-gray-400 text-xs">Goodput</div>
+                        <div className="font-mono"><MetricValue value={suite.data_plane.goodput_mbps} unit="Mbps" status={getStatus('data_plane')} /></div>
+                    </div>
+                    <div>
+                        <div className="text-gray-400 text-xs">Achieved Throughput</div>
+                        <div className="font-mono"><MetricValue value={suite.data_plane.achieved_throughput_mbps} unit="Mbps" status={getStatus('data_plane')} /></div>
+                    </div>
+                    <div>
+                        <div className="text-gray-400 text-xs">Packet Loss</div>
+                        <div className="font-mono"><MetricValue value={suite.data_plane.packet_loss_ratio !== null && suite.data_plane.packet_loss_ratio !== undefined ? suite.data_plane.packet_loss_ratio * 100 : null} unit="%" status={getStatus('data_plane')} /></div>
+                    </div>
+                    <div>
+                        <div className="text-gray-400 text-xs">Delivery Ratio</div>
+                        <div className="font-mono"><MetricValue value={suite.data_plane.packet_delivery_ratio !== null && suite.data_plane.packet_delivery_ratio !== undefined ? suite.data_plane.packet_delivery_ratio * 100 : null} unit="%" status={getStatus('data_plane')} /></div>
+                    </div>
+                    <div>
+                        <div className="text-gray-400 text-xs">Packets Sent</div>
+                        <div className="font-mono"><MetricValue value={suite.data_plane.packets_sent} status={getStatus('data_plane')} /></div>
+                    </div>
+                    <div>
+                        <div className="text-gray-400 text-xs">Packets Received</div>
+                        <div className="font-mono"><MetricValue value={suite.data_plane.packets_received} status={getStatus('data_plane')} /></div>
+                    </div>
+                    <div>
+                        <div className="text-gray-400 text-xs">Packets Dropped</div>
+                        <div className="font-mono"><MetricValue value={suite.data_plane.packets_dropped} status={getStatus('data_plane')} /></div>
+                    </div>
+                </div>
+            </MetricCard>
+
             {/* H. Latency & Jitter */}
             <MetricCard title="H. Latency & Jitter">
+                <div className="text-xs text-gray-500 mb-2">Source: {suite.latency_source || 'unknown'}</div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div>
                         <div className="text-gray-400 text-xs">One-way Avg</div>
@@ -213,12 +257,28 @@ export default function SuiteDetail() {
                         <div className="font-mono"><MetricValue value={suite.latency_jitter.jitter_p95_ms} unit="ms" status={getStatus('latency_jitter.one_way_latency_avg_ms')} /></div>
                     </div>
                     <div>
+                        <div className="text-gray-400 text-xs">One-way Valid</div>
+                        <div className="font-mono"><MetricValue value={suite.latency_jitter.one_way_latency_valid} /></div>
+                    </div>
+                    <div>
                         <div className="text-gray-400 text-xs">RTT Avg</div>
                         <div className="font-mono"><MetricValue value={suite.latency_jitter.rtt_avg_ms} unit="ms" status={getStatus('latency_jitter.rtt_avg_ms')} /></div>
                     </div>
                     <div>
                         <div className="text-gray-400 text-xs">RTT P95</div>
                         <div className="font-mono"><MetricValue value={suite.latency_jitter.rtt_p95_ms} unit="ms" status={getStatus('latency_jitter.rtt_avg_ms')} /></div>
+                    </div>
+                    <div>
+                        <div className="text-gray-400 text-xs">RTT Valid</div>
+                        <div className="font-mono"><MetricValue value={suite.latency_jitter.rtt_valid} /></div>
+                    </div>
+                    <div className="col-span-2">
+                        <div className="text-gray-400 text-xs">Latency Invalid Reason</div>
+                        <div className="font-mono"><MetricValue value={suite.latency_jitter.latency_invalid_reason} /></div>
+                    </div>
+                    <div className="col-span-2">
+                        <div className="text-gray-400 text-xs">RTT Invalid Reason</div>
+                        <div className="font-mono"><MetricValue value={suite.latency_jitter.rtt_invalid_reason} /></div>
                     </div>
                 </div>
             </MetricCard>
@@ -228,6 +288,7 @@ export default function SuiteDetail() {
                 title="K. MAVLink Integrity"
                 reliability={suite.mavlink_integrity.mavlink_out_of_order_count && suite.mavlink_integrity.mavlink_out_of_order_count > 0 ? 'CONDITIONAL' : 'VERIFIED'}
             >
+                <div className="text-xs text-gray-500 mb-2">Source: {suite.integrity_source || 'unknown'}</div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div>
                         <div className="text-gray-400 text-xs">Out of Order</div>
@@ -332,6 +393,24 @@ export default function SuiteDetail() {
                     <div>
                         <div className="text-gray-400 text-xs">Sampling Rate</div>
                         <div className="font-mono"><MetricValue value={suite.power_energy.power_sampling_rate_hz} unit="Hz" status={getStatus('power_energy')} /></div>
+                    </div>
+                </div>
+            </MetricCard>
+
+            {/* F. Rekey Metrics */}
+            <MetricCard title={<span>F. Rekey Metrics <span title="Blackout is proxy-defined and traffic-dependent." className="text-gray-500 text-xs">(info)</span></span>}>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                        <div className="text-gray-400 text-xs">Rekey Attempts</div>
+                        <div className="font-mono"><MetricValue value={suite.rekey.rekey_attempts} /></div>
+                    </div>
+                    <div>
+                        <div className="text-gray-400 text-xs">Rekey Duration</div>
+                        <div className="font-mono"><MetricValue value={suite.rekey.rekey_duration_ms} unit="ms" /></div>
+                    </div>
+                    <div>
+                        <div className="text-gray-400 text-xs">Rekey Blackout</div>
+                        <div className="font-mono"><MetricValue value={suite.rekey.rekey_blackout_duration_ms} unit="ms" /></div>
                     </div>
                 </div>
             </MetricCard>

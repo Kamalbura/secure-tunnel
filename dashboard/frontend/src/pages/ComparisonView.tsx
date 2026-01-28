@@ -29,6 +29,16 @@ export default function ComparisonView() {
             'Suite B': comparisonSuiteB.handshake.handshake_total_duration_ms,
         },
         {
+            metric: 'Goodput (Mbps)',
+            'Suite A': comparisonSuiteA.data_plane.goodput_mbps,
+            'Suite B': comparisonSuiteB.data_plane.goodput_mbps,
+        },
+        {
+            metric: 'Packet Loss (ratio)',
+            'Suite A': comparisonSuiteA.data_plane.packet_loss_ratio,
+            'Suite B': comparisonSuiteB.data_plane.packet_loss_ratio,
+        },
+        {
             metric: 'Power Avg (W)',
             'Suite A': comparisonSuiteA.power_energy.power_avg_w,
             'Suite B': comparisonSuiteB.power_energy.power_avg_w,
@@ -173,6 +183,16 @@ export default function ComparisonView() {
                                     <td>Packets Sent</td>
                                     <td className="text-right font-mono">{comparisonSuiteA.data_plane.packets_sent ?? 'Not collected'}</td>
                                     <td className="text-right font-mono">{comparisonSuiteB.data_plane.packets_sent ?? 'Not collected'}</td>
+                                </tr>
+                                <tr>
+                                    <td>Goodput</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.data_plane.goodput_mbps, 'Mbps')}</td>
+                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.data_plane.goodput_mbps, 'Mbps')}</td>
+                                </tr>
+                                <tr>
+                                    <td>Packet Loss Ratio</td>
+                                    <td className="text-right font-mono">{comparisonSuiteA.data_plane.packet_loss_ratio !== null && comparisonSuiteA.data_plane.packet_loss_ratio !== undefined ? `${(comparisonSuiteA.data_plane.packet_loss_ratio * 100).toFixed(2)} %` : 'Not collected'}</td>
+                                    <td className="text-right font-mono">{comparisonSuiteB.data_plane.packet_loss_ratio !== null && comparisonSuiteB.data_plane.packet_loss_ratio !== undefined ? `${(comparisonSuiteB.data_plane.packet_loss_ratio * 100).toFixed(2)} %` : 'Not collected'}</td>
                                 </tr>
                                 <tr>
                                     <td>CPU Avg</td>

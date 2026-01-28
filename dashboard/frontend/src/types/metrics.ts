@@ -73,6 +73,8 @@ export interface HandshakeMetrics {
     handshake_start_time_drone: number | null;
     handshake_end_time_drone: number | null;
     handshake_total_duration_ms: number | null;
+    protocol_handshake_duration_ms: number | null;
+    end_to_end_handshake_duration_ms: number | null;
     handshake_success: boolean | null;
     handshake_failure_reason: string | null;
 }
@@ -154,10 +156,12 @@ export interface LatencyJitterMetrics {
     jitter_p95_ms: number | null;
     latency_sample_count: number | null;
     latency_invalid_reason: string | null;
+    one_way_latency_valid: boolean | null;
     rtt_avg_ms: number | null;
     rtt_p95_ms: number | null;
     rtt_sample_count: number | null;
     rtt_invalid_reason: string | null;
+    rtt_valid: boolean | null;
 }
 
 // =============================================================================
@@ -337,6 +341,10 @@ export interface ComprehensiveSuiteMetrics {
     power_energy: PowerEnergyMetrics;
     observability: ObservabilityMetrics;
     validation: ValidationMetrics;
+    ingest_status?: string | null;
+    latency_source?: string | null;
+    integrity_source?: string | null;
+    packet_counters_source?: string | null;
 }
 
 // =============================================================================
@@ -356,6 +364,7 @@ export interface SuiteSummary {
     power_avg_w: number | null;
     energy_total_j: number | null;
     benchmark_pass_fail: string | null;
+    ingest_status?: string | null;
 }
 
 export interface RunSummary {

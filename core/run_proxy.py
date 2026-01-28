@@ -32,6 +32,7 @@ def main():
     parser.add_argument("--suite", required=True, help="Suite ID")
     parser.add_argument("--gcs-secret-file", help="Path to GCS signing key (private)")
     parser.add_argument("--gcs-public-file", help="Path to GCS signing key (public)")
+    parser.add_argument("--peer-pubkey-file", dest="gcs_public_file", help="Alias for --gcs-public-file (drone: peer GCS pubkey)")
     parser.add_argument("--quiet", action="store_true", help="Suppress console output")
     parser.add_argument("--status-file", help="Path to write JSON status")
     parser.add_argument("--run-id", help="Run ID (ignored)", default="")

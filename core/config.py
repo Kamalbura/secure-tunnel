@@ -21,11 +21,10 @@ _DRONE_HOST_TAILSCALE = "100.101.93.23"  # Tailscale: SSH/maintenance ONLY
 _GCS_HOST_LAN = "192.168.0.104"    # GCS Windows LAN IP (from ipconfig)
 _GCS_HOST_TAILSCALE = "100.101.93.18"  # Tailscale: SSH/maintenance ONLY
 
-# Default to LAN hosts for operational runs.
-# CRITICAL: Tailscale (100.x.x.x) is for SSH/Git/maintenance ONLY.
-# Runtime Data/Control/Telemetry planes MUST use LAN addresses.
-_DEFAULT_DRONE_HOST = _DRONE_HOST_LAN
-_DEFAULT_GCS_HOST = _GCS_HOST_LAN
+# Default to Tailscale hosts for benchmark runs over VPN.
+# Switch back to LAN addresses for local/lab operational runs.
+_DEFAULT_DRONE_HOST = _DRONE_HOST_TAILSCALE
+_DEFAULT_GCS_HOST = _GCS_HOST_TAILSCALE
 
 # Environment-sourced default credential to avoid embedding lab passwords in source control.
 _LAB_PASSWORD_DEFAULT = os.getenv("PQC_LAB_PASSWORD", "uavpi")

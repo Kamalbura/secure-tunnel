@@ -87,7 +87,10 @@ def send_gcs_command(cmd: str, **params) -> dict:
     """Send command to GCS control server."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(30.0)
+        # GCS start_proxy waits for handshake completion (up to REKEY_HANDSHAKE_TIMEOUT)
+        # Keep client timeout comfortably above that to avoid premature timeouts.
+        handshake_timeout = float(CONFIG.get("REKEY_HANDSHAKE_TIMEOUT", 45.0))
+        sock.settimeout(max(90.0, handshake_timeout + 15.0))
         sock.connect((GCS_CONTROL_HOST, GCS_CONTROL_PORT))
         
         request = {"cmd": cmd, **params}

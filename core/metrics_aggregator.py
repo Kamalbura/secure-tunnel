@@ -315,7 +315,10 @@ class MetricsAggregator:
         """Mark handshake start time."""
         if self._current_metrics:
             now = time.monotonic()
-            self._current_metrics.handshake.handshake_start_time_drone = now
+            if self.role == "gcs":
+                self._current_metrics.handshake.handshake_start_time_gcs = now
+            else:
+                self._current_metrics.handshake.handshake_start_time_drone = now
     
     def record_handshake_end(self, success: bool = True, failure_reason: str = ""):
         """Mark handshake end and record status.
@@ -327,7 +330,7 @@ class MetricsAggregator:
             h = self._current_metrics.handshake
             
             # GUARD: Prevent double-call from overwriting correct timing
-            if h.handshake_total_duration_ms > 0:
+            if isinstance(h.handshake_total_duration_ms, (int, float)) and h.handshake_total_duration_ms > 0:
                 import logging
                 logging.getLogger(__name__).warning(
                     "record_handshake_end() called twice - ignoring to preserve "
@@ -337,12 +340,16 @@ class MetricsAggregator:
             
             now = time.monotonic()
             
-            h.handshake_end_time_drone = now
-            if h.handshake_start_time_drone and h.handshake_start_time_drone > 0:
-                h.handshake_total_duration_ms = (now - h.handshake_start_time_drone) * 1000
-                h.end_to_end_handshake_duration_ms = h.handshake_total_duration_ms
+            if self.role == "gcs":
+                h.handshake_end_time_gcs = now
+                if h.handshake_start_time_gcs and h.handshake_start_time_gcs > 0:
+                    h.handshake_total_duration_ms = (now - h.handshake_start_time_gcs) * 1000
             else:
-                h.end_to_end_handshake_duration_ms = None
+                h.handshake_end_time_drone = now
+                if h.handshake_start_time_drone and h.handshake_start_time_drone > 0:
+                    h.handshake_total_duration_ms = (now - h.handshake_start_time_drone) * 1000
+
+            h.end_to_end_handshake_duration_ms = h.handshake_total_duration_ms
             
             h.handshake_success = success
             h.handshake_failure_reason = failure_reason

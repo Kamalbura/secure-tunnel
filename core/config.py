@@ -16,15 +16,15 @@ from core.exceptions import ConfigError
 # Localhost-only topology override for smoke/local tests can be applied
 # by temporarily pointing *_HOST_LAN values at 127.0.0.1. For normal
 # lab runs, keep these set to the actual LAN-facing addresses.
-_DRONE_HOST_LAN = "192.168.0.103"   # uavpi drone LAN IP (wlan0 from `ip addr`)
+_DRONE_HOST_LAN = "192.168.0.100"   # uavpi drone LAN IP (wlan0 from `ip addr`)
 _DRONE_HOST_TAILSCALE = "100.101.93.23"  # Tailscale: SSH/maintenance ONLY
-_GCS_HOST_LAN = "192.168.0.104"    # GCS Windows LAN IP (from ipconfig)
+_GCS_HOST_LAN = "192.168.0.101"    # GCS Windows LAN IP (from ipconfig)
 _GCS_HOST_TAILSCALE = "100.106.181.122"  # Tailscale: SSH/maintenance ONLY
 
-# Default to Tailscale hosts for benchmark runs over VPN.
-# Switch back to LAN addresses for local/lab operational runs.
-_DEFAULT_DRONE_HOST = _DRONE_HOST_TAILSCALE
-_DEFAULT_GCS_HOST = _GCS_HOST_TAILSCALE
+# Default to LAN hosts for local/router runs.
+# Switch to Tailscale addresses when running over VPN.
+_DEFAULT_DRONE_HOST = _DRONE_HOST_LAN
+_DEFAULT_GCS_HOST = _GCS_HOST_LAN
 
 # Environment-sourced default credential to avoid embedding lab passwords in source control.
 _LAB_PASSWORD_DEFAULT = os.getenv("PQC_LAB_PASSWORD", "uavpi")

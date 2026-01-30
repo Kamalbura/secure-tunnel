@@ -251,14 +251,17 @@ def start_mavproxy(mav_master: str) -> Optional[ManagedProcess]:
     out_proxy = f"udp:127.0.0.1:{DRONE_PLAIN_TX_PORT}"
     # Secondary output for MAVLink metrics sniffing
     out_sniff = f"udp:127.0.0.1:{MAVLINK_SNIFF_PORT}"
+    # Temporary debug output for heartbeat inspection
+    out_debug = "udp:127.0.0.1:14560"
     
     cmd = [
         python_exe, "-m", "MAVProxy.mavproxy",
         f"--master={mav_master}",
         f"--out={out_proxy}",
         f"--out={out_sniff}",
-        # "--nowait",  # REMOVED: Bind lifecycle to parent
-        # "--daemon",  # REMOVED: Bind lifecycle to parent
+        f"--out={out_debug}",
+        "--nowait",
+        "--daemon",
     ]
     
     ts = time.strftime("%Y%m%d-%H%M%S")

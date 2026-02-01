@@ -886,16 +886,16 @@ class MetricsAggregator:
                 # L. Flight controller telemetry (drone only)
                 if self.role == "drone":
                     fc = self.mavlink_collector.get_flight_controller_metrics()
-                    m.flight_controller.fc_mode = fc.get("fc_mode", "")
-                    m.flight_controller.fc_armed_state = bool(fc.get("fc_armed_state", False))
-                    m.flight_controller.fc_heartbeat_age_ms = fc.get("fc_heartbeat_age_ms", 0.0) or 0.0
-                    m.flight_controller.fc_attitude_update_rate_hz = fc.get("fc_attitude_update_rate_hz", 0.0) or 0.0
-                    m.flight_controller.fc_position_update_rate_hz = fc.get("fc_position_update_rate_hz", 0.0) or 0.0
-                    m.flight_controller.fc_battery_voltage_v = fc.get("fc_battery_voltage_v", 0.0) or 0.0
-                    m.flight_controller.fc_battery_current_a = fc.get("fc_battery_current_a", 0.0) or 0.0
-                    m.flight_controller.fc_battery_remaining_percent = fc.get("fc_battery_remaining_percent", 0.0) or 0.0
-                    m.flight_controller.fc_cpu_load_percent = fc.get("fc_cpu_load_percent", 0.0) or 0.0
-                    m.flight_controller.fc_sensor_health_flags = int(fc.get("fc_sensor_health_flags", 0) or 0)
+                    m.fc_telemetry.fc_mode = fc.get("fc_mode", "")
+                    m.fc_telemetry.fc_armed_state = bool(fc.get("fc_armed_state", False))
+                    m.fc_telemetry.fc_heartbeat_age_ms = fc.get("fc_heartbeat_age_ms", 0.0) or 0.0
+                    m.fc_telemetry.fc_attitude_update_rate_hz = fc.get("fc_attitude_update_rate_hz", 0.0) or 0.0
+                    m.fc_telemetry.fc_position_update_rate_hz = fc.get("fc_position_update_rate_hz", 0.0) or 0.0
+                    m.fc_telemetry.fc_battery_voltage_v = fc.get("fc_battery_voltage_v", 0.0) or 0.0
+                    m.fc_telemetry.fc_battery_current_a = fc.get("fc_battery_current_a", 0.0) or 0.0
+                    m.fc_telemetry.fc_battery_remaining_percent = fc.get("fc_battery_remaining_percent", 0.0) or 0.0
+                    m.fc_telemetry.fc_cpu_load_percent = fc.get("fc_cpu_load_percent", 0.0) or 0.0
+                    m.fc_telemetry.fc_sensor_health_flags = int(fc.get("fc_sensor_health_flags", 0) or 0)
             except Exception:
                 pass
         else:

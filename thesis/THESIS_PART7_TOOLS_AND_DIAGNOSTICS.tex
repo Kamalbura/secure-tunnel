@@ -1,0 +1,57 @@
+% Part 7 — Tools, Diagnostics, and Orchestration
+\section{Tools, Diagnostics, and Orchestration}
+\label{sec:tools-diagnostics}
+
+\subsection{Scope and Terminology}
+This part documents the standalone utilities and operator-facing tooling in \texttt{tools/} and \texttt{scripts/}. These utilities are not part of the core proxy runtime; they provide orchestration, diagnostics, verification, and data-transfer support. The key terms are:
+\begin{itemize}
+	\item \textbf{Orchestration helper}: A wrapper that launches the GCS scheduler and the drone loop and streams logs.
+	\item \textbf{Preflight diagnostics}: Network checks that validate bindings, UDP reachability, and control-plane TCP connectivity.
+	\item \textbf{Truth verification}: Scripts that check metrics artifacts for missing-data transparency and forbidden field usage.
+	\item \textbf{Data transfer utility}: A helper that copies benchmark artifacts from the drone to the GCS host.
+\end{itemize}
+\footnote{Evidence: tools/orchestrate\_run.py; tools/net\_diag.py; tools/verify\_metrics\_truth.py; tools/verify\_dashboard\_truth.py; scripts/transfer\_benchmark\_data.py.}
+
+\subsection{End-to-End Orchestration Helper}
+The orchestration helper in \texttt{tools/orchestrate\_run.py} starts the GCS benchmark server, waits for stabilization, then launches the drone benchmark loop via SSH. It streams stdout from both processes, monitors the drone return code, and shuts down the GCS server on completion. A non-zero drone exit code causes the helper to exit with that code, ensuring reproducible CI-like behavior.
+\footnote{Evidence: tools/orchestrate\_run.py (\texttt{GCS\_CMD}, SSH launch, log streaming, shutdown logic).}
+
+\subsection{Network Diagnostics and Clock Skew Checks}
+The network diagnostic tool performs preflight validation without invoking the proxy. It detects role based on configured IPs, attempts to bind local UDP/TCP ports, runs ICMP reachability checks, sends UDP diagnostic packets, echoes responses, and reports clock skew if peer timestamps differ by more than 1 second. It can also test the TCP control port by binding on GCS or connecting from the drone.
+\footnote{Evidence: tools/net\_diag.py (role detection, bind checks, UDP echo, clock skew warnings, TCP control test).}
+
+\subsection{MAVProxy Process Management}
+The shared \texttt{MavProxyManager} encapsulates cross-platform MAVProxy launch logic. It builds a master/out configuration, resolves the MAVProxy entry point (explicit script, module invocation on Windows, or PATH binary on Linux), and launches the process through \texttt{ManagedProcess}. Logs are written to \texttt{logs/sscheduler/\{role\}} with timestamped filenames, and the manager exposes \texttt{start()}, \texttt{stop()}, and \texttt{is\_running()}.
+\footnote{Evidence: tools/mavproxy\_manager.py.}
+
+\subsection{GCS Control Ping Utility}
+The TCP control ping utility sends JSON commands to a control server and prints the response. It supports an arbitrary command string and optional suite parameter, enabling deterministic liveness checks and manual command injection for tests.
+\footnote{Evidence: tools/gcs\_control\_ping.py.}
+
+\subsection{Metrics Truth Verification}
+Two verification scripts enforce transparency and correctness rules for metrics artifacts. \texttt{verify\_metrics\_truth.py} checks JSONL records against a reliability policy (imported from the dashboard backend) and flags any \texttt{NOT\_COLLECTED} fields that contain non-default values. \texttt{verify\_dashboard\_truth.py} loads comprehensive metrics and asserts that displayed fields have matching \texttt{metric\_status} entries when missing, while also enforcing consistency rules for latency and RTT samples.
+\footnote{Evidence: tools/verify\_metrics\_truth.py; tools/verify\_dashboard\_truth.py.}
+
+\subsection{Comprehensive Metrics Availability Gate}
+The \texttt{wait\_for\_comprehensive\_metrics.py} tool blocks until comprehensive A--R metrics are present and structurally complete. It requires both \texttt{\_drone.json} and \texttt{\_gcs.json} files for a run (unless disabled), validates expected field counts per schema category, and rejects runs where handshake success is false or data-plane counters are empty.
+\footnote{Evidence: tools/wait\_for\_comprehensive\_metrics.py.}
+
+\subsection{Power and Rekey Diagnostics Helpers}
+The toolset includes small utilities for power and blackout diagnostics. \texttt{ina219\_read.py} probes INA219 sensors across multiple I2C buses and addresses to verify power monitor availability. \texttt{power\_utils.py} loads power CSV traces, normalizes field names, and integrates energy over time windows. \texttt{blackout\_metrics.py} computes rekey blackout estimates by analyzing packet timing gaps and optionally correlating them to marked rekey intervals.
+\footnote{Evidence: tools/ina219\_read.py; tools/power\_utils.py; tools/blackout\_metrics.py.}
+
+\subsection{Packet-Level MAVLink UDP Sniffing}
+The \texttt{mav\_udp\_sniff.py} tool performs a minimal UDP packet counter on specified ports for a given duration. It binds sockets, counts received datagrams, and reports per-port counts. This is useful for verifying traffic presence independent of proxy logic.
+\footnote{Evidence: tools/mav\_udp\_sniff.py.}
+
+\subsection{Configuration and Suite Registry Dumps}
+Two simple utilities support reproducible configuration capture. \texttt{dump\_config.py} prints selected configuration values (hostnames, control port, PSK length, environment flags). \texttt{dump\_suites.py} writes the suite registry into \texttt{benchmark\_plan.json} for inspection and offline audit.
+\footnote{Evidence: tools/dump\_config.py; tools/dump\_suites.py.}
+
+\subsection{Benchmark Data Transfer Utility}
+The data transfer utility \texttt{scripts/transfer\_benchmark\_data.py} copies benchmark artifacts from the drone to the GCS host. It discovers available runs by listing the remote benchmark directory over SSH, selects a run (latest by default), and transfers files via \texttt{rsync} when available or \texttt{scp} as a fallback. The script logs progress and verifies the presence of JSONL artifacts after transfer.
+\footnote{Evidence: scripts/transfer\_benchmark\_data.py.}
+
+\subsection{RPC Connectivity Check}
+The \texttt{scripts/verify\_rpc.py} script performs a Chronos sync RPC by calling \texttt{send\_gcs\_command} and validates that the response includes a timing field. It is a direct sanity check for the control-plane RPC path used by the scheduler stack.
+\footnote{Evidence: scripts/verify\_rpc.py.}

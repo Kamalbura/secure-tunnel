@@ -12,9 +12,9 @@ interface BucketSuite {
     sig: string;
     aead?: string;
     nist: string;
-    handshake_ms: number;
-    power_w: number;
-    energy_j: number;
+    handshake_ms: number | null;
+    power_w: number | null;
+    energy_j: number | null;
 }
 
 interface Buckets {
@@ -48,7 +48,7 @@ export default function BucketComparison() {
         async function fetchBuckets() {
             try {
                 setIsLoading(true);
-                const res = await fetch('http://localhost:8000/api/buckets');
+                const res = await fetch('/api/buckets');
                 if (!res.ok) throw new Error('Failed to fetch buckets');
                 const data = await res.json();
                 setBuckets(data);
@@ -92,13 +92,21 @@ export default function BucketComparison() {
     const suites = currentBucketData[selectedBucket] || [];
 
     // Prepare chart data
-    const chartData = suites.map((s, idx) => ({
+    const chartData = suites
+        .filter(s => s.handshake_ms !== null && s.handshake_ms !== undefined && s.power_w !== null && s.power_w !== undefined && s.energy_j !== null && s.energy_j !== undefined)
+        .map((s, idx) => ({
         name: s.suite_id.replace(/^cs-/, '').substring(0, 30),
         handshake_ms: s.handshake_ms,
         power_w: s.power_w,
         energy_j: s.energy_j,
         color: COLORS[idx % COLORS.length]
     }));
+
+    const missingCounts = {
+        handshake: suites.filter(s => s.handshake_ms === null || s.handshake_ms === undefined).length,
+        power: suites.filter(s => s.power_w === null || s.power_w === undefined).length,
+        energy: suites.filter(s => s.energy_j === null || s.energy_j === undefined).length,
+    };
 
     return (
         <div className="space-y-6">
@@ -142,6 +150,11 @@ export default function BucketComparison() {
             {suites.length > 0 && (
                 <div className="card">
                     <h3 className="card-header">Handshake Duration Comparison</h3>
+                    {(missingCounts.handshake > 0) && (
+                        <div className="text-xs text-gray-400 mb-2">
+                            {missingCounts.handshake} suites omitted from chart (handshake not collected).
+                        </div>
+                    )}
                     <div className="h-80">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={chartData} layout="vertical" margin={{ left: 150 }}>
@@ -167,6 +180,11 @@ export default function BucketComparison() {
             {suites.length > 0 && (
                 <div className="card">
                     <h3 className="card-header">Power & Energy Comparison</h3>
+                    {(missingCounts.power > 0 || missingCounts.energy > 0) && (
+                        <div className="text-xs text-gray-400 mb-2">
+                            {missingCounts.power} suites missing power, {missingCounts.energy} suites missing energy (omitted from chart).
+                        </div>
+                    )}
                     <div className="h-80">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={chartData} layout="vertical" margin={{ left: 150 }}>
@@ -216,9 +234,9 @@ export default function BucketComparison() {
                                                 {s.nist}
                                             </span>
                                         </td>
-                                        <td className="text-right font-mono">{s.handshake_ms.toFixed(2)}</td>
-                                        <td className="text-right font-mono">{s.power_w.toFixed(2)}</td>
-                                        <td className="text-right font-mono">{s.energy_j.toFixed(2)}</td>
+                                        <td className="text-right font-mono">{s.handshake_ms === null || s.handshake_ms === undefined ? 'Not collected' : s.handshake_ms.toFixed(2)}</td>
+                                        <td className="text-right font-mono">{s.power_w === null || s.power_w === undefined ? 'Not collected' : s.power_w.toFixed(2)}</td>
+                                        <td className="text-right font-mono">{s.energy_j === null || s.energy_j === undefined ? 'Not collected' : s.energy_j.toFixed(2)}</td>
                                     </tr>
                                 ))}
                             </tbody>

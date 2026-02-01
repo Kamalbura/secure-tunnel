@@ -1,0 +1,60 @@
+% Part 5 — Metrics Pipeline and Dashboard Backend
+\section{Metrics Pipeline and Dashboard Backend}
+\label{sec:metrics-backend}
+
+\subsection{Scope and Terminology}
+This part documents the metrics pipeline and the dashboard backend that serves the forensic metrics. The relevant terms are:
+\begin{itemize}
+	\item \textbf{Comprehensive metrics schema}: The canonical A--R metrics contract defined as dataclasses in \texttt{core/metrics\_schema.py}.
+	\item \textbf{Metrics aggregator}: The collector-orchestrator \texttt{MetricsAggregator} that builds \texttt{ComprehensiveSuiteMetrics} for each suite.
+	\item \textbf{Metric status}: The per-field status map used to encode missing, invalid, or unavailable measurements.
+	\item \textbf{Ingest store}: The backend \texttt{MetricsStore} that loads metrics artifacts into memory and exposes query views.
+\end{itemize}
+\footnote{Evidence: core/metrics\_schema.py (module docstring and dataclasses); core/metrics\_aggregator.py (\texttt{MetricsAggregator}); dashboard/backend/ingest.py (\texttt{MetricsStore}).}
+
+\subsection{Canonical Schema and Backend Model Parity}
+The metrics schema enumerates 18 categories (A--R) as dataclasses, covering run context, crypto identity, lifecycle, handshake, crypto primitives, rekey, data plane, latency/jitter, MAVProxy layers, MAVLink integrity, flight controller telemetry, control plane, system resources, power/energy, observability, and validation. The dashboard backend mirrors this schema using Pydantic models to enforce the same field structure and to validate API responses.
+\footnote{Evidence: core/metrics\_schema.py (A--R categories); dashboard/backend/models.py (Pydantic models mirroring the schema).}
+
+\subsection{Aggregator Lifecycle and Role-Specific Collection}
+The \texttt{MetricsAggregator} is instantiated with a role of \texttt{gcs}, \texttt{drone}, or \texttt{auto} and selects collectors accordingly. It creates a \texttt{ComprehensiveSuiteMetrics} object in \texttt{start\_suite()}, populates run context fields using \texttt{EnvironmentCollector}, and normalizes missing values by nulling empty strings while recording \texttt{metric\_status} entries.
+\footnote{Evidence: core/metrics\_aggregator.py (\texttt{MetricsAggregator.\textunderscore\textunderscore init\textunderscore\textunderscore}, \texttt{start\_suite()}, \texttt{\_mark\_metric\_status()}); core/metrics\_collectors.py (\texttt{EnvironmentCollector}).}
+
+The aggregator also starts background system sampling at 2~Hz and, when running on the drone, starts power sampling at 1~kHz via the power collector backend. MAVLink sniffing is started if the optional collector is available.
+\footnote{Evidence: core/metrics\_aggregator.py (\texttt{\_start\_background\_collection()}, \texttt{start\_suite()} power and MAVLink start logic); core/metrics\_collectors.py (\texttt{PowerCollector} and system collection).}
+
+\subsection{Data Plane Derivation and Missing-Counter Handling}
+Data plane throughput and wire-rate are computed during \texttt{finalize\_suite()} using proxy byte counters and the suite active duration. If counters are missing, the aggregator marks the entire data plane section as \texttt{not\_collected}, nulls dependent fields, and also nulls rekey metrics because they are derived from proxy counters.
+\footnote{Evidence: core/metrics\_aggregator.py (\texttt{finalize\_suite()} data plane block; rekey nulling and \texttt{proxy\_counters\_missing} status).}
+
+\subsection{Power/Energy Accounting and Handshake Energy}
+For drone-side runs with power samples, \texttt{finalize\_suite()} uses the power collector’s energy summary to populate average and peak power, total energy, and voltage/current averages. It also computes energy-per-handshake using handshake duration. If no samples are present, it sets power fields to \texttt{None} and records a \texttt{no\_power\_samples} status with the backend name.
+\footnote{Evidence: core/metrics\_aggregator.py (power block in \texttt{finalize\_suite()}); core/metrics\_collectors.py (power collector backend).}
+
+\subsection{MAVLink-Derived Latency, Integrity, and Telemetry}
+When the MAVLink collector is available, the aggregator stops the collector at suite finalization, populates MAVProxy metrics, integrity counters, and latency/jitter statistics from the collector’s output, and marks invalid latency fields with explicit reasons. Flight controller telemetry is populated on the drone side. When the collector is unavailable, the aggregator marks MAVLink-related sections as \texttt{not\_collected} and nulls their fields.
+\footnote{Evidence: core/metrics\_aggregator.py (MAVLink block in \texttt{finalize\_suite()} and unavailable-collector path).}
+
+\subsection{Observability and Validation Fields}
+The observability section records the number of system samples, sampling rate, and collection window. The validation section computes expected samples from the duration and marks missing fields when samples are absent. It also sets \texttt{benchmark\_pass\_fail} and \texttt{success\_rate\_percent} from handshake success, or marks them as not collected if handshake status is missing. All accumulated field statuses are written into \texttt{validation.metric\_status}.
+\footnote{Evidence: core/metrics\_aggregator.py (observability and validation blocks; \texttt{metric\_status} aggregation).}
+
+\subsection{Persistence and Peer Merge}
+The aggregator saves each suite as \texttt{\{run\_id\}\_\{suite\_id\}\_\{role\}.json} under \texttt{logs/comprehensive\_metrics} unless an alternate output directory is configured. The aggregator can merge peer data (GCS or drone) into the current suite record, enabling cross-side context enrichment.
+\footnote{Evidence: core/metrics\_aggregator.py (\texttt{\_save\_metrics()}, \texttt{\_merge\_peer\_data()}).}
+
+\subsection{Dashboard Backend API Surface}
+The backend service is a FastAPI application that exposes a root health endpoint and two primary API routes: \texttt{/api/runs} for run summaries and \texttt{/api/runs/\{run\_id\}/suites} for per-run suite metrics. The endpoints return Pydantic models defined in the backend schema module.
+\footnote{Evidence: dashboard/backend/main.py (FastAPI app and routes); dashboard/backend/models.py (response models).}
+
+\subsection{Ingest Pipeline and Store Semantics}
+The ingest module loads comprehensive metrics from \texttt{logs/benchmarks/comprehensive}, parses suite/run identifiers from filenames, and builds a \texttt{MetricsStore} that supports run listing and suite filtering by crypto families and NIST level. The store constructs run summaries by grouping suites and exposes filters via \texttt{get\_unique\_values()}.
+\footnote{Evidence: dashboard/backend/ingest.py (\texttt{COMPREHENSIVE\_DIR}, \texttt{\_load\_comprehensive()}, \texttt{MetricsStore.list\_runs()}, \texttt{MetricsStore.list\_suites()}, \texttt{MetricsStore.get\_unique\_values()}).}
+
+\subsection{GCS JSONL Merge and Scientific Validity Gate}
+If GCS JSONL metrics are found, the ingest layer merges GCS system metrics, latency/jitter summaries, MAVLink validation counters, and proxy counters into the comprehensive suite objects, recording the source of each category. It then evaluates a scientific validity predicate requiring at least one of handshake, latency, or throughput to be present; suites failing this check are marked with an \texttt{invalid\_run} status and a validation reason.
+\footnote{Evidence: dashboard/backend/ingest.py (\texttt{\_load\_gcs\_jsonl\_entries()}, \texttt{\_merge\_gcs\_metrics()}, \texttt{\_is\_suite\_scientifically\_valid()}, \texttt{build\_store()}).}
+
+\subsection{JSONL Fallback and Missing-Data Transparency}
+If comprehensive metrics are absent, the ingest module falls back to JSONL entries and builds a minimal suite record. It explicitly annotates missing fields using \texttt{validation.metric\_status} with a \texttt{not\_collected} status and a \texttt{missing\_comprehensive\_metrics} reason, preserving provenance for downstream UI queries.
+\footnote{Evidence: dashboard/backend/ingest.py (\texttt{\_build\_minimal\_suite()}, JSONL fallback logic).}

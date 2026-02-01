@@ -345,6 +345,9 @@ export interface ComprehensiveSuiteMetrics {
     latency_source?: string | null;
     integrity_source?: string | null;
     packet_counters_source?: string | null;
+    raw_drone?: Record<string, unknown> | null;
+    raw_gcs?: Record<string, unknown> | null;
+    gcs_validation?: Record<string, unknown> | null;
 }
 
 // =============================================================================
@@ -361,6 +364,7 @@ export interface SuiteSummary {
     suite_security_level: string;
     handshake_success: boolean | null;
     handshake_total_duration_ms: number | null;
+    power_sensor_type?: string | null;
     power_avg_w: number | null;
     energy_total_j: number | null;
     benchmark_pass_fail: string | null;
@@ -396,4 +400,31 @@ export interface FiltersResponse {
     sig_families: string[];
     aead_algorithms: string[];
     nist_levels: string[];
+}
+
+export interface MetricInventoryItem {
+    key: string;
+    value: unknown;
+    source: string;
+    status: string;
+    reason?: string | null;
+    nullable_expected?: boolean | null;
+    zero_valid?: string | null;
+    origin_function?: string | null;
+    trigger?: string | null;
+    side?: string | null;
+    lifecycle_phase?: string | null;
+    is_legacy?: boolean;
+    value_type?: string | null;
+    classification?: string | null;
+}
+
+export interface SuiteInventoryResponse {
+    suite_key: string;
+    metrics: MetricInventoryItem[];
+    raw: {
+        drone: Record<string, unknown>;
+        gcs: Record<string, unknown>;
+        gcs_validation?: Record<string, unknown>;
+    };
 }

@@ -1,0 +1,49 @@
+% Part 3 — Benchmark Schedulers and MAVProxy Integration
+\section{Benchmark Schedulers and MAVProxy Integration}
+\label{sec:benchmark-schedulers}
+
+\subsection{Benchmark Scheduler Role and Scope}
+The benchmark scheduler is a drone-driven orchestration component that controls suite activation, proxy lifecycle, and metrics consolidation. It is designed for exhaustive, deterministic suite traversal and explicitly records the orchestration timeline for forensic auditing (sscheduler/sdrone\_bench.py: BenchmarkScheduler).
+\paragraph{Benchmark policy coupling.} The scheduler instantiates a benchmark policy with a cycle interval and optional AEAD filter (sscheduler/sdrone\_bench.py: BenchmarkScheduler.\_\_init\_\_). The policy enumerates suites using the registry and sorts them for predictable coverage (sscheduler/benchmark\_policy.py: BenchmarkPolicy.\_build\_suite\_list).
+
+\subsection{Control-Flow Entry and Run Loop}
+The scheduler’s run method performs GCS availability checks, clock synchronization, MAVProxy startup, and then enters a suite cycling loop (sscheduler/sdrone\_bench.py: BenchmarkScheduler.run, \_run\_loop).
+\paragraph{Clock synchronization.} The scheduler calls the GCS \texttt{chronos\_sync} command and records the offset in the metrics aggregator if available (sscheduler/sdrone\_bench.py: BenchmarkScheduler.run). This is the only path that populates \texttt{run\_context.clock\_offset\_ms} in the metrics schema.
+\paragraph{Suite boundary control.} The loop evaluates policy output and triggers suite changes on \texttt{NEXT\_SUITE}, finishing by collecting GCS metrics and finalizing the suite before proceeding (sscheduler/sdrone\_bench.py: BenchmarkScheduler.\_run\_loop).
+
+\subsection{Suite Activation Control Flow}
+Suite activation is a multi-step sequence with explicit ordering to satisfy handshake requirements and logging integrity.
+\paragraph{Metrics initialization.} The scheduler starts the metrics aggregator for the suite and records control-plane metadata before any network activation, ensuring the suite has a measurement record even if activation fails (sscheduler/sdrone\_bench.py: BenchmarkScheduler.\_activate\_suite; core/metrics\_aggregator.py: start\_suite, record\_control\_plane\_metrics).
+\paragraph{GCS-first proxy start.} The scheduler sends \texttt{start\_proxy} to the GCS and aborts on rejection, preventing the drone proxy from starting without a ready server (sscheduler/sdrone\_bench.py: BenchmarkScheduler.\_activate\_suite; sscheduler/sgcs\_bench.py: GcsBenchmarkServer.\_handle\_command).
+\paragraph{Drone proxy activation.} The drone then starts its local proxy process and waits for handshake completion by reading the status file written by the proxy (sscheduler/sdrone\_bench.py: DroneProxyManager.start; read\_handshake\_status).
+
+\subsection{Handshake Confirmation and Metrics Extraction}
+The scheduler treats a \texttt{handshake\_ok} or \texttt{running} status as a successful handshake and extracts handshake metrics from the status file. Those metrics are then forwarded to the benchmark policy and the metrics aggregator (sscheduler/sdrone\_bench.py: read\_handshake\_status; BenchmarkScheduler.\_activate\_suite).
+\paragraph{Primitive timing capture.} The metrics aggregator records crypto primitives directly from the handshake metrics structure, bridging transport events into the schema (core/metrics\_aggregator.py: record\_crypto\_primitives).
+
+\subsection{Data-Plane Metrics Collection and Finalization}
+The scheduler finalizes a suite by reading proxy counters from the status file and passing them to the metrics aggregator for throughput and loss calculations (sscheduler/sdrone\_bench.py: BenchmarkScheduler.\_finalize\_metrics; core/metrics\_aggregator.py: record\_data\_plane\_metrics, finalize\_suite).
+\paragraph{GCS metrics merge.} The scheduler calls \texttt{stop\_suite} on the GCS, which returns validation, latency, and system metrics that are merged into the suite record (sscheduler/sdrone\_bench.py: BenchmarkScheduler.\_collect\_gcs\_metrics; sscheduler/sgcs\_bench.py: GcsBenchmarkServer.\_handle\_command).
+
+\subsection{MAVProxy Integration on the Drone}
+The drone scheduler launches MAVProxy with two output streams: a plaintext output to the proxy and a duplicate output to a sniff port for MAVLink metrics. This explicitly decouples application traffic from measurement traffic (sscheduler/sdrone\_bench.py: start\_mavproxy).
+\paragraph{Sniff port isolation.} The dedicated sniff port avoids collisions with the proxy’s plaintext bindings and enables the MAVLink collector to operate without interfering with the transport (sscheduler/sdrone\_bench.py: MAVLINK\_SNIFF\_PORT; core/metrics\_aggregator.py: start\_suite).
+
+\subsection{MAVProxy Integration on the GCS}
+The GCS benchmark server starts MAVProxy with a master bound to the proxy plaintext output and duplicates telemetry to both a sniff port and a local QGC port. These outputs are explicitly described in the GCS MAVProxy manager (sscheduler/sgcs\_bench.py: GcsMavProxyManager.start).
+
+\subsection{GCS Benchmark Server: Command Handling}
+The GCS benchmark server is a TCP command server that executes a fixed command set for benchmark orchestration.
+\paragraph{Command repertoire.} The server supports \texttt{ping}, \texttt{get\_info}, \texttt{prepare\_rekey}, \texttt{start\_proxy}, \texttt{stop\_suite}, \texttt{shutdown}, and \texttt{chronos\_sync} (sscheduler/sgcs\_bench.py: GcsBenchmarkServer.\_handle\_command). Each command is mapped to explicit runtime actions, not inferred behavior.
+\paragraph{Suite lifecycle at the GCS.} On \texttt{start\_proxy}, the server resets MAVLink counters, starts system sampling, records handshake start, and starts the proxy. On \texttt{stop\_suite}, it stops MAVLink sampling, stops the proxy, and writes a JSONL record (sscheduler/sgcs\_bench.py: GcsBenchmarkServer.\_handle\_command).
+
+\subsection{Traffic Generation Constraint and Its Implications}
+The GCS benchmark server explicitly disables \texttt{start\_traffic}, returning a \texttt{traffic\_generation\_disabled} error. As a consequence, any benchmark run that depends solely on this server will have handshake and control-plane metrics but may have zero data-plane throughput unless an external traffic source is injected (sscheduler/sgcs\_bench.py: GcsBenchmarkServer.\_handle\_command).
+
+\subsection{Benchmark Correctness and Reproducibility}
+Correctness depends on strict sequencing and observable evidence.
+\paragraph{Strict sequencing.} The scheduler enforces GCS-first activation and handshake completion before recording suite success, aligning recorded metrics with actual cryptographic availability (sscheduler/sdrone\_bench.py: BenchmarkScheduler.\_activate\_suite).
+\paragraph{Reproducibility hooks.} Each suite is recorded with a run ID and suite index, and the metrics schema captures git commit state and environment metadata through the aggregator (core/metrics\_aggregator.py: start\_suite; core/metrics\_collectors.py: EnvironmentCollector.collect).
+
+\subsection{Not Implemented or Disabled Paths}
+No in-process traffic generator is active in the benchmark server; the command exists but is explicitly disabled. Any discussion of automated traffic generation within \texttt{sgcs\_bench.py} beyond this disabled stub is not implemented in the current codebase (sscheduler/sgcs\_bench.py: GcsBenchmarkServer.\_handle\_command).

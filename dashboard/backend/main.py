@@ -7,9 +7,11 @@ import logging
 try:
     from .models import RunSummary, ComprehensiveSuiteMetrics
     from .ingest import get_store
+    from .routes.suites import router as suites_router
 except ImportError:
     from models import RunSummary, ComprehensiveSuiteMetrics
     from ingest import get_store
+    from routes.suites import router as suites_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dashboard")
@@ -19,6 +21,9 @@ app = FastAPI(
     description="API for accessing forensic benchmark data from GCS logs.",
     version="2.0"
 )
+
+# Register API routes
+app.include_router(suites_router)
 
 # CORS
 app.add_middleware(

@@ -12,28 +12,88 @@ Endpoints:
 
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional, Dict, Any
+from datetime import date, datetime
+import math
 
-from models import (
-    ComprehensiveSuiteMetrics,
-    SuiteSummary,
-    RunSummary,
-    ComparisonResult,
-    SchemaField,
-    HealthResponse
-)
-from ingest import get_store
-from analysis import (
-    compare_suites,
-    compute_comparison_table,
-    get_drone_vs_gcs_summary,
-    generate_schema_definition,
-    aggregate_by_kem_family,
-    aggregate_by_nist_level,
-    is_suite_invalid,
-    filter_valid_suites
-)
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - optional dependency for safer encoding
+    np = None
+
+try:
+    import pandas as pd
+except Exception:  # pragma: no cover - optional dependency for safer encoding
+    pd = None
+
+try:
+    from ..models import (
+        ComprehensiveSuiteMetrics,
+        SuiteSummary,
+        RunSummary,
+        ComparisonResult,
+        SchemaField,
+        HealthResponse,
+        SuiteInventoryResponse,
+    )
+    from ..ingest import get_store
+    from ..analysis import (
+        compare_suites,
+        compute_comparison_table,
+        get_drone_vs_gcs_summary,
+        generate_schema_definition,
+        aggregate_by_kem_family,
+        aggregate_by_nist_level,
+        is_suite_invalid,
+        filter_valid_suites,
+        build_metric_inventory,
+        generate_metric_semantics,
+    )
+except ImportError:
+    from models import (
+        ComprehensiveSuiteMetrics,
+        SuiteSummary,
+        RunSummary,
+        ComparisonResult,
+        SchemaField,
+        HealthResponse,
+        SuiteInventoryResponse,
+    )
+    from ingest import get_store
+    from analysis import (
+        compare_suites,
+        compute_comparison_table,
+        get_drone_vs_gcs_summary,
+        generate_schema_definition,
+        aggregate_by_kem_family,
+        aggregate_by_nist_level,
+        is_suite_invalid,
+        filter_valid_suites,
+        build_metric_inventory,
+        generate_metric_semantics,
+    )
 
 router = APIRouter(prefix="/api", tags=["api"])
+
+
+def _json_safe_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if pd is not None and pd.isna(value):
+        return None
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    if np is not None and isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
+
+
+def _json_safe_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {key: _json_safe_value(value) for key, value in row.items()}
+        for row in records
+    ]
 
 
 # =============================================================================
@@ -135,6 +195,36 @@ async def get_suite(suite_key: str):
     return suite
 
 
+@router.get("/suite/{suite_key}/inventory", response_model=SuiteInventoryResponse)
+async def get_suite_inventory(suite_key: str):
+    """
+    Get full metric inventory for a suite, including raw payloads.
+    """
+    try:
+        store = get_store()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    if ":" in suite_key:
+        suite = store.get_suite_by_key(suite_key)
+    else:
+        suite = store.get_suite(suite_key)
+
+    if suite is None:
+        raise HTTPException(status_code=404, detail=f"Suite not found: {suite_key}")
+
+    metrics = build_metric_inventory(suite)
+    return SuiteInventoryResponse(
+        suite_key=suite_key,
+        metrics=metrics,
+        raw={
+            "drone": suite.raw_drone or {},
+            "gcs": suite.raw_gcs or {},
+            "gcs_validation": suite.gcs_validation or {},
+        },
+    )
+
+
 @router.get("/suite/{suite_key}/drone-vs-gcs")
 async def get_suite_drone_vs_gcs(suite_key: str):
     """Get drone vs GCS comparison for a suite."""
@@ -220,31 +310,34 @@ async def aggregate_by_kem(
         store = get_store()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-    suites = [
-        store.get_suite_by_key(key) 
-        for key in store._suites.keys()
-        if run_id is None or key.startswith(run_id + ":")
-    ]
-    suites = [s for s in suites if s is not None]
-    
-    if not suites:
-        return {"data": [], "warning": "No suites found"}
-    
-    df = aggregate_by_kem_family(suites)
-    
-    if df.empty:
-        return {"data": [], "warning": "No aggregatable data"}
-    
-    # Convert multi-index columns to flat, JSON-friendly keys
-    df = df.copy()
-    if df.index.name:
-        df.index.name = df.index.name.replace(".", "_")
-    df.columns = [
-        "_".join([str(part).replace(".", "_") for part in col]) if isinstance(col, tuple) else str(col)
-        for col in df.columns
-    ]
-    result = df.reset_index().to_dict(orient="records")
-    return {"data": result}
+    try:
+        suites = [
+            store.get_suite_by_key(key)
+            for key in store._suites.keys()
+            if run_id is None or key.startswith(run_id + ":")
+        ]
+        suites = [s for s in suites if s is not None]
+
+        if not suites:
+            return {"data": [], "warning": "No suites found"}
+
+        df = aggregate_by_kem_family(suites)
+
+        if df.empty:
+            return {"data": [], "warning": "No aggregatable data"}
+
+        # Convert multi-index columns to flat, JSON-friendly keys
+        df = df.copy()
+        if df.index.name:
+            df.index.name = df.index.name.replace(".", "_")
+        df.columns = [
+            "_".join([str(part).replace(".", "_") for part in col]) if isinstance(col, tuple) else str(col)
+            for col in df.columns
+        ]
+        result = df.reset_index().to_dict(orient="records")
+        return {"data": _json_safe_records(result)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"aggregate_kem_family_failed: {exc}")
 
 
 @router.get("/aggregate/nist-level")
@@ -260,30 +353,33 @@ async def aggregate_by_nist(
         store = get_store()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-    suites = [
-        store.get_suite_by_key(key) 
-        for key in store._suites.keys()
-        if run_id is None or key.startswith(run_id + ":")
-    ]
-    suites = [s for s in suites if s is not None]
-    
-    if not suites:
-        return {"data": [], "warning": "No suites found"}
-    
-    df = aggregate_by_nist_level(suites)
-    
-    if df.empty:
-        return {"data": [], "warning": "No aggregatable data"}
-    
-    df = df.copy()
-    if df.index.name:
-        df.index.name = df.index.name.replace(".", "_")
-    df.columns = [
-        "_".join([str(part).replace(".", "_") for part in col]) if isinstance(col, tuple) else str(col)
-        for col in df.columns
-    ]
-    result = df.reset_index().to_dict(orient="records")
-    return {"data": result}
+    try:
+        suites = [
+            store.get_suite_by_key(key)
+            for key in store._suites.keys()
+            if run_id is None or key.startswith(run_id + ":")
+        ]
+        suites = [s for s in suites if s is not None]
+
+        if not suites:
+            return {"data": [], "warning": "No suites found"}
+
+        df = aggregate_by_nist_level(suites)
+
+        if df.empty:
+            return {"data": [], "warning": "No aggregatable data"}
+
+        df = df.copy()
+        if df.index.name:
+            df.index.name = df.index.name.replace(".", "_")
+        df.columns = [
+            "_".join([str(part).replace(".", "_") for part in col]) if isinstance(col, tuple) else str(col)
+            for col in df.columns
+        ]
+        result = df.reset_index().to_dict(orient="records")
+        return {"data": _json_safe_records(result)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"aggregate_nist_level_failed: {exc}")
 
 
 # =============================================================================
@@ -294,6 +390,12 @@ async def aggregate_by_nist(
 async def get_schema():
     """Get schema field definitions with reliability classification."""
     return generate_schema_definition()
+
+
+@router.get("/metrics/semantics")
+async def get_metric_semantics():
+    """Get generated metric semantics for schema + legacy metrics."""
+    return generate_metric_semantics()
 
 
 @router.get("/metrics/load-errors")

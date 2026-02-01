@@ -1,0 +1,49 @@
+% Part 8 — MAVLink Integrity and Power Telemetry
+\section{MAVLink Integrity and Power Telemetry}
+\label{sec:mavlink-power}
+
+\subsection{Scope and Terminology}
+This part documents two measurement subsystems: MAVLink integrity/latency telemetry and power monitoring. The key terms are:
+\begin{itemize}
+	\item \textbf{MAVLink collector}: The \texttt{MavLinkMetricsCollector} responsible for parsing MAVLink messages and deriving integrity/latency metrics.
+	\item \textbf{Integrity metrics}: Counters for sequence gaps, duplicates, out-of-order packets, decode errors, and CRC errors.
+	\item \textbf{Latency/jitter metrics}: One-way latency and jitter derived from timestamped MAVLink messages, and RTT derived from command/ack pairs.
+	\item \textbf{Power monitor}: The INA219-backed sampling engine in \texttt{core/power\_monitor.py} and the higher-level \texttt{PowerCollector} in \texttt{core/metrics\_collectors.py}.
+\end{itemize}
+\footnote{Evidence: core/mavlink\_collector.py; core/power\_monitor.py; core/metrics\_collectors.py.}
+
+\subsection{MAVLink Collector Initialization and Sniffing}
+The MAVLink collector is instantiated with a role (GCS or drone) and starts sniffing via \texttt{start\_sniffing(port, host)}. It requires \texttt{pymavlink} and uses a UDP connection string \texttt{udpin:host:port}. The collector resets internal counters for each suite to avoid cross-suite accumulation.
+\footnote{Evidence: core/mavlink\_collector.py (\texttt{\textunderscore\textunderscore init\textunderscore\textunderscore()}, \texttt{start\_sniffing()}, \texttt{reset()}, \texttt{\_sniff\_loop()}).}
+
+\subsection{Message-Level Tracking and Integrity Counters}
+Each MAVLink message is parsed and processed in \texttt{\_handle\_message()}. The collector tracks total RX/TX counts, per-message type counts, and estimated payload sizes. Sequence tracking detects gaps, duplicates, and out-of-order packets using per-system last-seen sequence numbers. CRC errors, decode errors, and message drops are tracked explicitly.
+\footnote{Evidence: core/mavlink\_collector.py (\texttt{\_handle\_message()}, \texttt{\_track\_sequence()}, integrity counters).}
+
+\subsection{Heartbeat and Command/ACK Telemetry}
+Heartbeat metrics include observed count, expected count (1~Hz), loss count, average interval, and the system/component identifiers. Command metrics track sent commands, pending acknowledgments, and ACK latency samples. RTT samples are derived from command/ack pairs, and invalidity reasons are recorded if commands are not sent or ACKs are missing.
+\footnote{Evidence: core/mavlink\_collector.py (\texttt{\_handle\_heartbeat()}, \texttt{\_handle\_command\_ack()}, RTT validity logic in \texttt{get\_metrics()}).}
+
+\subsection{One-Way Latency and Jitter Derivation}
+Latency is derived from MAVLink timestamp fields. If \texttt{time\_usec} is present and plausible, it is used directly; otherwise, \texttt{time\_boot\_ms} is aligned to Unix time using \texttt{SYSTEM\_TIME} to establish a boot-to-unix offset. Samples are filtered for plausibility, jitter is computed as the absolute difference between consecutive latency samples, and invalidity reasons are surfaced when timestamps or sample counts are insufficient.
+\footnote{Evidence: core/mavlink\_collector.py (\texttt{\_track\_message\_latency()}, latency validity logic in \texttt{get\_metrics()}).}
+
+\subsection{Schema Population for MAVLink Metrics}
+The collector exposes \texttt{populate\_schema\_metrics()} to fill the MAVProxy metrics section and \texttt{populate\_mavlink\_integrity()} to fill integrity counters in the comprehensive schema. GCS role populates a validation-only subset, while the drone role includes message histograms and command-latency fields.
+\footnote{Evidence: core/mavlink\_collector.py (\texttt{populate\_schema\_metrics()}, \texttt{populate\_mavlink\_integrity()}).}
+
+\subsection{Flight Controller Telemetry Extraction}
+The collector derives flight controller telemetry from MAVLink messages such as \texttt{GLOBAL\_POSITION\_INT}, \texttt{SYS\_STATUS}, \texttt{BATTERY\_STATUS}, and \texttt{ATTITUDE}. It computes update rates for attitude and position and captures battery voltage/current, remaining percentage, CPU load, and sensor health flags. These fields are exported through \texttt{get\_flight\_controller\_metrics()}.
+\footnote{Evidence: core/mavlink\_collector.py (message handlers and \texttt{get\_flight\_controller\_metrics()}).}
+
+\subsection{Power Monitor Backends and Configuration}
+The power monitoring subsystem provides a dedicated INA219 sampler in \texttt{Ina219PowerMonitor} with configurable I2C bus, address, shunt resistance, and sample rate. It selects ADC profiles based on requested sample rates and supports sign handling (auto or fixed). Failure to access I2C or configuration errors result in \texttt{PowerMonitorUnavailable} exceptions.
+\footnote{Evidence: core/power\_monitor.py (configuration defaults, ADC profiles, \texttt{Ina219PowerMonitor}, \texttt{PowerMonitorUnavailable}).}
+
+\subsection{Power Capture and Energy Summary}
+The INA219 monitor captures samples to CSV at the requested sample rate, records per-sample timestamps, and returns a \texttt{PowerSummary} with average current/voltage/power, total energy, sample rate, and capture window bounds. This provides deterministic energy accounting for suite-level analysis.
+\footnote{Evidence: core/power\_monitor.py (\texttt{capture()}, \texttt{PowerSummary}).}
+
+\subsection{Collector-Level Power Integration}
+The higher-level \texttt{PowerCollector} in \texttt{core/metrics\_collectors.py} selects an available backend (INA219, RPi5 hwmon, or none), samples in a background thread, and computes energy using trapezoidal integration across samples. It returns summary statistics including total energy, average/peak power, and voltage/current averages.
+\footnote{Evidence: core/metrics\_collectors.py (\texttt{PowerCollector}, \texttt{start\_sampling()}, \texttt{stop\_sampling()}, \texttt{get\_energy\_stats()}).}

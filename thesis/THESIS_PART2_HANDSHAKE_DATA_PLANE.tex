@@ -1,0 +1,55 @@
+% Part 2 — Handshake, Rekey, and Data Plane Mechanics
+\section{Handshake, Rekey, and Data Plane Mechanics}
+\label{sec:handshake-data-plane}
+
+\subsection{Entry Point, Role Binding, and Key Material Loading}
+The proxy entrypoint is a thin CLI wrapper that binds an explicit role and suite, loads signing material for the GCS server, and delegates execution to the transport core. The GCS role requires a private signing key, while the drone role consumes a peer public key when provided (core/run\_proxy.py: main). This entrypoint enforces role correctness before any network sockets are opened.
+\paragraph{Role validation.} The role is strictly limited to \texttt{gcs} or \texttt{drone} and is validated before any handshake logic runs (core/run\_proxy.py: main).
+\paragraph{Suite resolution.} Suite identifiers are resolved to registry entries before the proxy starts, guaranteeing that the handshake and AEAD layers operate on a consistent suite definition (core/run\_proxy.py: main; core/suites.py: get\_suite).
+
+\subsection{Handshake Construction: GCS as Server}
+The GCS handshake path constructs a server hello that is explicitly bound to the negotiated suite and wire version. The server hello includes the KEM public key and a signature over a transcript that concatenates the protocol version, session identifier, algorithm names, public key bytes, and a random challenge (core/handshake.py: build\_server\_hello).
+\paragraph{Why the transcript exists in code.} The transcript construction is explicitly concatenated in the server implementation; this is not a conceptual claim. The transcript is the actual input to \texttt{Signature.sign} (core/handshake.py: build\_server\_hello).
+\paragraph{Performance artifacts.} KEM key generation and signature timing are recorded into the handshake metrics structure, including wall-clock and perf counter intervals (core/handshake.py: build\_server\_hello).
+
+\subsection{Handshake Verification: Drone as Client}
+The drone explicitly verifies the server hello signature and enforces suite consistency against the expected suite to prevent downgrade. Any mismatch raises a verification error, which aborts the handshake (core/handshake.py: parse\_and\_verify\_server\_hello; client\_drone\_handshake).
+\paragraph{Signature verification is mandatory.} The drone constructs a signature verifier and fails closed on verification failure (core/handshake.py: parse\_and\_verify\_server\_hello). This is enforced in code; there is no bypass path.
+\paragraph{Suite downgrade protection.} The client compares negotiated KEM and signature identifiers to the expected values in the suite configuration and explicitly raises \texttt{HandshakeVerifyError} on mismatch (core/handshake.py: client\_drone\_handshake).
+
+\subsection{PSK Authentication Tag}
+In addition to signature verification, the GCS validates a drone authentication tag computed from a pre-shared key (PSK). The PSK is expected to be injected via environment or configuration, and is required outside dev mode (core/handshake.py: \_drone\_psk\_bytes; server\_gcs\_handshake). This tag is verified before decapsulation and key derivation, ensuring that only authenticated drones proceed to key agreement.
+
+\subsection{Key Derivation and Directional Keys}
+Both roles derive transport keys using HKDF with explicit context binding the session ID and algorithm identifiers. The derived output is split into two directional keys, and the return order is role-specific, ensuring that each side uses the correct send/receive keys (core/handshake.py: derive\_transport\_keys).
+\paragraph{Role-specific mapping.} The drone treats the first derived key as send-to-GCS, while the GCS treats the first derived key as send-to-drone; this asymmetry is encoded in the derivation function itself (core/handshake.py: derive\_transport\_keys).
+
+\subsection{Handshake Integration into Proxy Startup}
+The transport core performs the handshake before binding the AEAD sender/receiver and before entering the selector loop. The handshake result provides the session ID, negotiated algorithm identifiers, and peer address for encrypted UDP routing (core/async\_proxy.py: run\_proxy; \_perform\_handshake).
+\paragraph{Handshake timeouts.} The GCS listener enforces rate limiting and timeout logic when accepting the TCP connection, and rejects connections that fail allow-list checks or rate-limiting gates (core/async\_proxy.py: \_perform\_handshake; \_TokenBucket.allow).
+
+\subsection{AEAD Sender and Receiver Construction}
+Once keys and identifiers are available, the proxy constructs an AEAD sender and receiver that embed the wire version, suite identifiers, session ID, and replay window. The AEAD token is carried in configuration and is required for sender/receiver creation (core/async\_proxy.py: \_build\_sender\_receiver; core/aead.py: Sender, Receiver).
+\paragraph{Header semantics.} The sender packs a wire header containing version, KEM ID, signature ID, session ID, sequence, and epoch (core/aead.py: Sender.pack\_header). The receiver validates these fields before attempting decryption (core/aead.py: Receiver.decrypt).
+
+\subsection{Wire Format and Deterministic Nonce}
+The AEAD design removes nonce bytes from the wire by deriving nonces locally from epoch and sequence. This reduces per-packet overhead and forces both ends to strictly track state (core/aead.py: Sender.encrypt; Receiver.decrypt; \_build\_nonce).
+\paragraph{Sequence-based safety.} The sender enforces a sequence threshold to avoid IV exhaustion and raises a specific exception that signals the need for rekey (core/aead.py: Sender.encrypt). This behavior has direct benchmarking implications for long-running tests.
+
+\subsection{Replay Protection and Error Taxonomy}
+The receiver maintains a replay window and rejects duplicate or stale packets. Each failure reason is explicitly classified for accurate drop accounting (core/aead.py: Receiver.\_check\_replay; core/async\_proxy.py: \_parse\_header\_fields).
+\paragraph{Header pre-validation.} Before decryption, the proxy pre-classifies header errors (version mismatch, crypto ID mismatch, session mismatch) to separate authentication failures from structural mismatches (core/async\_proxy.py: \_parse\_header\_fields).
+
+\subsection{In-Band Rekey Control Flow}
+The in-band control plane implements a two-phase commit protocol for rekeying. The coordinator sends a prepare request, the peer responds with prepare\_ok or prepare\_fail, and a commit triggers an immediate handshake for the new suite (core/policy\_engine.py: request\_prepare, handle\_control, record\_rekey\_result).
+\paragraph{Rekey execution.} Rekeying performs a fresh handshake, rebuilds AEAD IDs, reconstructs sender/receiver objects, updates the active context, and records counters and status messages (core/async\_proxy.py: run\_proxy, rekey worker logic).
+
+\subsection{TCP JSON Control Plane (Out-of-Band)}
+The optional TCP JSON control server exists to bridge external schedulers. It parses newline-delimited JSON, enforces allow-list checks, and forwards rekey requests into the in-band control state (core/control\_tcp.py: ControlTcpServer.\_handle\_message). This layer is intentionally small and dependency-free to avoid contaminating the transport core with orchestration complexity.
+
+\subsection{Control-Plane and Benchmarking Implications}
+Handshake and rekey events are critical to benchmarking correctness because they define the temporal bounds for suite activation and cryptographic cost. The metrics aggregator records handshake start/end, protocol duration, and primitive timing and can mark missing data explicitly (core/metrics\_aggregator.py: record\_handshake\_start, record\_handshake\_end, record\_crypto\_primitives).
+\paragraph{Scheduler dependency.} The drone scheduler waits for the proxy status file to report \texttt{handshake\_ok} or \texttt{running} before marking a suite as active, preventing premature measurement (sscheduler/sdrone\_bench.py: read\_handshake\_status; \_activate\_suite).
+
+\subsection{Not Implemented or Disabled Paths}
+No additional handshake or rekey paths are implemented beyond the in-band control plane and the optional TCP JSON interface. Any other orchestration behavior must be treated as not implemented in the current codebase.

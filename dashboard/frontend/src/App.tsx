@@ -12,6 +12,7 @@ import ComparisonView from './pages/ComparisonView';
 import BucketComparison from './pages/BucketComparison';
 import PowerAnalysis from './pages/PowerAnalysis';
 import IntegrityMonitor from './pages/IntegrityMonitor';
+import MetricSemantics from './pages/MetricSemantics';
 
 // Navigation component
 function Navigation() {
@@ -24,6 +25,7 @@ function Navigation() {
         { path: '/compare', label: 'Comparison' },
         { path: '/power', label: 'Power Analysis' },
         { path: '/integrity', label: 'Integrity Monitor' },
+        { path: '/semantics', label: 'Metric Semantics' },
     ];
 
     return (
@@ -110,6 +112,7 @@ function App() {
                         <Route path="/compare" element={<ComparisonView />} />
                         <Route path="/power" element={<PowerAnalysis />} />
                         <Route path="/integrity" element={<IntegrityMonitor />} />
+                        <Route path="/semantics" element={<MetricSemantics />} />
                     </Routes>
                 </main>
             </div>

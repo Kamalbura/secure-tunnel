@@ -1,0 +1,115 @@
+% Part 1 — System Overview & Architectural Philosophy
+\section{System Overview and Architectural Philosophy}
+\label{sec:system-overview}
+
+\subsection{Terminology and Definitions (Code-Grounded)}
+This thesis is self-contained and defines each term before use. All terms are grounded in code or configuration. Where a term appears only in configuration or logging, that is explicitly stated.
+
+\paragraph{Ground Control Station (GCS).} The Ground Control Station is the control-side host that accepts inbound handshake connections and runs the GCS benchmark server. In code, the GCS role is the server side of the handshake and binds the encrypted UDP receive port (core/async\_proxy.py: \_perform\_handshake; \_setup\_sockets). GCS host addressing is defined in configuration (core/config.py: CONFIG). Its role affects benchmarking because GCS controls suite activation and returns validation metrics to the drone (sscheduler/sgcs\_bench.py: GcsBenchmarkServer.\_handle\_command).
+
+\paragraph{Drone system.} The drone system is the client-side host that initiates the handshake and runs the drone benchmark scheduler. In code, the drone role is the client side of the handshake and binds the drone encrypted UDP receive port (core/async\_proxy.py: \_perform\_handshake; \_setup\_sockets). Drone host addressing is defined in configuration (core/config.py: CONFIG). It affects benchmarking because it orchestrates suite switching and consolidates metrics (sscheduler/sdrone\_bench.py: BenchmarkScheduler.run, \_finalize\_metrics).
+
+\paragraph{Secure tunnel.} The secure tunnel is the composed transport formed by (1) a TCP handshake that establishes keys and (2) a UDP data plane that carries AEAD-framed packets. This is not a conceptual abstraction; it is the runtime of \texttt{run\_proxy} bridging plaintext and encrypted sockets (core/async\_proxy.py: run\_proxy, \_setup\_sockets).
+
+\paragraph{Proxy / async proxy.} The proxy is the transport process started by \texttt{core.run\_proxy} that performs the handshake, creates AEAD sender/receiver objects, and forwards UDP packets between plaintext and encrypted planes. The file name \texttt{async\_proxy.py} is a historical name; the implementation uses selectors, not asyncio (core/async\_proxy.py: module docstring).
+
+\paragraph{Control plane.} The control plane is the set of messages that drive rekey and scheduling decisions. In this system it exists in two forms: an in-band control plane over encrypted packets (core/policy\_engine.py: handle\_control) and an optional TCP JSON control plane for external schedulers (core/control\_tcp.py: ControlTcpServer.\_handle\_message). It impacts benchmarking because suite transitions and rekeys are encoded in control-plane metadata (core/metrics\_aggregator.py: record\_control\_plane\_metrics).
+
+\paragraph{Data plane.} The data plane is the encrypted UDP path that carries application data after the handshake. It is implemented as AEAD-framed UDP packets with explicit counters and replay tracking (core/aead.py: Sender.encrypt, Receiver.decrypt; core/async\_proxy.py: \_setup\_sockets). Data-plane counters are the basis for throughput and loss metrics (core/metrics\_aggregator.py: record\_data\_plane\_metrics, finalize\_suite).
+
+\paragraph{Crypto plane.} The crypto plane refers to the handshake and AEAD operations that derive keys and protect data. It is implemented in \texttt{core/handshake.py} (KEM + signature + HKDF) and \texttt{core/aead.py} (AEAD framing). Its cost is recorded as handshake and primitive metrics (core/metrics\_aggregator.py: record\_crypto\_primitives).
+
+\paragraph{Measurement plane.} The measurement plane is the instrumentation path that collects environment, system, power, MAVLink, and proxy counters into a unified schema (core/metrics\_schema.py; core/metrics\_aggregator.py; core/metrics\_collectors.py; core/mavlink\_collector.py). It impacts reproducibility because it records git commit, environment metadata, and explicit \texttt{metric\_status} flags when data is missing (core/metrics\_collectors.py: EnvironmentCollector.collect; core/metrics\_aggregator.py: \_mark\_metric\_status).
+
+\paragraph{Handshake.} The handshake is the authenticated key establishment between GCS and drone, implemented as a TCP exchange that constructs and verifies a signed server hello, encapsulates/decapsulates a shared secret, and derives keys via HKDF (core/handshake.py: build\_server\_hello, parse\_and\_verify\_server\_hello, client\_drone\_handshake, server\_gcs\_handshake, derive\_transport\_keys). It directly impacts benchmark timing because its duration is recorded and used as a primary metric (core/metrics\_aggregator.py: record\_handshake\_start, record\_handshake\_end).
+
+\paragraph{Rekey.} Rekey is the process of negotiating a new suite and keys after the proxy is running. It is implemented in the in-band control plane and triggers a fresh handshake inside \texttt{run\_proxy} (core/policy\_engine.py: request\_prepare, handle\_control; core/async\_proxy.py: rekey worker logic in run\_proxy). Rekey affects benchmarking because it can introduce blackout intervals and contributes to suite lifecycle metrics (core/async\_proxy.py: counters.rekey\_blackout\_duration\_ms; core/metrics\_aggregator.py: record\_data\_plane\_metrics).
+
+\paragraph{Blackout.} Blackout refers to the time during which no encrypted packets are forwarded during rekey. The proxy explicitly tracks blackout durations and rekey state (core/async\_proxy.py: counters.rekey\_blackout\_duration\_ms and rekey tracking). This impacts throughput and latency metrics because data-plane delivery is paused during blackout windows.
+
+\paragraph{MAVLink.} MAVLink is the UAV telemetry protocol observed by the system for integrity and latency measurements. The system does not implement MAVLink; it observes MAVLink traffic via UDP sniffing using pymavlink (core/mavlink\_collector.py: MavLinkMetricsCollector.start\_sniffing). MAVLink metrics influence latency/jitter and integrity reporting (core/metrics\_aggregator.py: finalize\_suite).
+
+\paragraph{MAVProxy.} MAVProxy is the MAVLink relay used to feed data into the proxy and duplicate telemetry for measurement. The drone scheduler starts MAVProxy with dual outputs, and the GCS scheduler starts MAVProxy to duplicate telemetry to sniff and QGC ports (sscheduler/sdrone\_bench.py: start\_mavproxy; sscheduler/sgcs\_bench.py: GcsMavProxyManager.start).
+
+\paragraph{pymavlink.} pymavlink is the Python MAVLink library used by the collector to parse and interpret MAVLink messages (core/mavlink\_collector.py: import mavutil). It affects metrics availability because MAVLink metrics are collected only if pymavlink is available.
+
+\paragraph{SYSTEM\_TIME.} The term SYSTEM\_TIME appears in the MAVLink context; the code references time alignment and latency extraction from timestamped messages in the collector logic (core/mavlink\_collector.py: latency tracking fields). If SYSTEM\_TIME messages are not present or timestamps cannot be aligned, latency validity flags are set as invalid (core/metrics\_aggregator.py: finalize\_suite).
+
+\paragraph{One-way latency.} One-way latency is derived from MAVLink timestamped messages and stored in the latency/jitter schema (core/metrics\_schema.py: LatencyJitterMetrics). Its validity is determined by collector output and can be marked invalid when sample prerequisites are missing (core/metrics\_aggregator.py: finalize\_suite).
+
+\paragraph{Round-trip time (RTT).} RTT is computed from command/ack exchanges in MAVLink telemetry and recorded in the latency/jitter schema (core/metrics\_schema.py: LatencyJitterMetrics; core/mavlink\_collector.py: command tracking). It affects benchmark interpretation of link responsiveness.
+
+\paragraph{Packet loss.} Packet loss is derived from proxy counters (drops vs sent) and recorded in data-plane metrics (core/metrics\_aggregator.py: record\_data\_plane\_metrics). It affects throughput and goodput reporting.
+
+\paragraph{Goodput.} Goodput is computed from plaintext byte counters and suite active duration, representing effective payload throughput (core/metrics\_aggregator.py: finalize\_suite). It differs from wire rate, which uses encrypted byte counters.
+
+\paragraph{Throughput.} Throughput (achieved and wire rate) is computed from proxy counters and suite duration (core/metrics\_aggregator.py: finalize\_suite). It reflects encrypted transport capacity, not necessarily application payload delivery.
+
+\paragraph{Chronos clock sync.} Chronos clock synchronization is a scheduler-driven RPC that estimates clock offset between GCS and drone to align timestamps (sscheduler/sdrone\_bench.py: BenchmarkScheduler.run; sscheduler/sgcs\_bench.py: GcsBenchmarkServer.\_handle\_command). This affects timing metrics that rely on synchronized clocks.
+
+\paragraph{Suite.} A suite is a specific combination of KEM, AEAD, and signature algorithms defined in the suite registry. Suites are enumerated and sorted by NIST level for benchmarking (core/suites.py: registry definitions; sscheduler/benchmark\_policy.py: BenchmarkPolicy.\_build\_suite\_list).
+
+\paragraph{Benchmark suite.} A benchmark suite is a suite instance being executed under the benchmark scheduler with a fixed duration and metrics collection. It is not an abstract term; it corresponds to a specific activation interval in the scheduler run loop (sscheduler/sdrone\_bench.py: BenchmarkScheduler.\_run\_loop).
+
+\paragraph{Scheduler.} The scheduler is the control process that decides when to activate or switch suites. In this system, the benchmark scheduler is drone-driven and uses a deterministic policy (sscheduler/sdrone\_bench.py: BenchmarkScheduler; sscheduler/benchmark\_policy.py: BenchmarkPolicy).
+
+\paragraph{MetricsAggregator.} MetricsAggregator is the component that collects and merges metrics into the comprehensive schema and computes derived values such as throughput and validity flags (core/metrics\_aggregator.py: MetricsAggregator).
+
+\paragraph{Comprehensive JSON.} Comprehensive JSON refers to the serialized form of the comprehensive metrics schema. It is produced by the aggregator and stored as JSON files in the logs directory (core/metrics\_aggregator.py: finalize\_suite; dashboard/backend/ingest.py: \_parse\_comprehensive\_filename).
+
+\paragraph{JSONL logs.} JSONL logs are line-delimited JSON records written by schedulers and the GCS server for per-suite events (sscheduler/sdrone\_bench.py: \_log\_result; sscheduler/sgcs\_bench.py: stop\_suite handler). The ingest pipeline uses them as fallback data when comprehensive JSON is missing (dashboard/backend/ingest.py: \_build\_minimal\_suite).
+
+\paragraph{Ingest pipeline.} The ingest pipeline loads comprehensive JSON and JSONL fallback data into an in-memory store for the dashboard API (dashboard/backend/ingest.py: MetricsStore, \_load\_json, \_build\_minimal\_suite). It affects reproducibility by preserving missing-data reasons.
+
+\paragraph{Validation status.} Validation status is the set of per-field flags that indicate whether a metric was collected, invalid, or missing, recorded in \texttt{metric\_status} (core/metrics\_aggregator.py: \_mark\_metric\_status, finalize\_suite; dashboard/backend/ingest.py: \_build\_minimal\_suite).
+
+\paragraph{Metric validity flags.} Metric validity flags are stored in the validation schema and indicate missing or invalid measurements (core/metrics\_schema.py: ValidationMetrics; core/metrics\_aggregator.py: finalize\_suite).
+
+\paragraph{Policy engine.} The policy engine implements the in-band rekey state machine and is invoked by the proxy when control messages are received (core/policy\_engine.py: handle\_control). It influences runtime suite changes and rekey behavior.
+
+\paragraph{Suite registry.} The suite registry defines algorithm mappings, IDs, and NIST levels for KEM and signature algorithms, enabling consistent suite selection (core/suites.py: registry definitions).
+
+\paragraph{KEM (Key Encapsulation Mechanism).} A KEM is the algorithm used to encapsulate a shared secret in the handshake. It is instantiated and used in the handshake code (core/handshake.py: build\_server\_hello, client\_encapsulate, server\_decapsulate).
+
+\paragraph{SIG (Digital Signature).} The signature algorithm authenticates the server hello. It is used to sign and verify the transcript during handshake (core/handshake.py: build\_server\_hello, parse\_and\_verify\_server\_hello).
+
+\paragraph{AEAD (Authenticated Encryption with Associated Data).} AEAD is the encryption mode used for the data plane. It is instantiated in the sender/receiver and used to encrypt/decrypt UDP payloads with the header bound as associated data (core/aead.py: Sender.encrypt, Receiver.decrypt).
+
+\subsection{System Goals and Non-Goals (Derived from Code)}
++The system’s implemented goals are those exercised by the proxy, scheduler, and metrics components. This section does not infer intent beyond code paths.
++\paragraph{Goal: deterministic, dependency-light transport.} The proxy explicitly avoids asyncio and relies on selectors to remain deterministic and dependency-light (core/async\_proxy.py: module docstring). This supports reproducible experiments by reducing non-deterministic event-loop behavior.
++\paragraph{Goal: measurable cryptographic and transport costs.} The handshake records per-primitive timings and artifact sizes, and the proxy records AEAD timing and drop counters (core/handshake.py: \_finalize\_handshake\_metrics; core/async\_proxy.py: ProxyCounters). These are later exposed through the metrics aggregator.
++\paragraph{Goal: explicit separation of planes.} Distinct sockets are used for plaintext, encrypted data, and control plane operations (core/async\_proxy.py: \_setup\_sockets; core/control\_tcp.py: ControlTcpServer).
++
++\subsection{Architectural Overview}
++The system consists of a transport core (proxy), a control/orchestration layer (schedulers), and a measurement layer (collectors and aggregator). The proxy is the only component that handles encryption and replay protection. The schedulers control suite activation and gather results. The measurement layer captures environment, system, power, and MAVLink metrics and merges them into a comprehensive schema.
++
++\subsection{Component Breakdown and File Responsibilities}
++\paragraph{core/config.py.} Defines hosts, ports, and feature flags that govern runtime behavior across all components. It encodes strict peer matching, DSCP marking, and control-plane defaults (core/config.py: CONFIG).
++\paragraph{core/async\_proxy.py.} Implements the transport proxy, including handshake orchestration, UDP socket setup, AEAD sender/receiver binding, replay enforcement, and status file emission (core/async\_proxy.py: run\_proxy, \_setup\_sockets, ProxyCounters).
++\paragraph{core/handshake.py.} Implements server and client handshake logic, including signature verification, KEM encapsulation/decapsulation, PSK authentication tag verification, HKDF key derivation, and metrics flattening (core/handshake.py: build\_server\_hello, parse\_and\_verify\_server\_hello, client\_drone\_handshake, server\_gcs\_handshake, \_finalize\_handshake\_metrics).
++\paragraph{core/aead.py.} Implements AEAD framing with deterministic nonces, header binding, and replay window enforcement (core/aead.py: Sender.encrypt, Receiver.decrypt).
++\paragraph{core/policy\_engine.py and core/control\_tcp.py.} Implement the in-band two-phase commit for rekey and an optional TCP JSON control plane for external schedulers (core/policy\_engine.py: handle\_control; core/control\_tcp.py: ControlTcpServer).
++\paragraph{core/metrics\_schema.py, core/metrics\_aggregator.py, core/metrics\_collectors.py.} Define the metrics schema and implement collection, aggregation, and validation flags (core/metrics\_schema.py; core/metrics\_aggregator.py; core/metrics\_collectors.py).
++\paragraph{core/mavlink\_collector.py.} Implements MAVLink integrity and latency observation using pymavlink and a UDP sniff loop (core/mavlink\_collector.py: MavLinkMetricsCollector.start\_sniffing).
++\paragraph{sscheduler/sdrone\_bench.py.} Drone benchmark scheduler that coordinates suite cycling, starts the proxy, reads status, and merges GCS metrics (sscheduler/sdrone\_bench.py: BenchmarkScheduler).
++\paragraph{sscheduler/sgcs\_bench.py.} GCS benchmark server that accepts drone commands, starts the GCS proxy, collects system/MAVLink metrics, and returns suite records (sscheduler/sgcs\_bench.py: GcsBenchmarkServer).
++
++\subsection{Control-Flow Narrative (High-Level Execution)}
++\paragraph{Startup.} The GCS benchmark server starts and listens for TCP commands (sscheduler/sgcs\_bench.py: GcsBenchmarkServer.start). The drone scheduler waits for the GCS \texttt{ping} response (sscheduler/sdrone\_bench.py: wait\_for\_gcs).
++\paragraph{Suite activation.} The drone sends \texttt{start\_proxy} to the GCS, then starts its local proxy and waits for handshake confirmation (sscheduler/sdrone\_bench.py: \_activate\_suite; sscheduler/sgcs\_bench.py: GcsBenchmarkServer.\_handle\_command).
++\paragraph{Measurement.} During suite activation, the metrics aggregator begins background sampling and records control-plane metadata. MAVLink sniffing begins on role-specific ports (core/metrics\_aggregator.py: start\_suite).
++\paragraph{Suite finalization.} The drone requests \texttt{stop\_suite} from the GCS, reads proxy counters, finalizes metrics, and logs JSONL results (sscheduler/sdrone\_bench.py: \_collect\_gcs\_metrics, \_finalize\_metrics; core/metrics\_aggregator.py: finalize\_suite).
++
++\subsection{Data-Flow Narrative (Planes and Artifacts)}
++\paragraph{Plaintext to encrypted flow.} MAVProxy emits plaintext UDP to the proxy’s plaintext input port, which is encrypted and forwarded over the encrypted UDP socket to the peer (core/async\_proxy.py: \_setup\_sockets; core/aead.py: Sender.encrypt). The reverse path decrypts and forwards to the local plaintext egress.
++\paragraph{Measurement flow.} System and environment collectors run in the background, power sampling runs on the drone, and MAVLink sniffing runs on a separate port. These feeds are merged into a comprehensive schema (core/metrics\_collectors.py: SystemCollector; core/metrics\_aggregator.py: finalize\_suite; core/mavlink\_collector.py: MavLinkMetricsCollector).
++\paragraph{Control-plane flow.} Rekey commands flow either in-band over encrypted packets (core/policy\_engine.py: handle\_control) or out-of-band via TCP JSON control (core/control\_tcp.py: ControlTcpServer).
++
++\subsection{Benchmarking Correctness and Research Reproducibility}
++\paragraph{Correctness.} Handshake completion is a gate condition; suite metrics are finalized only after explicit handshake confirmation and GCS \texttt{stop\_suite} results. This ensures that suite records correspond to actual cryptographic activation (sscheduler/sdrone\_bench.py: read\_handshake\_status, \_finalize\_metrics).
++\paragraph{Reproducibility.} The environment collector records git commit hash, dirty state, and liboqs version per suite, providing a reproducibility anchor for each run (core/metrics\_collectors.py: EnvironmentCollector.collect). The metrics aggregator records \texttt{metric\_status} entries for missing values, which the ingest pipeline preserves (core/metrics\_aggregator.py: \_mark\_metric\_status; dashboard/backend/ingest.py: \_build\_minimal\_suite).
++
++\subsection{Not Implemented or Disabled in Current Codebase}
++\paragraph{Traffic generation in GCS benchmark server.} The \texttt{start\_traffic} command is explicitly disabled in the GCS benchmark server. Any autonomous traffic generation from the GCS benchmark server is therefore not implemented (sscheduler/sgcs\_bench.py: GcsBenchmarkServer.\_handle\_command).
++\paragraph{Simulation tooling.} Simulation is disabled by default via configuration and must be explicitly enabled; no claims of simulation behavior are made beyond the configuration flags (core/config.py: ENABLE\_SIMULATION; settings.json: dev\_tools.enabled).

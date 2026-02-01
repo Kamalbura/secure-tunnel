@@ -1,0 +1,41 @@
+% Part 9 — Process Management, Logging, and Error Semantics
+\section{Process Management, Logging, and Error Semantics}
+\label{sec:process-logging-errors}
+
+\subsection{Scope and Terminology}
+This part documents cross-platform process management, structured logging, and the explicit error taxonomy used throughout the system. Key terms include:
+\begin{itemize}
+	\item \textbf{Managed process}: A subprocess wrapped by \texttt{ManagedProcess} with parent ownership and controlled termination semantics.
+	\item \textbf{Job Object}: The Windows mechanism used to ensure child processes terminate when the parent exits.
+	\item \textbf{PDEATHSIG}: The Linux mechanism (\texttt{prctl(PR\_SET\_PDEATHSIG)}) used to ensure child termination on parent death.
+	\item \textbf{JSON log record}: The structured output format emitted by the logging utility with a fixed field schema.
+\end{itemize}
+\footnote{Evidence: core/process.py; core/logging\_utils.py; core/exceptions.py.}
+
+\subsection{Managed Process Lifecycle and Ownership}
+The \texttt{ManagedProcess} class is a unified wrapper around \texttt{subprocess.Popen} that ensures ownership and consistent shutdown across platforms. On Windows it uses Job Objects with the \texttt{KILL\_ON\_JOB\_CLOSE} limit, and on Linux it sets \texttt{PR\_SET\_PDEATHSIG} and creates a new session via \texttt{setsid()} to support process group termination. All managed processes are registered in a global registry, and a shutdown hook calls \texttt{kill\_all\_managed\_processes()} on interpreter exit.
+\footnote{Evidence: core/process.py (platform-specific setup, \texttt{ManagedProcess.start()}, registry and \texttt{atexit} hook).}
+
+\subsection{Termination Semantics and Cleanup}
+Shutdown uses a staged termination strategy. On Linux, the process group receives \texttt{SIGTERM} and is followed by \texttt{SIGKILL} if the timeout elapses. On Windows, \texttt{taskkill /F /T} is invoked to terminate the process tree; an additional kill call is issued as a fallback. Job handles are closed during cleanup to release OS resources.
+\footnote{Evidence: core/process.py (\texttt{ManagedProcess.stop()} implementation).}
+
+\subsection{Structured JSON Logging}
+The logging utility exposes \texttt{get\_logger()} with a \texttt{JsonFormatter} that emits JSON records containing timestamp, level, logger name, and message. Exception details are serialized when present. The formatter also attempts to include extra attributes attached to the log record if they are JSON-serializable.
+\footnote{Evidence: core/logging\_utils.py (\texttt{JsonFormatter}, \texttt{get\_logger()}).}
+
+\subsection{File Logger Attachment and Handler Hygiene}
+The \texttt{configure\_file\_logger()} helper attaches a JSON file handler and returns the log path. It removes any previously attached file handlers to avoid duplicate outputs during tests or repeated initialization. Log files are written under \texttt{logs/} with a timestamped filename and the role prefix.
+\footnote{Evidence: core/logging\_utils.py (\texttt{configure\_file\_logger()}).}
+
+\subsection{Minimal In-Process Metrics Hooks}
+The logging utility also defines a minimal \texttt{Metrics} container with \texttt{Counter} and \texttt{Gauge} primitives, enabling lightweight instrumentation without external dependencies. These are used as in-process counters for components that want to track simple numeric state.
+\footnote{Evidence: core/logging\_utils.py (\texttt{Counter}, \texttt{Gauge}, \texttt{Metrics}).}
+
+\subsection{Error Taxonomy and Semantic Clarity}
+The codebase defines a concise error taxonomy in \texttt{core/exceptions.py}. It includes configuration errors (\texttt{ConfigError}), sequence exhaustion (\texttt{SequenceOverflow}), handshake errors (\texttt{HandshakeError} and its format/verify variants), and AEAD errors (\texttt{AeadError}). These typed exceptions preserve semantic meaning for upstream error handling and observability.
+\footnote{Evidence: core/exceptions.py.}
+
+\subsection{Proxy Error Attribution and Counters}
+The proxy maintains structured counters for packet drops and failure modes (replay drops, auth failures, header mismatches, session epoch errors) alongside handshake and primitive timing summaries. This enables error attribution in the data plane and provides the basis for higher-level metrics aggregation and validation.
+\footnote{Evidence: core/async\_proxy.py (\texttt{ProxyCounters} fields and handshake primitive aggregation).}

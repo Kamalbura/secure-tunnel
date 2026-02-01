@@ -50,7 +50,7 @@ class RunContextMetrics(BaseModel):
     run_end_time_mono: float = 0.0
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -69,7 +69,7 @@ class SuiteCryptoIdentity(BaseModel):
     suite_security_level: Optional[str] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -85,7 +85,7 @@ class SuiteLifecycleTimeline(BaseModel):
     suite_active_duration_ms: float = 0.0
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -103,7 +103,7 @@ class HandshakeMetrics(BaseModel):
     handshake_failure_reason: Optional[str] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -129,7 +129,7 @@ class CryptoPrimitiveBreakdown(BaseModel):
     shared_secret_size_bytes: Optional[int] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -147,7 +147,7 @@ class RekeyMetrics(BaseModel):
     rekey_trigger_reason: Optional[str] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -181,7 +181,7 @@ class DataPlaneMetrics(BaseModel):
     aead_decrypt_count: Optional[int] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -205,7 +205,7 @@ class LatencyJitterMetrics(BaseModel):
     rtt_valid: Optional[bool] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 # =============================================================================
 # I. MAVPROXY APPLICATION LAYER — DRONE SIDE
@@ -230,7 +230,7 @@ class MavProxyDroneMetrics(BaseModel):
     mavproxy_drone_stream_rate_hz: Optional[float] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -243,7 +243,7 @@ class MavProxyGcsMetrics(BaseModel):
     mavproxy_gcs_seq_gap_count: Optional[int] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -262,7 +262,7 @@ class MavLinkIntegrityMetrics(BaseModel):
     mavlink_message_latency_avg_ms: Optional[float] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -283,7 +283,7 @@ class FlightControllerTelemetry(BaseModel):
     fc_sensor_health_flags: Optional[int] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -301,7 +301,7 @@ class ControlPlaneMetrics(BaseModel):
     policy_total_suites: Optional[int] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -323,7 +323,7 @@ class SystemResourcesDrone(BaseModel):
     load_avg_15m: Optional[float] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -345,7 +345,7 @@ class SystemResourcesGcs(BaseModel):
     load_avg_15m: Optional[float] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 # =============================================================================
 # P. POWER & ENERGY (DRONE)
@@ -363,7 +363,7 @@ class PowerEnergyMetrics(BaseModel):
     energy_per_handshake_j: Optional[float] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -379,7 +379,7 @@ class ObservabilityMetrics(BaseModel):
     collection_duration_ms: Optional[float] = None
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -396,7 +396,7 @@ class ValidationMetrics(BaseModel):
     metric_status: Dict[str, Dict[str, str]] = Field(default_factory=dict)
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # =============================================================================
@@ -408,6 +408,7 @@ class ComprehensiveSuiteMetrics(BaseModel):
     Complete metrics for a single suite benchmark iteration.
     Combines all 18 categories (A-R) into one unified structure.
     """
+    model_config = {"extra": "allow"}
     run_context: RunContextMetrics = Field(default_factory=RunContextMetrics)
     crypto_identity: SuiteCryptoIdentity = Field(default_factory=SuiteCryptoIdentity)
     lifecycle: SuiteLifecycleTimeline = Field(default_factory=SuiteLifecycleTimeline)
@@ -430,9 +431,9 @@ class ComprehensiveSuiteMetrics(BaseModel):
     latency_source: Optional[str] = None
     integrity_source: Optional[str] = None
     packet_counters_source: Optional[str] = None
-
-    class Config:
-        extra = "forbid"
+    raw_drone: Optional[Dict[str, Any]] = None
+    raw_gcs: Optional[Dict[str, Any]] = None
+    gcs_validation: Dict[str, Any] = Field(default_factory=dict)
 
 
 # =============================================================================
@@ -450,6 +451,7 @@ class SuiteSummary(BaseModel):
     suite_security_level: Optional[str] = None
     handshake_success: Optional[bool] = None
     handshake_total_duration_ms: Optional[float] = None
+    power_sensor_type: Optional[str] = None
     power_avg_w: Optional[float] = None
     energy_total_j: Optional[float] = None
     benchmark_pass_fail: Optional[str] = None
@@ -490,3 +492,28 @@ class HealthResponse(BaseModel):
     status: str
     suites_loaded: int
     runs_loaded: int
+
+
+class MetricInventoryItem(BaseModel):
+    """Single metric inventory entry with provenance and validity metadata."""
+    key: str
+    value: Any
+    source: str
+    status: str
+    reason: Optional[str] = None
+    nullable_expected: Optional[bool] = None
+    zero_valid: Optional[str] = None
+    origin_function: Optional[str] = None
+    trigger: Optional[str] = None
+    side: Optional[str] = None
+    lifecycle_phase: Optional[str] = None
+    is_legacy: bool = False
+    value_type: Optional[str] = None
+    classification: Optional[str] = None
+
+
+class SuiteInventoryResponse(BaseModel):
+    """Full metric inventory for a suite, including raw payloads."""
+    suite_key: str
+    metrics: List[MetricInventoryItem]
+    raw: Dict[str, Any]

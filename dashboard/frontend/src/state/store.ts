@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import type { SuiteSummary, ComprehensiveSuiteMetrics, FiltersResponse, RunSummary } from '../types/metrics';
+import type { SuiteSummary, ComprehensiveSuiteMetrics, FiltersResponse, RunSummary, SuiteInventoryResponse } from '../types/metrics';
 
 // =============================================================================
 // API FUNCTIONS
@@ -28,6 +28,7 @@ interface DashboardState {
     suites: SuiteSummary[];
     runs: RunSummary[];
     selectedSuite: ComprehensiveSuiteMetrics | null;
+    selectedSuiteInventory: SuiteInventoryResponse | null;
     comparisonSuiteA: ComprehensiveSuiteMetrics | null;
     comparisonSuiteB: ComprehensiveSuiteMetrics | null;
     filters: FiltersResponse | null;
@@ -51,6 +52,7 @@ interface DashboardState {
     fetchRuns: () => Promise<void>;
     fetchFilters: () => Promise<void>;
     fetchSuiteDetail: (suiteKey: string) => Promise<void>;
+    fetchSuiteInventory: (suiteKey: string) => Promise<void>;
     fetchComparison: (suiteKeyA: string, suiteKeyB: string) => Promise<void>;
     setFilter: (key: keyof Pick<DashboardState, 'selectedKemFamily' | 'selectedSigFamily' | 'selectedAead' | 'selectedNistLevel' | 'selectedRunId'>, value: string | null) => void;
     clearFilters: () => void;
@@ -67,6 +69,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     suites: [],
     runs: [],
     selectedSuite: null,
+    selectedSuiteInventory: null,
     comparisonSuiteA: null,
     comparisonSuiteB: null,
     filters: null,
@@ -131,6 +134,16 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
             set({ selectedSuite: suite, isLoading: false });
         } catch (err) {
             set({ error: err instanceof Error ? err.message : 'Failed to fetch suite', isLoading: false });
+        }
+    },
+
+    fetchSuiteInventory: async (suiteKey: string) => {
+        set({ isLoading: true, error: null });
+        try {
+            const inventory = await fetchJson<SuiteInventoryResponse>(`${API_BASE}/suite/${encodeURIComponent(suiteKey)}/inventory`);
+            set({ selectedSuiteInventory: inventory, isLoading: false });
+        } catch (err) {
+            set({ error: err instanceof Error ? err.message : 'Failed to fetch suite inventory', isLoading: false });
         }
     },
 

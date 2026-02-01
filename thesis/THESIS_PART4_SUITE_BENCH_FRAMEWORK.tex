@@ -1,0 +1,66 @@
+% Part 4 — Suite Benchmark Framework (Alternate E2E Harness)
+\section{Suite Benchmark Framework}
+\label{sec:suite-bench-framework}
+
+\subsection{Scope and Terminology}
+This part documents the suite benchmark framework implemented under \texttt{suite\_benchmarks/framework}. The framework is an alternate, application-level harness that orchestrates suite runs by controlling the secure tunnel proxies and collecting end-to-end measurements. The key terms used below are:
+\begin{itemize}
+	\item \textbf{Suite benchmark framework}: The pair of scripts \texttt{suite\_bench\_gcs.py} and \texttt{suite\_bench\_drone.py} that coordinate suite runs using a TCP control channel and proxy subprocess management.
+	\item \textbf{GCS scheduler}: The GCS-side controller in \texttt{SuiteBenchmarkRunner} that selects suites, starts proxies, generates traffic, and aggregates results.
+	\item \textbf{Drone control server}: The drone-side TCP server in \texttt{BenchmarkControlServer} that starts/stops the drone proxy and returns metrics.
+	\item \textbf{Suite iteration}: One execution of a suite ID with a fixed duration; repeated \texttt{iterations} times per suite.
+	\item \textbf{Suite metrics}: The structured metrics container \texttt{SuiteMetrics} collected on the drone, and \texttt{SuiteBenchResult} collected on the GCS.
+\end{itemize}
+\footnote{Evidence: suite\_benchmarks/framework/suite\_bench\_gcs.py (module docstring, \texttt{SuiteBenchmarkRunner}, \texttt{SuiteBenchResult}); suite\_benchmarks/framework/suite\_bench\_drone.py (module docstring, \texttt{BenchmarkControlServer}, \texttt{SuiteMetrics}).}
+
+\subsection{High-Level Architecture and Control/Data Planes}
+The framework is split into a GCS-side scheduler and a drone-side control server. The GCS scheduler performs orchestration, while the drone server performs local proxy lifecycle management and collects hardware/system metrics.
+\begin{itemize}
+	\item \textbf{Control plane}: A TCP command channel from GCS to drone. The GCS uses \texttt{DroneController\_send\_command()} to send JSON commands such as \texttt{start\_suite}, \texttt{stop\_suite}, \texttt{rekey}, \texttt{status}, and \texttt{shutdown}. The drone server parses these commands in \texttt{BenchmarkControlServer\_handle\_command()} and dispatches to handler methods such as \texttt{\_start\_suite()} and \texttt{\_stop\_suite()}.
+	\item \textbf{Data plane}: The tunnel data plane is created by running \texttt{core.run\_proxy} in subprocesses on both GCS and drone. The GCS side manages its proxy in \texttt{GCSProxyManager.start()} and the drone side manages its proxy in \texttt{ProxyManager.start()}.
+\end{itemize}
+\footnote{Evidence: suite\_benchmarks/framework/suite\_bench\_gcs.py (\texttt{DroneController}, \texttt{GCSProxyManager}); suite\_benchmarks/framework/suite\_bench\_drone.py (\texttt{BenchmarkControlServer}, \texttt{ProxyManager}).}
+
+\subsection{GCS Scheduler: Configuration, Suite Selection, and Orchestration}
+The GCS scheduler declares a fixed local configuration for suites and runtime parameters, then allows override via CLI flags. The local defaults include \texttt{LOCAL\_SUITES}, \texttt{LOCAL\_ITERATIONS}, \texttt{LOCAL\_DURATION\_S}, and \texttt{LOCAL\_TEST\_REKEY}. If no suites are specified, the GCS enumerates suites with generated keys and limits to the first ten for quick runs.
+\footnote{Evidence: suite\_benchmarks/framework/suite\_bench\_gcs.py (local configuration block, \texttt{get\_available\_suites()}, \texttt{main()}).}
+
+The main orchestration logic is implemented in \texttt{SuiteBenchmarkRunner.run()} and \texttt{SuiteBenchmarkRunner.run\_suite\_iteration()}. Each iteration performs the following steps:
+\begin{enumerate}
+	\item Start the drone proxy by issuing \texttt{start\_suite} to the drone control server and record \texttt{handshake\_drone\_ms}.
+	\item Start the GCS proxy subprocess via \texttt{GCSProxyManager.start()} and compute \texttt{handshake\_gcs\_ms} and \texttt{handshake\_total\_ms}.
+	\item Wait for tunnel establishment (a fixed sleep).
+	\item Generate UDP traffic via \texttt{TrafficGenerator} for \texttt{duration\_s} seconds and compute throughput as packets/s and Mbps from sent bytes.
+	\item Optionally request rekey via \texttt{DroneController.rekey()} and record rekey timing fields returned by the drone.
+	\item Stop the drone suite and fetch aggregated metrics via \texttt{DroneController.stop\_suite()}.
+\end{enumerate}
+\footnote{Evidence: suite\_benchmarks/framework/suite\_bench\_gcs.py (\texttt{SuiteBenchmarkRunner.run\_suite\_iteration()}, \texttt{TrafficGenerator}).}
+
+\subsection{Traffic Generator Semantics}
+The traffic generator is a dedicated thread that sends UDP datagrams at a target rate. Each packet includes a 4-byte sequence number and an 8-byte timestamp; remaining bytes are padding to the configured payload length. Traffic is sent to the GCS plaintext host and port (defaults from \texttt{core.config.CONFIG}). The generator does not read responses; its role is strictly transmit-side load generation for throughput calculations.
+\footnote{Evidence: suite\_benchmarks/framework/suite\_bench\_gcs.py (\texttt{TrafficGenerator.run()}, \texttt{SuiteBenchmarkRunner.run\_suite\_iteration()}).}
+
+\subsection{Drone Control Server: Proxy Lifecycle and Metrics}
+The drone-side control server is a long-running TCP server created by \texttt{BenchmarkControlServer.start()}. For each command, it decodes JSON, dispatches to handlers, and returns JSON responses. Key handler behaviors are:
+\begin{itemize}
+	\item \texttt{\_start\_suite()}: Initializes a \texttt{SuiteMetrics} record, resets latency tracking, starts power collection, timestamps the proxy launch as a handshake window, and starts the drone proxy with \texttt{ProxyManager.start()}.
+	\item \texttt{\_stop\_suite()}: Stops power collection and the proxy, aggregates power and latency statistics into \texttt{SuiteMetrics}, captures CPU/memory/temperature, and writes a per-iteration JSON record under \texttt{suite\_benchmarks/raw\_data/drone}.
+	\item \texttt{\_handle\_rekey()}: Records rekey timing fields and (currently) simulates rekey by restarting the proxy; a TODO comment indicates that actual rekey logic is not yet implemented in this framework.
+\end{itemize}
+\footnote{Evidence: suite\_benchmarks/framework/suite\_bench\_drone.py (\texttt{BenchmarkControlServer}, \texttt{\_start\_suite()}, \texttt{\_stop\_suite()}, \texttt{\_handle\_rekey()}).}
+
+\subsection{Metrics Structures and Aggregation}
+The drone defines the authoritative metrics schema for a suite run in \texttt{SuiteMetrics}, which includes handshake timing, optional rekey timing, packet counters, latency statistics, power summaries, and system resource measurements. The GCS uses \texttt{SuiteBenchResult} to store a superset of these fields along with GCS-side CPU/memory and throughput computed from the traffic generator. The GCS stores results as a session JSON file via \texttt{SuiteBenchmarkRunner.\_save\_results()} in \texttt{suite\_benchmarks/raw\_data/gcs}.
+\footnote{Evidence: suite\_benchmarks/framework/suite\_bench\_drone.py (\texttt{SuiteMetrics}); suite\_benchmarks/framework/suite\_bench\_gcs.py (\texttt{SuiteBenchResult}, \texttt{\_save\_results()}).}
+
+\subsection{Power and System Telemetry on the Drone}
+Power collection is implemented as a background thread in \texttt{PowerCollector}. It performs raw INA219 I2C reads at approximately 1~kHz and stores \texttt{PowerSample} records with timestamps. On suite stop, the server computes mean and peak power and estimates energy by integrating over the sample interval. System telemetry is gathered with \texttt{psutil} (if available) and the Raspberry Pi thermal zone file. These values are injected into \texttt{SuiteMetrics} at suite finalization.
+\footnote{Evidence: suite\_benchmarks/framework/suite\_bench\_drone.py (\texttt{PowerCollector}, \texttt{get\_system\_metrics()}, \texttt{\_stop\_suite()}).}
+
+\subsection{Latency Tracking Status in Current Code}
+The framework defines a \texttt{LatencyTracker} with \texttt{record\_send()} and \texttt{record\_receive()} methods and populates latency percentiles during \texttt{\_stop\_suite()}. However, in the current code, there are no call sites that invoke \texttt{record\_send()} or \texttt{record\_receive()} within \texttt{suite\_bench\_drone.py}. As a result, latency statistics remain at default values unless another component invokes these methods externally, which is not present in this module. This is a documented limitation of the current framework implementation.
+\footnote{Evidence: suite\_benchmarks/framework/suite\_bench\_drone.py (\texttt{LatencyTracker} definition; no invocations in module; \texttt{\_stop\_suite()} uses \texttt{get\_stats()}).}
+
+\subsection{Outputs and Reproducibility Artifacts}
+The GCS scheduler persists session-level results under \texttt{suite\_benchmarks/raw\_data/gcs} with a session ID timestamp. The drone server persists per-iteration JSON records under \texttt{suite\_benchmarks/raw\_data/drone}, also tagged by session. The framework also logs GCS proxy stdout/stderr to \texttt{suite\_benchmarks/logs} using timestamped filenames to support post-hoc diagnosis.
+\footnote{Evidence: suite\_benchmarks/framework/suite\_bench\_gcs.py (\texttt{OUTPUT\_DIR}, \texttt{LOGS\_DIR}, \texttt{\_save\_results()}, \texttt{GCSProxyManager.start()}); suite\_benchmarks/framework/suite\_bench\_drone.py (\texttt{OUTPUT\_DIR}, \texttt{\_save\_result()}).}

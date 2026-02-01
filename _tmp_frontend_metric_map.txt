@@ -1,0 +1,245 @@
+control_plane.control_channel_disconnect_count -> (not referenced)
+control_plane.control_channel_rtt_ms -> (not referenced)
+control_plane.policy_name -> dashboard/frontend/src/pages/SuiteDetail.tsx#L202
+control_plane.policy_state -> dashboard/frontend/src/pages/SuiteDetail.tsx#L206
+control_plane.policy_suite_index -> (not referenced)
+control_plane.policy_total_suites -> (not referenced)
+control_plane.scheduler_action_reason -> dashboard/frontend/src/pages/SuiteDetail.tsx#L214
+control_plane.scheduler_action_type -> dashboard/frontend/src/pages/SuiteDetail.tsx#L210
+control_plane.scheduler_cooldown_remaining_ms -> (not referenced)
+control_plane.scheduler_decision_latency_ms -> (not referenced)
+control_plane.scheduler_tick_interval_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L198
+crypto_identity.aead_algorithm -> dashboard/frontend/src/pages/SuiteDetail.tsx#L162
+crypto_identity.aead_mode -> (not referenced)
+crypto_identity.kem_algorithm -> dashboard/frontend/src/pages/ComparisonView.tsx#L150, dashboard/frontend/src/pages/ComparisonView.tsx#L156, dashboard/frontend/src/pages/SuiteDetail.tsx#L158
+crypto_identity.kem_family -> dashboard/frontend/src/pages/SuiteDetail.tsx#L159
+crypto_identity.kem_nist_level -> (not referenced)
+crypto_identity.kem_parameter_set -> (not referenced)
+crypto_identity.sig_algorithm -> dashboard/frontend/src/pages/ComparisonView.tsx#L150, dashboard/frontend/src/pages/ComparisonView.tsx#L156, dashboard/frontend/src/pages/SuiteDetail.tsx#L160
+crypto_identity.sig_family -> dashboard/frontend/src/pages/SuiteDetail.tsx#L161
+crypto_identity.sig_nist_level -> (not referenced)
+crypto_identity.sig_parameter_set -> (not referenced)
+crypto_identity.suite_order_index -> (not referenced)
+crypto_identity.suite_security_level -> dashboard/frontend/src/pages/SuiteDetail.tsx#L163
+crypto_identity.suite_tier -> (not referenced)
+crypto_primitives.ciphertext_size_bytes -> (not referenced)
+crypto_primitives.hkdf_expand_time_ms -> (not referenced)
+crypto_primitives.hkdf_extract_time_ms -> (not referenced)
+crypto_primitives.kem_decaps_ns -> (not referenced)
+crypto_primitives.kem_decapsulation_time_ms -> (not referenced)
+crypto_primitives.kem_encaps_ns -> (not referenced)
+crypto_primitives.kem_encapsulation_time_ms -> (not referenced)
+crypto_primitives.kem_keygen_ns -> (not referenced)
+crypto_primitives.kem_keygen_time_ms -> (not referenced)
+crypto_primitives.pub_key_size_bytes -> (not referenced)
+crypto_primitives.shared_secret_size_bytes -> (not referenced)
+crypto_primitives.sig_sign_ns -> (not referenced)
+crypto_primitives.sig_size_bytes -> (not referenced)
+crypto_primitives.sig_verify_ns -> (not referenced)
+crypto_primitives.signature_sign_time_ms -> (not referenced)
+crypto_primitives.signature_verify_time_ms -> (not referenced)
+crypto_primitives.total_crypto_time_ms -> (not referenced)
+data_plane.achieved_throughput_mbps -> dashboard/frontend/src/pages/SuiteDetail.tsx#L255
+data_plane.aead_decrypt_avg_ns -> (not referenced)
+data_plane.aead_decrypt_count -> (not referenced)
+data_plane.aead_encrypt_avg_ns -> (not referenced)
+data_plane.aead_encrypt_count -> (not referenced)
+data_plane.bytes_received -> (not referenced)
+data_plane.bytes_sent -> (not referenced)
+data_plane.decode_failure_count -> (not referenced)
+data_plane.drop_auth -> (not referenced)
+data_plane.drop_header -> (not referenced)
+data_plane.drop_replay -> (not referenced)
+data_plane.enc_in -> (not referenced)
+data_plane.enc_out -> (not referenced)
+data_plane.goodput_mbps -> dashboard/frontend/src/pages/ComparisonView.tsx#L63, dashboard/frontend/src/pages/ComparisonView.tsx#L64, dashboard/frontend/src/pages/ComparisonView.tsx#L219, dashboard/frontend/src/pages/ComparisonView.tsx#L220, dashboard/frontend/src/pages/SuiteDetail.tsx#L251
+data_plane.packet_delivery_ratio -> dashboard/frontend/src/pages/SuiteDetail.tsx#L239, dashboard/frontend/src/pages/SuiteDetail.tsx#L263
+data_plane.packet_loss_ratio -> dashboard/frontend/src/pages/ComparisonView.tsx#L68, dashboard/frontend/src/pages/ComparisonView.tsx#L69, dashboard/frontend/src/pages/ComparisonView.tsx#L225, dashboard/frontend/src/pages/ComparisonView.tsx#L229, dashboard/frontend/src/pages/SuiteDetail.tsx#L259
+data_plane.packets_dropped -> dashboard/frontend/src/pages/SuiteDetail.tsx#L233, dashboard/frontend/src/pages/SuiteDetail.tsx#L275
+data_plane.packets_received -> dashboard/frontend/src/pages/SuiteDetail.tsx#L228, dashboard/frontend/src/pages/SuiteDetail.tsx#L271
+data_plane.packets_sent -> dashboard/frontend/src/pages/ComparisonView.tsx#L214, dashboard/frontend/src/pages/ComparisonView.tsx#L215, dashboard/frontend/src/pages/SuiteDetail.tsx#L224, dashboard/frontend/src/pages/SuiteDetail.tsx#L267
+data_plane.ptx_in -> (not referenced)
+data_plane.ptx_out -> (not referenced)
+data_plane.replay_drop_count -> (not referenced)
+data_plane.target_throughput_mbps -> (not referenced)
+data_plane.wire_rate_mbps -> (not referenced)
+fc_telemetry.fc_altitude_m -> (not referenced)
+fc_telemetry.fc_armed_state -> (not referenced)
+fc_telemetry.fc_attitude_update_rate_hz -> (not referenced)
+fc_telemetry.fc_battery_current_a -> (not referenced)
+fc_telemetry.fc_battery_remaining_percent -> (not referenced)
+fc_telemetry.fc_battery_voltage_v -> (not referenced)
+fc_telemetry.fc_cpu_load_percent -> (not referenced)
+fc_telemetry.fc_gps_fix_type -> (not referenced)
+fc_telemetry.fc_gps_satellites -> (not referenced)
+fc_telemetry.fc_groundspeed_mps -> (not referenced)
+fc_telemetry.fc_heartbeat_age_ms -> (not referenced)
+fc_telemetry.fc_mode -> (not referenced)
+fc_telemetry.fc_position_update_rate_hz -> (not referenced)
+fc_telemetry.fc_sensor_health_flags -> (not referenced)
+handshake.end_to_end_handshake_duration_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L180
+handshake.handshake_end_time_drone -> (not referenced)
+handshake.handshake_end_time_gcs -> (not referenced)
+handshake.handshake_failure_reason -> dashboard/frontend/src/pages/SuiteDetail.tsx#L188
+handshake.handshake_rtt_ms -> (not referenced)
+handshake.handshake_start_time_drone -> (not referenced)
+handshake.handshake_start_time_gcs -> (not referenced)
+handshake.handshake_success -> dashboard/frontend/src/pages/SuiteDetail.tsx#L184
+handshake.handshake_total_duration_ms -> dashboard/frontend/src/pages/ComparisonView.tsx#L58, dashboard/frontend/src/pages/ComparisonView.tsx#L59, dashboard/frontend/src/pages/ComparisonView.tsx#L199, dashboard/frontend/src/pages/ComparisonView.tsx#L200, dashboard/frontend/src/pages/SuiteDetail.tsx#L172
+handshake.protocol_handshake_duration_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L176
+latency_jitter.jitter_avg_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L294
+latency_jitter.jitter_p95_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L298
+latency_jitter.latency_invalid_reason -> dashboard/frontend/src/pages/SuiteDetail.tsx#L318
+latency_jitter.latency_sample_count -> (not referenced)
+latency_jitter.latency_samples -> (not referenced)
+latency_jitter.one_way_latency_avg_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L286
+latency_jitter.one_way_latency_max_ms -> (not referenced)
+latency_jitter.one_way_latency_p50_ms -> (not referenced)
+latency_jitter.one_way_latency_p95_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L290
+latency_jitter.one_way_latency_valid -> dashboard/frontend/src/pages/SuiteDetail.tsx#L302
+latency_jitter.round_trip_latency_avg_ms -> (not referenced)
+latency_jitter.round_trip_latency_max_ms -> (not referenced)
+latency_jitter.round_trip_latency_p50_ms -> (not referenced)
+latency_jitter.round_trip_latency_p95_ms -> (not referenced)
+latency_jitter.rtt_avg_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L306
+latency_jitter.rtt_invalid_reason -> dashboard/frontend/src/pages/SuiteDetail.tsx#L322
+latency_jitter.rtt_p95_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L310
+latency_jitter.rtt_sample_count -> (not referenced)
+latency_jitter.rtt_valid -> dashboard/frontend/src/pages/SuiteDetail.tsx#L314
+lifecycle.suite_activated_time -> (not referenced)
+lifecycle.suite_active_duration_ms -> (not referenced)
+lifecycle.suite_blackout_count -> (not referenced)
+lifecycle.suite_blackout_total_ms -> (not referenced)
+lifecycle.suite_deactivated_time -> (not referenced)
+lifecycle.suite_rekey_end_time -> (not referenced)
+lifecycle.suite_rekey_start_time -> (not referenced)
+lifecycle.suite_selected_time -> (not referenced)
+lifecycle.suite_total_duration_ms -> (not referenced)
+lifecycle.suite_traffic_end_time -> (not referenced)
+lifecycle.suite_traffic_start_time -> (not referenced)
+mavlink_integrity.mavlink_compid -> (not referenced)
+mavlink_integrity.mavlink_decode_error_count -> dashboard/frontend/src/pages/SuiteDetail.tsx#L424
+mavlink_integrity.mavlink_duplicate_count -> dashboard/frontend/src/pages/SuiteDetail.tsx#L429
+mavlink_integrity.mavlink_message_latency_avg_ms -> (not referenced)
+mavlink_integrity.mavlink_message_latency_p95_ms -> (not referenced)
+mavlink_integrity.mavlink_msg_drop_count -> (not referenced)
+mavlink_integrity.mavlink_out_of_order_count -> dashboard/frontend/src/pages/SuiteDetail.tsx#L405, dashboard/frontend/src/pages/SuiteDetail.tsx#L412
+mavlink_integrity.mavlink_packet_crc_error_count -> dashboard/frontend/src/pages/SuiteDetail.tsx#L418
+mavlink_integrity.mavlink_protocol_version -> (not referenced)
+mavlink_integrity.mavlink_sysid -> (not referenced)
+mavproxy_drone.mavproxy_drone_cmd_ack_latency_avg_ms -> (not referenced)
+mavproxy_drone.mavproxy_drone_cmd_ack_latency_p95_ms -> (not referenced)
+mavproxy_drone.mavproxy_drone_cmd_ack_received_count -> (not referenced)
+mavproxy_drone.mavproxy_drone_cmd_sent_count -> (not referenced)
+mavproxy_drone.mavproxy_drone_end_time -> (not referenced)
+mavproxy_drone.mavproxy_drone_heartbeat_interval_ms -> (not referenced)
+mavproxy_drone.mavproxy_drone_heartbeat_loss_count -> (not referenced)
+mavproxy_drone.mavproxy_drone_log_path -> (not referenced)
+mavproxy_drone.mavproxy_drone_msg_type_counts -> (not referenced)
+mavproxy_drone.mavproxy_drone_reconnect_count -> (not referenced)
+mavproxy_drone.mavproxy_drone_rx_pps -> (not referenced)
+mavproxy_drone.mavproxy_drone_seq_gap_count -> (not referenced)
+mavproxy_drone.mavproxy_drone_start_time -> (not referenced)
+mavproxy_drone.mavproxy_drone_stream_rate_hz -> (not referenced)
+mavproxy_drone.mavproxy_drone_total_msgs_received -> (not referenced)
+mavproxy_drone.mavproxy_drone_total_msgs_sent -> (not referenced)
+mavproxy_drone.mavproxy_drone_tx_pps -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_cmd_ack_latency_avg_ms -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_cmd_ack_latency_p95_ms -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_cmd_ack_received_count -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_cmd_sent_count -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_end_time -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_heartbeat_interval_ms -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_heartbeat_loss_count -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_log_path -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_reconnect_count -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_rx_pps -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_seq_gap_count -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_start_time -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_stream_rate_hz -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_total_msgs_received -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_total_msgs_sent -> (not referenced)
+mavproxy_gcs.mavproxy_gcs_tx_pps -> (not referenced)
+observability.collection_duration_ms -> (not referenced)
+observability.collection_end_time -> (not referenced)
+observability.collection_start_time -> (not referenced)
+observability.log_drop_count -> (not referenced)
+observability.log_sample_count -> (not referenced)
+observability.metrics_sampling_rate_hz -> (not referenced)
+observability.power_trace_file_path -> (not referenced)
+observability.trace_file_path -> (not referenced)
+observability.traffic_trace_file_path -> (not referenced)
+power_energy.current_avg_a -> dashboard/frontend/src/pages/SuiteDetail.tsx#L503
+power_energy.energy_per_handshake_j -> dashboard/frontend/src/pages/SuiteDetail.tsx#L507
+power_energy.energy_per_rekey_j -> (not referenced)
+power_energy.energy_per_second_j -> (not referenced)
+power_energy.energy_total_j -> dashboard/frontend/src/pages/ComparisonView.tsx#L78, dashboard/frontend/src/pages/ComparisonView.tsx#L79, dashboard/frontend/src/pages/ComparisonView.tsx#L209, dashboard/frontend/src/pages/ComparisonView.tsx#L210, dashboard/frontend/src/pages/SuiteDetail.tsx#L495
+power_energy.power_avg_w -> dashboard/frontend/src/pages/ComparisonView.tsx#L73, dashboard/frontend/src/pages/ComparisonView.tsx#L74, dashboard/frontend/src/pages/ComparisonView.tsx#L204, dashboard/frontend/src/pages/ComparisonView.tsx#L205, dashboard/frontend/src/pages/SuiteDetail.tsx#L487
+power_energy.power_peak_w -> dashboard/frontend/src/pages/SuiteDetail.tsx#L491
+power_energy.power_samples -> (not referenced)
+power_energy.power_sampling_rate_hz -> dashboard/frontend/src/pages/SuiteDetail.tsx#L511
+power_energy.power_sensor_type -> dashboard/frontend/src/pages/SuiteDetail.tsx#L483
+power_energy.voltage_avg_v -> dashboard/frontend/src/pages/SuiteDetail.tsx#L499
+rekey.rekey_attempts -> dashboard/frontend/src/pages/SuiteDetail.tsx#L521
+rekey.rekey_blackout_duration_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L529
+rekey.rekey_duration_ms -> dashboard/frontend/src/pages/SuiteDetail.tsx#L525
+rekey.rekey_failure -> (not referenced)
+rekey.rekey_interval_ms -> (not referenced)
+rekey.rekey_success -> (not referenced)
+rekey.rekey_trigger_reason -> (not referenced)
+run_context.clock_offset_method -> (not referenced)
+run_context.clock_offset_ms -> (not referenced)
+run_context.drone_hostname -> dashboard/frontend/src/pages/SuiteDetail.tsx#L150
+run_context.drone_ip -> (not referenced)
+run_context.gcs_hostname -> dashboard/frontend/src/pages/SuiteDetail.tsx#L149
+run_context.gcs_ip -> (not referenced)
+run_context.git_commit_hash -> dashboard/frontend/src/pages/SuiteDetail.tsx#L148
+run_context.git_dirty_flag -> (not referenced)
+run_context.kernel_version_drone -> (not referenced)
+run_context.kernel_version_gcs -> (not referenced)
+run_context.liboqs_version -> (not referenced)
+run_context.python_env_drone -> (not referenced)
+run_context.python_env_gcs -> (not referenced)
+run_context.run_end_time_mono -> (not referenced)
+run_context.run_end_time_wall -> (not referenced)
+run_context.run_id -> dashboard/frontend/src/pages/SuiteDetail.tsx#L146
+run_context.run_start_time_mono -> (not referenced)
+run_context.run_start_time_wall -> dashboard/frontend/src/pages/SuiteDetail.tsx#L151
+run_context.suite_id -> dashboard/frontend/src/pages/ComparisonView.tsx#L148, dashboard/frontend/src/pages/ComparisonView.tsx#L154, dashboard/frontend/src/pages/SuiteDetail.tsx#L133
+run_context.suite_index -> dashboard/frontend/src/pages/SuiteDetail.tsx#L147
+system_drone.cpu_freq_mhz -> (not referenced)
+system_drone.cpu_usage_avg_percent -> dashboard/frontend/src/pages/ComparisonView.tsx#L83, dashboard/frontend/src/pages/ComparisonView.tsx#L84, dashboard/frontend/src/pages/ComparisonView.tsx#L235, dashboard/frontend/src/pages/ComparisonView.tsx#L236, dashboard/frontend/src/pages/SuiteDetail.tsx#L439
+system_drone.cpu_usage_peak_percent -> dashboard/frontend/src/pages/SuiteDetail.tsx#L443
+system_drone.disk_usage_percent -> (not referenced)
+system_drone.load_avg_15m -> (not referenced)
+system_drone.load_avg_1m -> (not referenced)
+system_drone.load_avg_5m -> (not referenced)
+system_drone.memory_rss_mb -> dashboard/frontend/src/pages/ComparisonView.tsx#L240, dashboard/frontend/src/pages/ComparisonView.tsx#L241, dashboard/frontend/src/pages/SuiteDetail.tsx#L447
+system_drone.memory_vms_mb -> (not referenced)
+system_drone.network_rx_bytes -> (not referenced)
+system_drone.network_tx_bytes -> (not referenced)
+system_drone.temperature_c -> dashboard/frontend/src/pages/SuiteDetail.tsx#L451
+system_drone.thermal_throttle_events -> (not referenced)
+system_drone.thread_count -> (not referenced)
+system_drone.uptime_s -> (not referenced)
+system_gcs.cpu_freq_mhz -> (not referenced)
+system_gcs.cpu_usage_avg_percent -> dashboard/frontend/src/pages/SuiteDetail.tsx#L461
+system_gcs.cpu_usage_peak_percent -> dashboard/frontend/src/pages/SuiteDetail.tsx#L465
+system_gcs.disk_usage_percent -> (not referenced)
+system_gcs.load_avg_15m -> (not referenced)
+system_gcs.load_avg_1m -> (not referenced)
+system_gcs.load_avg_5m -> (not referenced)
+system_gcs.memory_rss_mb -> dashboard/frontend/src/pages/SuiteDetail.tsx#L469
+system_gcs.memory_vms_mb -> (not referenced)
+system_gcs.temperature_c -> dashboard/frontend/src/pages/SuiteDetail.tsx#L473
+system_gcs.thread_count -> (not referenced)
+system_gcs.uptime_s -> (not referenced)
+validation.benchmark_pass_fail -> dashboard/frontend/src/pages/SuiteDetail.tsx#L134, dashboard/frontend/src/pages/SuiteDetail.tsx#L136, dashboard/frontend/src/pages/SuiteDetail.tsx#L139, dashboard/frontend/src/pages/SuiteDetail.tsx#L553, dashboard/frontend/src/pages/SuiteDetail.tsx#L554
+validation.collected_samples -> dashboard/frontend/src/pages/SuiteDetail.tsx#L539
+validation.data_completeness_percent -> (not referenced)
+validation.expected_samples -> (not referenced)
+validation.lost_samples -> dashboard/frontend/src/pages/SuiteDetail.tsx#L543
+validation.metric_status -> dashboard/frontend/src/pages/SuiteDetail.tsx#L86
+validation.schema_validation_errors -> (not referenced)
+validation.success_rate_percent -> dashboard/frontend/src/pages/SuiteDetail.tsx#L548
+validation.termination_reason -> (not referenced)

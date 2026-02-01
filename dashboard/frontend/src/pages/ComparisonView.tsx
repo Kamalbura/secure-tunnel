@@ -5,11 +5,14 @@
 import { useState, useEffect } from 'react';
 import { useDashboardStore } from '../state/store';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import type { SuiteInventoryResponse, MetricInventoryItem } from '../types/metrics';
 
 export default function ComparisonView() {
     const { suites, comparisonSuiteA, comparisonSuiteB, isLoading, fetchSuites, fetchComparison } = useDashboardStore();
     const [suiteAKey, setSuiteAKey] = useState<string>('');
     const [suiteBKey, setSuiteBKey] = useState<string>('');
+    const [inventoryA, setInventoryA] = useState<SuiteInventoryResponse | null>(null);
+    const [inventoryB, setInventoryB] = useState<SuiteInventoryResponse | null>(null);
 
     useEffect(() => {
         fetchSuites();
@@ -21,37 +24,64 @@ export default function ComparisonView() {
         }
     };
 
+    useEffect(() => {
+        if (!suiteAKey) return;
+        fetch(`/api/suite/${encodeURIComponent(suiteAKey)}/inventory`)
+            .then(res => res.json())
+            .then(setInventoryA)
+            .catch(() => setInventoryA(null));
+    }, [suiteAKey]);
+
+    useEffect(() => {
+        if (!suiteBKey) return;
+        fetch(`/api/suite/${encodeURIComponent(suiteBKey)}/inventory`)
+            .then(res => res.json())
+            .then(setInventoryB)
+            .catch(() => setInventoryB(null));
+    }, [suiteBKey]);
+
+    const getInventoryItem = (inventory: SuiteInventoryResponse | null, key: string): MetricInventoryItem | undefined => {
+        return inventory?.metrics.find(item => item.source === 'DRONE' && item.key === key);
+    };
+
+    const getInventoryValue = (inventory: SuiteInventoryResponse | null, key: string) => {
+        const item = getInventoryItem(inventory, key);
+        if (!item) return null;
+        if (item.status !== 'collected') return null;
+        return item.value as number | null;
+    };
+
     // Build comparison data for charts
     const comparisonData = comparisonSuiteA && comparisonSuiteB ? [
         {
             metric: 'Handshake (ms)',
-            'Suite A': comparisonSuiteA.handshake.handshake_total_duration_ms,
-            'Suite B': comparisonSuiteB.handshake.handshake_total_duration_ms,
+            'Suite A': getInventoryValue(inventoryA, 'handshake.handshake_total_duration_ms'),
+            'Suite B': getInventoryValue(inventoryB, 'handshake.handshake_total_duration_ms'),
         },
         {
             metric: 'Goodput (Mbps)',
-            'Suite A': comparisonSuiteA.data_plane.goodput_mbps,
-            'Suite B': comparisonSuiteB.data_plane.goodput_mbps,
+            'Suite A': getInventoryValue(inventoryA, 'data_plane.goodput_mbps'),
+            'Suite B': getInventoryValue(inventoryB, 'data_plane.goodput_mbps'),
         },
         {
             metric: 'Packet Loss (ratio)',
-            'Suite A': comparisonSuiteA.data_plane.packet_loss_ratio,
-            'Suite B': comparisonSuiteB.data_plane.packet_loss_ratio,
+            'Suite A': getInventoryValue(inventoryA, 'data_plane.packet_loss_ratio'),
+            'Suite B': getInventoryValue(inventoryB, 'data_plane.packet_loss_ratio'),
         },
         {
             metric: 'Power Avg (W)',
-            'Suite A': comparisonSuiteA.power_energy.power_avg_w,
-            'Suite B': comparisonSuiteB.power_energy.power_avg_w,
+            'Suite A': getInventoryValue(inventoryA, 'power_energy.power_avg_w'),
+            'Suite B': getInventoryValue(inventoryB, 'power_energy.power_avg_w'),
         },
         {
             metric: 'Energy (J)',
-            'Suite A': comparisonSuiteA.power_energy.energy_total_j,
-            'Suite B': comparisonSuiteB.power_energy.energy_total_j,
+            'Suite A': getInventoryValue(inventoryA, 'power_energy.energy_total_j'),
+            'Suite B': getInventoryValue(inventoryB, 'power_energy.energy_total_j'),
         },
         {
             metric: 'CPU Avg (%)',
-            'Suite A': comparisonSuiteA.system_drone.cpu_usage_avg_percent,
-            'Suite B': comparisonSuiteB.system_drone.cpu_usage_avg_percent,
+            'Suite A': getInventoryValue(inventoryA, 'system_drone.cpu_usage_avg_percent'),
+            'Suite B': getInventoryValue(inventoryB, 'system_drone.cpu_usage_avg_percent'),
         },
     ].filter(row => row['Suite A'] !== null && row['Suite A'] !== undefined && row['Suite B'] !== null && row['Suite B'] !== undefined) : [];
 
@@ -166,43 +196,49 @@ export default function ComparisonView() {
                             <tbody>
                                 <tr>
                                     <td>Handshake Duration</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.handshake.handshake_total_duration_ms, 'ms')}</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.handshake.handshake_total_duration_ms, 'ms')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryA, 'handshake.handshake_total_duration_ms') as number | null, 'ms')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryB, 'handshake.handshake_total_duration_ms') as number | null, 'ms')}</td>
                                 </tr>
                                 <tr>
                                     <td>Power Avg</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.power_energy.power_avg_w, 'W')}</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.power_energy.power_avg_w, 'W')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryA, 'power_energy.power_avg_w') as number | null, 'W')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryB, 'power_energy.power_avg_w') as number | null, 'W')}</td>
                                 </tr>
                                 <tr>
                                     <td>Energy Total</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.power_energy.energy_total_j, 'J')}</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.power_energy.energy_total_j, 'J')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryA, 'power_energy.energy_total_j') as number | null, 'J')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryB, 'power_energy.energy_total_j') as number | null, 'J')}</td>
                                 </tr>
                                 <tr>
                                     <td>Packets Sent</td>
-                                    <td className="text-right font-mono">{comparisonSuiteA.data_plane.packets_sent ?? 'Not collected'}</td>
-                                    <td className="text-right font-mono">{comparisonSuiteB.data_plane.packets_sent ?? 'Not collected'}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryA, 'data_plane.packets_sent') as number | null)}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryB, 'data_plane.packets_sent') as number | null)}</td>
                                 </tr>
                                 <tr>
                                     <td>Goodput</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.data_plane.goodput_mbps, 'Mbps')}</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.data_plane.goodput_mbps, 'Mbps')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryA, 'data_plane.goodput_mbps') as number | null, 'Mbps')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryB, 'data_plane.goodput_mbps') as number | null, 'Mbps')}</td>
                                 </tr>
                                 <tr>
                                     <td>Packet Loss Ratio</td>
-                                    <td className="text-right font-mono">{comparisonSuiteA.data_plane.packet_loss_ratio !== null && comparisonSuiteA.data_plane.packet_loss_ratio !== undefined ? `${(comparisonSuiteA.data_plane.packet_loss_ratio * 100).toFixed(2)} %` : 'Not collected'}</td>
-                                    <td className="text-right font-mono">{comparisonSuiteB.data_plane.packet_loss_ratio !== null && comparisonSuiteB.data_plane.packet_loss_ratio !== undefined ? `${(comparisonSuiteB.data_plane.packet_loss_ratio * 100).toFixed(2)} %` : 'Not collected'}</td>
+                                    <td className="text-right font-mono">{(() => {
+                                        const val = getInventoryValue(inventoryA, 'data_plane.packet_loss_ratio') as number | null;
+                                        return val === null || val === undefined ? 'Not collected' : `${(val * 100).toFixed(2)} %`;
+                                    })()}</td>
+                                    <td className="text-right font-mono">{(() => {
+                                        const val = getInventoryValue(inventoryB, 'data_plane.packet_loss_ratio') as number | null;
+                                        return val === null || val === undefined ? 'Not collected' : `${(val * 100).toFixed(2)} %`;
+                                    })()}</td>
                                 </tr>
                                 <tr>
                                     <td>CPU Avg</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.system_drone.cpu_usage_avg_percent, '%')}</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.system_drone.cpu_usage_avg_percent, '%')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryA, 'system_drone.cpu_usage_avg_percent') as number | null, '%')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryB, 'system_drone.cpu_usage_avg_percent') as number | null, '%')}</td>
                                 </tr>
                                 <tr>
                                     <td>Memory RSS</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteA.system_drone.memory_rss_mb, 'MB')}</td>
-                                    <td className="text-right font-mono">{formatValue(comparisonSuiteB.system_drone.memory_rss_mb, 'MB')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryA, 'system_drone.memory_rss_mb') as number | null, 'MB')}</td>
+                                    <td className="text-right font-mono">{formatValue(getInventoryValue(inventoryB, 'system_drone.memory_rss_mb') as number | null, 'MB')}</td>
                                 </tr>
                             </tbody>
                         </table>

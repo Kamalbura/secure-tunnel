@@ -1,0 +1,49 @@
+% Part 6 — Dashboard Frontend (Analyst UI)
+\section{Dashboard Frontend}
+\label{sec:dashboard-frontend}
+
+\subsection{Scope and Terminology}
+This part documents the analyst-facing dashboard frontend implemented in \texttt{dashboard/frontend/src}. Key terms used in this section are:
+\begin{itemize}
+	\item \textbf{Frontend shell}: The top-level React component \texttt{App.tsx} that defines routing, navigation, and global UI banners.
+	\item \textbf{Dashboard store}: The Zustand store in \texttt{state/store.ts} that coordinates data fetching and filter state.
+	\item \textbf{Suite summary}: The lightweight suite records displayed in tables and used for charts (loaded via \texttt{/api/suites}).
+	\item \textbf{Suite detail}: The full forensic metrics record displayed in \texttt{SuiteDetail}, loaded via \texttt{/api/suite/\{suiteKey\}}.
+\end{itemize}
+\footnote{Evidence: dashboard/frontend/src/App.tsx; dashboard/frontend/src/state/store.ts; dashboard/frontend/src/pages/SuiteExplorer.tsx; dashboard/frontend/src/pages/SuiteDetail.tsx.}
+
+\subsection{Routing, Navigation, and Global UI Contracts}
+The frontend shell defines routes for the overview, suite explorer, per-suite detail, comparison, bucket comparisons, power analysis, and integrity monitoring. The navigation bar is derived from a static list of route definitions. A disclaimer banner is always rendered and states that the dashboard is observational and does not imply causality. The shell also renders a global error display bound to the store’s \texttt{error} field.
+\footnote{Evidence: dashboard/frontend/src/App.tsx (\texttt{Navigation}, \texttt{DisclaimerBanner}, routes, and error display).}
+
+\subsection{State Store and API Contract}
+The Zustand store centralizes the frontend data model and the API contracts. It manages suite summaries, run summaries, filters, selected suite detail, comparison suites, and filter state. It defines fetch methods for:\ \texttt{/api/suites}, \texttt{/api/runs}, \texttt{/api/suites/filters}, and \texttt{/api/suite/\{suiteKey\}}. Filter state is mapped into query parameters (KEM family, signature family, AEAD, NIST level, and run ID) for suite retrieval.
+\footnote{Evidence: dashboard/frontend/src/state/store.ts (API methods and filter query construction).}
+
+\subsection{Overview Page: Derived Aggregates and Health Signals}
+The overview page loads suites and runs, queries \texttt{/api/health}, and requests an aggregate endpoint \texttt{/api/aggregate/kem-family}. It renders cards for total suites and runs while marking pass-rate and failed-suite cards as \texttt{NOT AVAILABLE}. It also renders multiple bar charts that visualize aggregated handshake time, power, goodput, loss ratio, and latency metrics by KEM family. If the aggregate endpoint returns a warning, the UI displays the warning and disables the charts.
+\footnote{Evidence: dashboard/frontend/src/pages/Overview.tsx.}
+
+\subsection{Suite Explorer: Filters and Summary Table}
+The suite explorer binds filter dropdowns to the store and re-fetches suite summaries on filter changes. The summary table presents suite identifiers and key fields (KEM, signature, AEAD, security level, handshake duration, power, and energy). Missing values are displayed as \texttt{Not collected}. The status cell uses a badge that maps PASS and FAIL to distinct styles.
+\footnote{Evidence: dashboard/frontend/src/pages/SuiteExplorer.tsx.}
+
+\subsection{Suite Detail: Reliability and Metric Status Rendering}
+The suite detail view loads a comprehensive suite record using a \texttt{suiteKey} of the form \texttt{run\_id:suite\_id}. It uses a reliability badge model and renders each field using a \texttt{MetricValue} component that interprets \texttt{metric\_status}. This produces explicit labels for invalid, not-implemented, and not-collected fields. The view organizes metrics by schema section letters (A, B, D, M, G, H, and others), and annotates latency and packet counters with the recorded data source (e.g., \texttt{latency\_source}, \texttt{packet\_counters\_source}).
+\footnote{Evidence: dashboard/frontend/src/pages/SuiteDetail.tsx.}
+
+\subsection{Comparison View: Side-by-Side Suite Metrics}
+The comparison view uses suite summaries to select two suites by key, then loads each suite’s full metrics record. It filters out metrics with missing values before charting and displays a vertical bar chart comparing handshake, goodput, packet loss, power, energy, and CPU. A detailed table provides numeric values or \texttt{Not collected} for each metric.
+\footnote{Evidence: dashboard/frontend/src/pages/ComparisonView.tsx; dashboard/frontend/src/state/store.ts (\texttt{fetchComparison}).}
+
+\subsection{Bucket Comparison: Grouped Views and Hardcoded Endpoint}
+The bucket comparison view requests \texttt{http://localhost:8000/api/buckets} directly rather than using the store’s \texttt{API\_BASE}. It groups suites by multiple bucket types (KEM family, signature family, AEAD, and NIST level composites), allows a subgroup selection, and renders handshake and power/energy comparisons as bar charts. This explicit endpoint choice means the page is coupled to a localhost backend configuration rather than relative API routing.
+\footnote{Evidence: dashboard/frontend/src/pages/BucketComparison.tsx.}
+
+\subsection{Power Analysis: Aggregation, Scatter, and Ranking}
+The power analysis page computes energy aggregates by KEM family from suite summaries and renders a bar chart of average energy. It also renders a scatter plot of power versus handshake duration with bubble size proportional to energy, and a top-10 energy consumer table. The summary cards calculate overall averages and totals using only collected values and display \texttt{Not collected} when values are missing.
+\footnote{Evidence: dashboard/frontend/src/pages/PowerAnalysis.tsx.}
+
+\subsection{Integrity Monitor: Metadata-Driven Alerts}
+The integrity monitor scans suite summaries and raises issues based on metadata-only rules: benchmark failure, handshake failure, missing power data, and unusually high handshake duration. It assigns severity tiers and provides links to the suite detail page for forensic review. The view emphasizes that it does not replace detailed MAVLink integrity analysis and defers that analysis to the suite detail view.
+\footnote{Evidence: dashboard/frontend/src/pages/IntegrityMonitor.tsx.}

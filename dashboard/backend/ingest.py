@@ -4,11 +4,20 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from models import (
-    ComprehensiveSuiteMetrics,
-    SuiteSummary,
-    RunSummary,
-)
+try:
+    from .models import (
+        ComprehensiveSuiteMetrics,
+        SuiteSummary,
+        RunSummary,
+    )
+    from .analysis import get_metric_value_for_summary
+except ImportError:
+    from models import (
+        ComprehensiveSuiteMetrics,
+        SuiteSummary,
+        RunSummary,
+    )
+    from analysis import get_metric_value_for_summary
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +75,11 @@ class MetricsStore:
                     sig_algorithm=suite.crypto_identity.sig_algorithm,
                     aead_algorithm=suite.crypto_identity.aead_algorithm,
                     suite_security_level=suite.crypto_identity.suite_security_level,
-                    handshake_success=suite.handshake.handshake_success,
-                    handshake_total_duration_ms=suite.handshake.handshake_total_duration_ms,
-                    power_avg_w=suite.power_energy.power_avg_w,
-                    energy_total_j=suite.power_energy.energy_total_j,
+                    handshake_success=get_metric_value_for_summary(suite, "handshake.handshake_success"),
+                    handshake_total_duration_ms=get_metric_value_for_summary(suite, "handshake.handshake_total_duration_ms"),
+                    power_sensor_type=get_metric_value_for_summary(suite, "power_energy.power_sensor_type"),
+                    power_avg_w=get_metric_value_for_summary(suite, "power_energy.power_avg_w"),
+                    energy_total_j=get_metric_value_for_summary(suite, "power_energy.energy_total_j"),
                     benchmark_pass_fail=suite.validation.benchmark_pass_fail,
                         ingest_status=suite.ingest_status,
                 )
@@ -298,30 +308,22 @@ def _merge_gcs_metrics(
         if suite is None:
             continue
 
+        validation = suite.gcs_validation.setdefault("jsonl", {})
         system_gcs = entry.get("system_gcs")
         if isinstance(system_gcs, dict):
-            for k, v in system_gcs.items():
-                if hasattr(suite.system_gcs, k):
-                    setattr(suite.system_gcs, k, v)
+            validation["system_gcs"] = system_gcs
 
         latency_jitter = entry.get("latency_jitter")
         if isinstance(latency_jitter, dict):
-            for k, v in latency_jitter.items():
-                if hasattr(suite.latency_jitter, k) and v is not None:
-                    setattr(suite.latency_jitter, k, v)
-            suite.latency_source = "gcs"
+            validation["latency_jitter"] = latency_jitter
 
         mavlink_validation = entry.get("mavlink_validation")
         if isinstance(mavlink_validation, dict):
-            suite.mavproxy_gcs.mavproxy_gcs_total_msgs_received = mavlink_validation.get("total_msgs_received")
-            suite.mavproxy_gcs.mavproxy_gcs_seq_gap_count = mavlink_validation.get("seq_gap_count")
-            suite.integrity_source = "gcs"
+            validation["mavlink_validation"] = mavlink_validation
 
         proxy_status = entry.get("proxy_status")
-        counters = proxy_status.get("counters") if isinstance(proxy_status, dict) else None
-        if isinstance(counters, dict) and counters:
-            _apply_proxy_counters_to_data_plane(suite, counters)
-            suite.packet_counters_source = "gcs"
+        if isinstance(proxy_status, dict):
+            validation["proxy_status"] = proxy_status
 
 
 def _apply_proxy_counters_to_data_plane(
@@ -387,34 +389,56 @@ def _is_suite_scientifically_valid(suite: ComprehensiveSuiteMetrics) -> bool:
 
 def _load_comprehensive(load_errors: List[tuple]) -> Dict[str, ComprehensiveSuiteMetrics]:
     suites: Dict[str, ComprehensiveSuiteMetrics] = {}
+    gcs_only: Dict[str, Dict[str, Any]] = {}
     for path in COMPREHENSIVE_DIR.glob("*.json"):
         payload = _load_json(path, load_errors)
+        parsed = _parse_comprehensive_filename(path)
+        if not parsed:
+            continue
+        suite_id, run_id, role = parsed
+        key = f"{run_id}:{suite_id}"
+        if role == "gcs":
+            if key in suites:
+                suites[key].raw_gcs = payload
+                suites[key].gcs_validation = {"source": "gcs_json", "payload": payload}
+            else:
+                gcs_only[key] = payload
+            continue
         try:
             suite = ComprehensiveSuiteMetrics(**payload)
         except Exception as exc:
             logger.warning("Invalid comprehensive metrics %s: %s", path, exc)
             load_errors.append((str(path), None, str(exc)))
-            parsed = _parse_comprehensive_filename(path)
-            if parsed:
-                suite_id, run_id, _role = parsed
-                suite = _build_invalid_suite(suite_id, run_id, str(exc))
-                key = f"{run_id}:{suite_id}"
-                suites[key] = suite
+            suite = _build_invalid_suite(suite_id, run_id, str(exc))
+            suite.raw_drone = payload
+            if key in gcs_only:
+                suite.raw_gcs = gcs_only.pop(key)
+                suite.gcs_validation = {"source": "gcs_json", "payload": suite.raw_gcs}
+            suites[key] = suite
             continue
         run_id = suite.run_context.run_id or ""
         suite_id = suite.run_context.suite_id or ""
         if not run_id or not suite_id:
             logger.warning("Missing run_id or suite_id in %s", path)
-            parsed = _parse_comprehensive_filename(path)
-            if parsed:
-                parsed_suite_id, parsed_run_id, _role = parsed
-                suite = _build_invalid_suite(parsed_suite_id, parsed_run_id, "missing run_id or suite_id")
-                key = f"{parsed_run_id}:{parsed_suite_id}"
-                suites[key] = suite
-            else:
-                load_errors.append((str(path), None, "missing run_id or suite_id"))
+            suite = _build_invalid_suite(suite_id, run_id, "missing run_id or suite_id")
+            suite.raw_drone = payload
+            if key in gcs_only:
+                suite.raw_gcs = gcs_only.pop(key)
+                suite.gcs_validation = {"source": "gcs_json", "payload": suite.raw_gcs}
+            suites[key] = suite
+            load_errors.append((str(path), None, "missing run_id or suite_id"))
             continue
         key = f"{run_id}:{suite_id}"
+        suite.raw_drone = payload
+        if key in gcs_only:
+            suite.raw_gcs = gcs_only.pop(key)
+            suite.gcs_validation = {"source": "gcs_json", "payload": suite.raw_gcs}
+        suites[key] = suite
+    for key, payload in gcs_only.items():
+        run_id, suite_id = key.split(":", 1)
+        suite = _build_invalid_suite(suite_id, run_id, "missing_drone_comprehensive_metrics", ingest_status="missing_drone_comprehensive_metrics")
+        suite.raw_gcs = payload
+        suite.gcs_validation = {"source": "gcs_json", "payload": payload}
         suites[key] = suite
     return suites
 
@@ -472,6 +496,8 @@ def build_store() -> MetricsStore:
         if suite.latency_source is None:
             if suite.latency_jitter.one_way_latency_avg_ms is not None or suite.latency_jitter.rtt_avg_ms is not None:
                 suite.latency_source = "drone"
+            elif isinstance(suite.gcs_validation.get("jsonl", {}).get("latency_jitter"), dict):
+                suite.latency_source = "gcs_validation"
         if suite.integrity_source is None:
             if any(
                 getattr(suite.mavlink_integrity, field) is not None
@@ -484,9 +510,13 @@ def build_store() -> MetricsStore:
                 )
             ):
                 suite.integrity_source = "drone"
+            elif isinstance(suite.gcs_validation.get("jsonl", {}).get("mavlink_validation"), dict):
+                suite.integrity_source = "gcs_validation"
         if suite.packet_counters_source is None:
             if suite.data_plane.packets_sent is not None or suite.data_plane.enc_out is not None:
                 suite.packet_counters_source = "drone"
+            elif isinstance(suite.gcs_validation.get("jsonl", {}).get("proxy_status"), dict):
+                suite.packet_counters_source = "gcs_validation"
 
         if suite.ingest_status in {"comprehensive_failed"}:
             continue

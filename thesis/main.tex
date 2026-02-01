@@ -1,0 +1,65 @@
+\documentclass[11pt,oneside]{book}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{titlesec}
+
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.98,0.98,0.98}
+\lstdefinestyle{pystyle}{
+  backgroundcolor=\color{backcolour},
+  commentstyle=\color{codegray},
+  keywordstyle=\color{black}\bfseries,
+  numberstyle=\tiny\color{codegray},
+  stringstyle=\color{codepurple},
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  columns=fullflexible,
+  frame=single,
+  showstringspaces=false,
+  captionpos=b,
+  tabsize=2,
+  language=Python
+}
+\lstset{style=pystyle}
+
+\title{Secure Tunnel Thesis}
+\author{Generated from codebase}
+\date{\today}
+
+\begin{document}
+\frontmatter
+\maketitle
+\tableofcontents
+
+\mainmatter
+
+\part{System Overview}
+\input{THESIS_PART1_SYSTEM_OVERVIEW}
+
+\part{Handshake and Data Plane}
+\input{THESIS_PART2_HANDSHAKE_DATA_PLANE}
+
+\part{Schedulers and Suite Benchmarks}
+\input{THESIS_PART3_BENCHMARK_SCHEDULERS}
+\input{THESIS_PART4_SUITE_BENCH_FRAMEWORK}
+
+\part{Metrics and Dashboard}
+\input{THESIS_PART5_METRICS_AND_DASHBOARD_BACKEND}
+\input{THESIS_PART6_DASHBOARD_FRONTEND}
+
+\part{Tools, Telemetry, and Operations}
+\input{THESIS_PART7_TOOLS_AND_DIAGNOSTICS}
+\input{THESIS_PART8_MAVLINK_AND_POWER_TELEMETRY}
+\input{THESIS_PART9_PROCESS_LOGGING_ERRORS}
+\input{THESIS_PART10_SUITE_REGISTRY_AND_POLICY}
+
+\end{document}

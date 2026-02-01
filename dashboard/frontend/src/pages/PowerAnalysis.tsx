@@ -91,7 +91,18 @@ export default function PowerAnalysis() {
                 </div>
                 <div className="card">
                     <div className="text-gray-400 text-sm">Power Sensor</div>
-                    <div className="text-2xl font-bold text-amber-400">INA219</div>
+                    <div className="text-2xl font-bold text-amber-400">
+                        {(() => {
+                            const sensors = Array.from(new Set(
+                                suites
+                                    .map(s => s.power_sensor_type)
+                                    .filter((v): v is string => !!v && v.trim().length > 0)
+                            ));
+                            if (sensors.length === 0) return 'Not collected';
+                            if (sensors.length === 1) return sensors[0];
+                            return 'Mixed';
+                        })()}
+                    </div>
                 </div>
             </div>
 

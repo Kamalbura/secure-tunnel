@@ -73,89 +73,7 @@ QGC_PORT = 14550            # Output for QGC/Local tools
 
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
 ROOT = Path(__file__).parent.parent
-LOGS_DIR = ROOT / "logs" / "benchmarks"
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-PAYLOAD_SIZE = 1200
-DEFAULT_RATE_MBPS = 110.0
-
-# MAVProxy configuration
-MAVPROXY_ENABLE_GUI = True  # Enable --map and --console
-
-# =============================================================================
-# Logging Setup
-# =============================================================================
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] [sgcs-bench] %(levelname)s: %(message)s',
-    datefmt='%Y-%m-%dT%H:%M:%SZ'
-)
-logger = logging.getLogger("sgcs_bench")
-
-def log(msg: str, level: str = "INFO"):
-    getattr(logger, level.lower(), logger.info)(msg)
-
-# =============================================================================
-# Environment Info
-# =============================================================================
-
-def get_kernel_version() -> str:
-    """Get kernel/OS version."""
-    try:
-        return platform.platform()
-    except Exception:
-        return "unknown"
-
-def get_python_env() -> str:
-    """Get Python environment info."""
-    return f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-
-# =============================================================================
-# MAVProxy Manager (GCS side with GUI)
-# =============================================================================
-
-class GcsMavProxyManager:
-    """
-    Manages MAVProxy subprocess on GCS side with optional GUI (--map --console).
-    
-    MAVProxy receives telemetry from the crypto proxy on UDP 47002 (GCS_PLAIN_RX_PORT)
-    and outputs to:
-      - UDP 14552 (Sniffing/Validation)
-      - UDP 14550 (QGC/Local Tools)
-    """
-    
-    def __init__(self, logs_dir: Path, enable_gui: bool = MAVPROXY_ENABLE_GUI):
-        self.logs_dir = logs_dir
-        self.enable_gui = enable_gui
-        self.process: Optional[subprocess.Popen] = None
-        self._log_handle = None
-    
-    def start(self) -> bool:
-        """Start MAVProxy with map and console if enabled."""
-        if self.process and self.process.poll() is None:
-            log("[MAVPROXY] Already running")
-            return True
-        
-        # Build command - use python -m MAVProxy on Windows
-        if platform.system() == "Windows":
-            cmd = [
-                sys.executable, "-m", "MAVProxy.mavproxy",
-                f"--master=udp:127.0.0.1:{MAVLINK_INPUT_PORT}",
-                f"--out=udp:127.0.0.1:{MAVLINK_SNIFF_PORT}",
-                f"--out=udp:127.0.0.1:{QGC_PORT}",
-            ]
-        else:
-            cmd = [
-                "mavproxy.py",
-                f"--master=udp:127.0.0.1:{MAVLINK_INPUT_PORT}",
-                f"--out=udp:127.0.0.1:{MAVLINK_SNIFF_PORT}",
-                f"--out=udp:127.0.0.1:{QGC_PORT}",
-            ]
-
-SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
-ROOT = Path(__file__).parent.parent
-LOGS_DIR = ROOT / "logs" / "benchmarks"
+LOGS_DIR = ROOT / "logs" / "benchmarks" / "chronos_v2_run_20260202_clean"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 PAYLOAD_SIZE = 1200
@@ -621,9 +539,6 @@ class GcsBenchmarkServer:
         if not self.mavproxy.start():
             log("[WARNING] MAVProxy failed to start - continuing without it")
         
-        # Start MAVLink monitor
-        self.mavlink_monitor.start_sniffing(port=MAVLINK_SNIFF_PORT)
-        
         log(f"GCS Benchmark Server listening on {GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}")
         log(f"Run ID: {self.run_id}")
     
@@ -695,7 +610,13 @@ class GcsBenchmarkServer:
             
             log(f"CMD: start_proxy({suite})")
             
-            # Reset MAVLink validation counters
+            # Reset MAVLink validation counters per suite by restarting collector
+            if self.mavlink_monitor:
+                try:
+                    self.mavlink_monitor.stop()
+                except Exception:
+                    pass
+            self.mavlink_monitor = MavLinkMetricsCollector(role="gcs") if HAS_PYMAVLINK else None
             if self.mavlink_monitor:
                 self.mavlink_monitor.start_sniffing(port=MAVLINK_SNIFF_PORT)
 
@@ -784,12 +705,14 @@ class GcsBenchmarkServer:
                     "rtt_invalid_reason": mavlink_metrics.get("rtt_invalid_reason"),
                 }
 
+            gcs_export = self.metrics_aggregator.get_exportable_data()
             payload = {
                 "status": "ok",
                 "suite": self.current_suite,
                 "mavlink_validation": mavlink_validation,
                 "latency_jitter": latency_metrics,
                 "system_gcs": system_gcs,
+                "metrics_export": gcs_export,
                 "proxy_status": proxy_status,
             }
 

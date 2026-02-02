@@ -62,7 +62,7 @@ DRONE_PLAIN_TX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_TX", 47003))
 
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
 ROOT = Path(__file__).resolve().parents[1]
-LOGS_DIR = ROOT / "logs" / "benchmarks"
+LOGS_DIR = ROOT / "logs" / "benchmarks" / "chronos_v2_run_20260202_clean"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # =============================================================================
@@ -299,6 +299,8 @@ class BenchmarkScheduler:
         self.proxy = DroneProxyManager()
         self.mavproxy_proc = None
         self.clock_sync = ClockSync()
+        self._suite_start_mono = None
+        self._advance_grace_s = 10.0
         
         # Initialize benchmark policy
         self.policy = BenchmarkPolicy(
@@ -409,6 +411,10 @@ class BenchmarkScheduler:
                 output = self.policy.evaluate(now)
                 
                 if output.action == BenchmarkAction.COMPLETE:
+                    if not self._ready_to_advance() and not self._grace_elapsed():
+                        log("Metrics not ready; extending suite before completion")
+                        time.sleep(1.0)
+                        continue
                     log("Benchmark complete!")
                     if self.metrics_aggregator:
                         self.metrics_aggregator.record_control_plane_metrics(
@@ -429,6 +435,10 @@ class BenchmarkScheduler:
                     return
                 
                 if output.action == BenchmarkAction.NEXT_SUITE:
+                    if not self._ready_to_advance() and not self._grace_elapsed():
+                        log("Metrics not ready; extending suite before advancing")
+                        time.sleep(1.0)
+                        continue
                     progress = output.progress_pct
                     log(f"[{progress:.1f}%] Switching to {output.target_suite}")
 
@@ -528,6 +538,7 @@ class BenchmarkScheduler:
                     self.metrics_aggregator.record_crypto_primitives(metrics)
                 except Exception as e:
                     log(f"Metrics record failed: {e}", "WARN")
+            self._suite_start_mono = time.monotonic()
             
             # Log to results file
             self._log_result(suite_name, metrics, success=True)
@@ -542,9 +553,43 @@ class BenchmarkScheduler:
                     self.metrics_aggregator.record_handshake_end(success=False, failure_reason="handshake_timeout")
                 except Exception:
                     pass
+            self._suite_start_mono = None
             self._log_result(suite_name, {}, success=False, error="handshake_timeout")
             self._finalize_metrics(success=False, error="handshake_timeout")
             return False
+
+    def _ready_to_advance(self) -> bool:
+        """Return True when minimal MAVLink/data-plane evidence exists for current suite."""
+        if not self.metrics_aggregator or not self.metrics_aggregator.mavlink_collector:
+            return False
+        try:
+            mav_metrics = self.metrics_aggregator.mavlink_collector.get_metrics()
+            total_msgs = mav_metrics.get("total_msgs_received")
+            if total_msgs is None or int(total_msgs) <= 0:
+                return False
+        except Exception:
+            return False
+
+        status_file = LOGS_DIR / "drone_status.json"
+        if status_file.exists():
+            try:
+                with open(status_file, "r") as f:
+                    status_data = json.load(f)
+                counters = status_data.get("counters", {})
+                ptx_in = counters.get("ptx_in", 0) or 0
+                enc_out = counters.get("enc_out", 0) or 0
+                if int(ptx_in) <= 0 and int(enc_out) <= 0:
+                    return False
+            except Exception:
+                return False
+        else:
+            return False
+        return True
+
+    def _grace_elapsed(self) -> bool:
+        if self._suite_start_mono is None:
+            return True
+        return (time.monotonic() - self._suite_start_mono) >= (self.args.interval + self._advance_grace_s)
     
     def _finalize_metrics(self, success: bool, error: str = "", gcs_metrics: Dict = None):
         """Finalize and save comprehensive metrics for current suite."""
@@ -581,6 +626,35 @@ class BenchmarkScheduler:
             # MERGE GCS METRICS HERE
             comprehensive = self.metrics_aggregator.finalize_suite(merge_from=gcs_metrics)
             if comprehensive:
+                invalid_reasons = []
+                mav_msgs = comprehensive.mavproxy_drone.mavproxy_drone_total_msgs_received
+                latency_valid = comprehensive.latency_jitter.one_way_latency_valid
+                rtt_valid = comprehensive.latency_jitter.rtt_valid
+                if mav_msgs is None or int(mav_msgs) <= 0:
+                    invalid_reasons.append("mavlink_no_messages")
+                if latency_valid is not True and rtt_valid is not True:
+                    invalid_reasons.append("mavlink_latency_invalid")
+                packets_sent = comprehensive.data_plane.packets_sent
+                packets_received = comprehensive.data_plane.packets_received
+                if (
+                    packets_sent is None
+                    or packets_received is None
+                    or (int(packets_sent) <= 0 and int(packets_received) <= 0)
+                ):
+                    invalid_reasons.append("data_plane_no_traffic")
+
+                if invalid_reasons:
+                    comprehensive.validation.benchmark_pass_fail = "FAIL"
+                    comprehensive.validation.success_rate_percent = 0.0
+                    for reason in invalid_reasons:
+                        comprehensive.validation.metric_status[f"suite_validity.{reason}"] = {
+                            "status": "invalid",
+                            "reason": reason,
+                        }
+                    if self.policy.collected_metrics:
+                        self.policy.collected_metrics[-1].success = False
+                        self.policy.collected_metrics[-1].error_message = ",".join(invalid_reasons)
+
                 # Export to JSON
                 output_path = self.metrics_aggregator.save_suite_metrics(comprehensive)
                 if output_path:

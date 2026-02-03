@@ -185,12 +185,14 @@ class GcsMavProxyManager:
                 sys.executable, "-m", "MAVProxy.mavproxy",
                 f"--master=udp:127.0.0.1:{MAVLINK_INPUT_PORT}",
                 f"--out=udp:127.0.0.1:{MAVLINK_SNIFF_PORT}",
+                f"--out=udp:127.0.0.1:{QGC_PORT}",
             ]
         else:
             cmd = [
                 "mavproxy.py",
                 f"--master=udp:127.0.0.1:{MAVLINK_INPUT_PORT}",
                 f"--out=udp:127.0.0.1:{MAVLINK_SNIFF_PORT}",
+                f"--out=udp:127.0.0.1:{QGC_PORT}",
             ]
         
         if self.enable_gui:

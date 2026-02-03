@@ -691,14 +691,17 @@ class GcsBenchmarkServer:
             
             self.current_suite = suite
 
-            # Wait for handshake completion to mark end time
-            if self._wait_for_handshake_ok(timeout_s=self._handshake_timeout_s):
-                self.metrics_aggregator.record_handshake_end(success=True)
-            else:
-                self.metrics_aggregator.record_handshake_end(
-                    success=False,
-                    failure_reason="handshake_timeout"
-                )
+            # Record handshake end asynchronously to avoid blocking start_proxy.
+            def _await_handshake() -> None:
+                if self._wait_for_handshake_ok(timeout_s=self._handshake_timeout_s):
+                    self.metrics_aggregator.record_handshake_end(success=True)
+                else:
+                    self.metrics_aggregator.record_handshake_end(
+                        success=False,
+                        failure_reason="handshake_timeout"
+                    )
+
+            threading.Thread(target=_await_handshake, daemon=True).start()
             
             return {
                 "status": "ok",

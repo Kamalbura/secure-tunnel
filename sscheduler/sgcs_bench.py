@@ -82,6 +82,50 @@ DEFAULT_RATE_MBPS = 110.0
 # MAVProxy configuration
 MAVPROXY_ENABLE_GUI = True  # Enable --map and --console
 
+class UdpTrafficGenerator:
+    """Best-effort UDP traffic generator for plaintext path."""
+
+    def __init__(self, host: str, port: int, payload_size: int = 256, rate_hz: float = 20.0):
+        self.host = host
+        self.port = port
+        self.payload = b"x" * max(1, int(payload_size))
+        self.rate_hz = float(rate_hz)
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._sock: Optional[socket.socket] = None
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        interval = 1.0 / self.rate_hz if self.rate_hz > 0 else 1.0
+
+        def _loop():
+            while self._running:
+                try:
+                    self._sock.sendto(self.payload, (self.host, self.port))
+                except Exception:
+                    pass
+                time.sleep(interval)
+
+        self._thread = threading.Thread(target=_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if not self._running:
+            return
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1.0)
+        if self._sock:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+        self._thread = None
+        self._sock = None
+
 # =============================================================================
 # Logging Setup
 # =============================================================================
@@ -510,6 +554,7 @@ class GcsBenchmarkServer:
             output_dir=str(LOGS_DIR / "comprehensive")
         )
         self.metrics_aggregator.set_run_id(run_id)
+        self.traffic_gen = UdpTrafficGenerator("127.0.0.1", GCS_PLAIN_TX_PORT)
         
         # Server state
         self.server_sock: Optional[socket.socket] = None
@@ -663,11 +708,27 @@ class GcsBenchmarkServer:
             }
         
         elif cmd == "start_traffic":
-            log("CMD: start_traffic (disabled)")
-            return {"status": "error", "message": "traffic_generation_disabled"}
+            log("CMD: start_traffic")
+            try:
+                self.traffic_gen.start()
+            except Exception:
+                return {"status": "error", "message": "traffic_start_failed"}
+            return {"status": "ok"}
+
+        elif cmd == "stop_traffic":
+            log("CMD: stop_traffic")
+            try:
+                self.traffic_gen.stop()
+            except Exception:
+                return {"status": "error", "message": "traffic_stop_failed"}
+            return {"status": "ok"}
         
         elif cmd == "stop_suite":
             log("CMD: stop_suite")
+            try:
+                self.traffic_gen.stop()
+            except Exception:
+                pass
             # Collect validation-only MAVLink metrics
             mavlink_metrics = None
             if self.mavlink_monitor:
@@ -750,6 +811,11 @@ class GcsBenchmarkServer:
         """Stop the server."""
         log("Shutting down...")
         self.running = False
+
+        try:
+            self.traffic_gen.stop()
+        except Exception:
+            pass
         
         self.proxy.stop()
         self.mavproxy.stop()

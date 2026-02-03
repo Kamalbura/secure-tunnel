@@ -244,6 +244,50 @@ def read_handshake_status(timeout: float = 45.0) -> Dict[str, Any]:
 # Sniff port for MAVLink metrics collector (different from proxy port to avoid conflict)
 MAVLINK_SNIFF_PORT = 47005
 
+class UdpTrafficGenerator:
+    """Best-effort UDP traffic generator for plaintext path."""
+
+    def __init__(self, host: str, port: int, payload_size: int = 256, rate_hz: float = 20.0):
+        self.host = host
+        self.port = port
+        self.payload = b"x" * max(1, int(payload_size))
+        self.rate_hz = float(rate_hz)
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._sock: Optional[socket.socket] = None
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        interval = 1.0 / self.rate_hz if self.rate_hz > 0 else 1.0
+
+        def _loop():
+            while self._running:
+                try:
+                    self._sock.sendto(self.payload, (self.host, self.port))
+                except Exception:
+                    pass
+                time.sleep(interval)
+
+        self._thread = threading.Thread(target=_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if not self._running:
+            return
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1.0)
+        if self._sock:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+        self._thread = None
+        self._sock = None
+
 def start_mavproxy(mav_master: str) -> Optional[ManagedProcess]:
     """Start persistent MAVProxy for drone."""
     python_exe = sys.executable
@@ -298,6 +342,7 @@ class BenchmarkScheduler:
         self.args = args
         self.proxy = DroneProxyManager()
         self.mavproxy_proc = None
+        self.traffic_gen = UdpTrafficGenerator("127.0.0.1", DRONE_PLAIN_TX_PORT)
         self.clock_sync = ClockSync()
         self._suite_start_mono = None
         self._advance_grace_s = 10.0
@@ -539,6 +584,8 @@ class BenchmarkScheduler:
                 except Exception as e:
                     log(f"Metrics record failed: {e}", "WARN")
             self._suite_start_mono = time.monotonic()
+
+            self._start_traffic()
             
             # Log to results file
             self._log_result(suite_name, metrics, success=True)
@@ -662,8 +709,33 @@ class BenchmarkScheduler:
         except Exception as e:
             log(f"Metrics finalize failed: {e}", "WARN")
 
+    def _start_traffic(self) -> None:
+        try:
+            resp = send_gcs_command("start_traffic")
+            if resp.get("status") != "ok":
+                log(f"GCS start_traffic failed: {resp}", "WARN")
+        except Exception as e:
+            log(f"GCS start_traffic error: {e}", "WARN")
+        try:
+            self.traffic_gen.start()
+        except Exception:
+            pass
+
+    def _stop_traffic(self) -> None:
+        try:
+            resp = send_gcs_command("stop_traffic")
+            if resp.get("status") != "ok":
+                log(f"GCS stop_traffic failed: {resp}", "WARN")
+        except Exception as e:
+            log(f"GCS stop_traffic error: {e}", "WARN")
+        try:
+            self.traffic_gen.stop()
+        except Exception:
+            pass
+
     def _collect_gcs_metrics(self, suite_name: str) -> Optional[Dict[str, Any]]:
         """Fetch GCS-side metrics for the suite and return them (also log to JSONL)."""
+        self._stop_traffic()
         gcs_info: Dict[str, Any] = {}
         try:
             info_resp = send_gcs_command("get_info")
@@ -732,6 +804,7 @@ class BenchmarkScheduler:
     def _cleanup(self):
         """Cleanup resources."""
         log("Cleaning up...")
+        self._stop_traffic()
         if self.proxy:
             self.proxy.stop()
         if self.mavproxy_proc:

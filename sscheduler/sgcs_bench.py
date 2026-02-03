@@ -786,6 +786,7 @@ class GcsBenchmarkServer:
 # =============================================================================
 
 def main():
+    global LOGS_DIR
     parser = argparse.ArgumentParser(description="GCS Benchmark Server - Operation Chronos v2")
     parser.add_argument("--port", type=int, default=GCS_CONTROL_PORT,
                         help=f"Control server port (default: {GCS_CONTROL_PORT})")
@@ -793,7 +794,13 @@ def main():
                         help="Run ID (default: auto-generated)")
     parser.add_argument("--no-gui", action="store_true",
                         help="Disable MAVProxy GUI (map + console)")
+    parser.add_argument("--log-dir", type=str,
+                        help="Override base log directory for this run")
     args = parser.parse_args()
+
+    if args.log_dir:
+        LOGS_DIR = Path(args.log_dir).expanduser().resolve()
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
     
     # NOTE: GUI is always enabled for benchmark runs (map + console)
     

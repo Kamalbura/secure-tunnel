@@ -799,6 +799,7 @@ def _atexit_cleanup():
 
 def main():
     global GCS_CONTROL_HOST
+    global LOGS_DIR
     parser = argparse.ArgumentParser(description="Benchmark Drone Scheduler")
     parser.add_argument("--mav-master", 
                        default=str(CONFIG.get("MAV_MASTER", "/dev/ttyACM0")),
@@ -813,7 +814,13 @@ def main():
                        help="Print plan without executing")
     parser.add_argument("--gcs-host", type=str,
                        help="GCS control server host (override for Tailscale)")
+    parser.add_argument("--log-dir", type=str,
+                       help="Override base log directory for this run")
     args = parser.parse_args()
+
+    if args.log_dir:
+        LOGS_DIR = Path(args.log_dir).expanduser().resolve()
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
     
     # Override GCS host if provided
     if args.gcs_host:

@@ -53,3 +53,7 @@ benchmark_book/
 **/*.synctex.gz
 **/*.toc
 
+
+# Node.js
+node_modules/
+**/node_modules/

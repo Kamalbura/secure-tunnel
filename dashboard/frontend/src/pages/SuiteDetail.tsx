@@ -94,24 +94,6 @@ export default function SuiteDetail() {
         }
     }, [suiteKey, fetchSuiteDetail, fetchSuiteInventory]);
 
-    if (error && !selectedSuite) {
-        return (
-            <div className="flex items-center justify-center h-64">
-                <div className="text-red-400">Failed to load suite details: {error}</div>
-            </div>
-        );
-    }
-
-    if (isLoading || !selectedSuite) {
-        return (
-            <div className="flex items-center justify-center h-64">
-                <div className="text-gray-400">Loading suite details...</div>
-            </div>
-        );
-    }
-
-    const suite = selectedSuite;
-    const statusMap = suite.validation.metric_status || {};
     const inventoryStatusMap = useMemo(() => {
         const map = new Map<string, MetricStatus>();
         if (!selectedSuiteInventory?.metrics) return map;
@@ -139,14 +121,6 @@ export default function SuiteDetail() {
         return map;
     }, [selectedSuiteInventory]);
 
-    const getStatus = (path: string): MetricStatus | undefined => {
-        return inventoryStatusMap.get(path) || statusMap[path];
-    };
-
-    const getConsistency = (path: string): string | null => {
-        return consistencyMap.get(path) ?? null;
-    };
-
     const inventoryRows = useMemo(() => {
         if (!selectedSuiteInventory?.metrics) {
             return [];
@@ -157,6 +131,33 @@ export default function SuiteDetail() {
         }
         return selectedSuiteInventory.metrics.filter(item => item.key.toLowerCase().includes(term));
     }, [selectedSuiteInventory, inventoryFilter]);
+
+    if (error && !selectedSuite) {
+        return (
+            <div className="flex items-center justify-center h-64">
+                <div className="text-red-400">Failed to load suite details: {error}</div>
+            </div>
+        );
+    }
+
+    if (isLoading || !selectedSuite) {
+        return (
+            <div className="flex items-center justify-center h-64">
+                <div className="text-gray-400">Loading suite details...</div>
+            </div>
+        );
+    }
+
+    const suite = selectedSuite;
+    const statusMap = suite.validation.metric_status || {};
+
+    const getStatus = (path: string): MetricStatus | undefined => {
+        return inventoryStatusMap.get(path) || statusMap[path];
+    };
+
+    const getConsistency = (path: string): string | null => {
+        return consistencyMap.get(path) ?? null;
+    };
 
     const formatInventoryValue = (value: unknown) => {
         if (value === null || value === undefined) return 'null';

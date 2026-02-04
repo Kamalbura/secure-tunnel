@@ -61,6 +61,11 @@ function MetricValue({
     if (typeof value === 'number') {
         return <span className="font-mono">{value.toFixed(2)} {unit}{consistencyBadge}</span>;
     }
+    if (typeof value === 'object') {
+        return <span className="font-mono text-xs text-amber-500" title={JSON.stringify(value)}>
+            {JSON.stringify(value).substring(0, 20)}{JSON.stringify(value).length > 20 ? '...' : ''}
+        </span>;
+    }
     return <span>{value} {unit}{consistencyBadge}</span>;
 }
 

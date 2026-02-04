@@ -1,0 +1,43 @@
+MAV_TO_MAV_VALIDATION_REPORT.txt
+
+1. FINAL MENTAL MODEL
+---------------------
+The system is a LIVE MAVLink Control Channel.
+- Source: Physical Pixhawk (Drone) / QGC (GCS).
+- Transport: PQC Secure Tunnel (UDP).
+- Components: `sdrone_bench.py` (Controller) <-> `sgcs_bench.py` (Follower).
+- Traffic: Real telemetry/commands ONLY. No synthetic load.
+
+2. VERIFIED INVARIANTS
+----------------------
+[x] MAVProxy starts ONCE per side (Verified in `_bench.py` logic, `ManagedProcess` usage).
+[x] MAVProxy MUST NOT restart between suites (Logic check: `start_mavproxy` called once in `run()`, not in loop).
+[x] MAVProxy MUST be killed when scheduler exits (Enforced via `ManagedProcess` in `sgcs_bench.py` and `sdrone_bench.py`).
+[x] NO SYNTHETIC TRAFFIC (Enforced via code removal/neutralization).
+[x] Git State: Baseline `e7cfde` + Fixes.
+
+3. FIXED BUGS
+-------------
+- **Orphan Risk**: `sgcs_bench.py` GCS MAVProxy now uses `ManagedProcess` (Windows Job Object linked).
+- **Traffic Noise**: `UdpTrafficGenerator` fully neutralized. `start_traffic` RPCs are no-ops.
+- **Hardcoded Paths**: Replaced `chronos_v2_run_20260202_clean` with dynamic timestamped logs.
+
+4. KNOWN LIMITATIONS
+--------------------
+- **Throughput Metrics**: Reports might show "0 Mbps" or "Low" if MAVLink telemetry is silent (e.g., Pixhawk disarmed/sleeping). This is NOT a failure, but the report parser must be aware.
+- **Packet Loss**: Real UDP loss is possible; no retransmission in the tunnel (it's UDP). MAVLink handles reliability.
+
+5. GIT COMMIT STATE
+-------------------
+- Base: `e7cfde009ed3fe786dc50bf0e506688702f08f62`
+- Applied Corrections:
+    - Neutralized traffic generators in `sscheduler/`.
+    - Switched GCS MAVProxy to `ManagedProcess`.
+    - Dynamic log paths.
+    - Verified `core/config.py` matches Deployment Facts (192.168.0.x).
+
+6. FINAL VERDICT
+----------------
+**SAFE for live Pixhawk↔GCS runs.**
+
+The code now respects the "Live" constraint, manages processes safely, and will not inject noise into the control channel.

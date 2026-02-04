@@ -62,8 +62,36 @@ DRONE_PLAIN_TX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_TX", 47003))
 
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
 ROOT = Path(__file__).resolve().parents[1]
-LOGS_DIR = ROOT / "logs" / "benchmarks" / "chronos_v2_run_20260202_clean"
+SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
+ROOT = Path(__file__).resolve().parents[1]
+# Dynamic log directory based on timestamp
+_TS = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+LOGS_DIR = ROOT / "logs" / "benchmarks" / f"live_run_{_TS}"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+# =============================================================================
+# Mode Resolution (identical logic across schedulers)
+# =============================================================================
+
+def resolve_benchmark_mode(cli_value: Optional[str], default_mode: str) -> str:
+    def _norm(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip().upper()
+        return text or None
+
+    cli_mode = _norm(cli_value)
+    env_mode = _norm(os.getenv("BENCHMARK_MODE"))
+    allowed = {"MAVPROXY", "SYNTHETIC"}
+
+    if cli_mode and cli_mode not in allowed:
+        raise ValueError(f"Invalid --mode '{cli_mode}', must be MAVPROXY or SYNTHETIC")
+    if env_mode and env_mode not in allowed:
+        raise ValueError(f"Invalid BENCHMARK_MODE '{env_mode}', must be MAVPROXY or SYNTHETIC")
+    if cli_mode and env_mode and cli_mode != env_mode:
+        raise RuntimeError(f"BENCHMARK_MODE conflict: cli={cli_mode} env={env_mode}")
+
+    return cli_mode or env_mode or default_mode
 
 # =============================================================================
 # Logging
@@ -257,36 +285,12 @@ class UdpTrafficGenerator:
         self._sock: Optional[socket.socket] = None
 
     def start(self) -> None:
-        if self._running:
-            return
-        self._running = True
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        interval = 1.0 / self.rate_hz if self.rate_hz > 0 else 1.0
-
-        def _loop():
-            while self._running:
-                try:
-                    self._sock.sendto(self.payload, (self.host, self.port))
-                except Exception:
-                    pass
-                time.sleep(interval)
-
-        self._thread = threading.Thread(target=_loop, daemon=True)
-        self._thread.start()
+        # TRAFFIC GENERATION DISABLED FOR LIVE MAVLINK
+        pass
 
     def stop(self) -> None:
-        if not self._running:
-            return
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=1.0)
-        if self._sock:
-            try:
-                self._sock.close()
-            except Exception:
-                pass
-        self._thread = None
-        self._sock = None
+        # TRAFFIC GENERATION DISABLED FOR LIVE MAVLINK
+        pass
 
 def start_mavproxy(mav_master: str) -> Optional[ManagedProcess]:
     """Start persistent MAVProxy for drone."""
@@ -340,12 +344,19 @@ class BenchmarkScheduler:
     
     def __init__(self, args):
         self.args = args
+        self.mode = getattr(args, "mode_resolved", None) or resolve_benchmark_mode(
+            getattr(args, "mode", None),
+            default_mode="MAVPROXY",
+        )
         self.proxy = DroneProxyManager()
         self.mavproxy_proc = None
         self.traffic_gen = UdpTrafficGenerator("127.0.0.1", DRONE_PLAIN_TX_PORT)
         self.clock_sync = ClockSync()
         self._suite_start_mono = None
         self._advance_grace_s = 10.0
+        self._shutdown_reason: Optional[str] = None
+        self._shutdown_error: bool = False
+        self._cleanup_done: bool = False
         
         # Initialize benchmark policy
         self.policy = BenchmarkPolicy(
@@ -389,6 +400,7 @@ class BenchmarkScheduler:
         log(f"Estimated total time: {estimated_time/60:.1f} minutes")
         log(f"Output directory: {LOGS_DIR}")
         log(f"Filter AEAD: {self.args.filter_aead or 'all'}")
+        log(f"BENCHMARK_MODE: {self.mode}")
         log("=" * 70)
         
         if self.args.dry_run:
@@ -425,6 +437,12 @@ class BenchmarkScheduler:
         self.mavproxy_proc = start_mavproxy(self.args.mav_master)
         if not self.mavproxy_proc:
             log("MAVProxy failed to start, continuing anyway", "WARN")
+        if self.mode == "MAVPROXY" and not (self.mavproxy_proc and self.mavproxy_proc.is_running()):
+            self._shutdown_reason = "error: mavproxy_not_running"
+            self._shutdown_error = True
+            log("MAVProxy-only mode requires MAVProxy to be running; aborting", "ERROR")
+            self._shutdown(self._shutdown_reason, error=True)
+            return
         
         # Start benchmark
         try:
@@ -435,9 +453,14 @@ class BenchmarkScheduler:
             self._run_loop()
             
         except KeyboardInterrupt:
+            self._shutdown_reason = "normal: interrupted"
+            self._shutdown_error = False
             log("Benchmark interrupted by user")
         finally:
-            self._cleanup()
+            if self._shutdown_reason is None:
+                self._shutdown_reason = "normal: completed"
+                self._shutdown_error = False
+            self._shutdown(self._shutdown_reason, error=self._shutdown_error)
             self._save_final_summary()
     
     def _run_loop(self):
@@ -445,6 +468,11 @@ class BenchmarkScheduler:
         current_suite = self.policy.get_current_suite()
         
         while not self.policy.benchmark_complete:
+            if self.mode == "MAVPROXY" and not (self.mavproxy_proc and self.mavproxy_proc.is_running()):
+                self._shutdown_reason = "error: mavproxy_died"
+                self._shutdown_error = True
+                log("MAVProxy died during MAVProxy-only run; aborting", "ERROR")
+                return
             # Activate current suite
             if not self._activate_suite(current_suite):
                 log(f"Failed to activate {current_suite}, marking as failed", "WARN")
@@ -477,6 +505,8 @@ class BenchmarkScheduler:
 
                     # 2. Finalize metrics (passing GCS data for consolidation)
                     self._finalize_metrics(success=True, gcs_metrics=gcs_metrics)
+                    self._shutdown_reason = "normal: benchmark_complete"
+                    self._shutdown_error = False
                     return
                 
                 if output.action == BenchmarkAction.NEXT_SUITE:
@@ -585,7 +615,11 @@ class BenchmarkScheduler:
                     log(f"Metrics record failed: {e}", "WARN")
             self._suite_start_mono = time.monotonic()
 
-            self._start_traffic()
+            if self.mode == "MAVPROXY":
+                # MAVProxy-only invariant: no synthetic traffic or UDP generators.
+                log("MAVProxy-only mode: synthetic traffic disabled")
+            else:
+                self._start_traffic()
             
             # Log to results file
             self._log_result(suite_name, metrics, success=True)
@@ -606,7 +640,17 @@ class BenchmarkScheduler:
             return False
 
     def _ready_to_advance(self) -> bool:
-        """Return True when minimal MAVLink/data-plane evidence exists for current suite."""
+        """Return True when suite can advance."""
+        if self.mode == "MAVPROXY":
+            # MAVProxy-only invariant: only require MAVProxy alive and control plane alive.
+            if not (self.mavproxy_proc and self.mavproxy_proc.is_running()):
+                return False
+            try:
+                resp = send_gcs_command("ping")
+                return resp.get("status") == "ok"
+            except Exception:
+                return False
+
         if not self.metrics_aggregator or not self.metrics_aggregator.mavlink_collector:
             return False
         try:
@@ -710,28 +754,14 @@ class BenchmarkScheduler:
             log(f"Metrics finalize failed: {e}", "WARN")
 
     def _start_traffic(self) -> None:
-        try:
-            resp = send_gcs_command("start_traffic")
-            if resp.get("status") != "ok":
-                log(f"GCS start_traffic failed: {resp}", "WARN")
-        except Exception as e:
-            log(f"GCS start_traffic error: {e}", "WARN")
-        try:
-            self.traffic_gen.start()
-        except Exception:
-            pass
+        if self.mode == "MAVPROXY":
+            raise RuntimeError("MAVProxy-only mode forbids synthetic traffic")
+        # TRAFFIC GENERATION DISABLED FOR LIVE MAVLINK
+        log("Traffic generation disabled (Live MAVLink mode)")
 
     def _stop_traffic(self) -> None:
-        try:
-            resp = send_gcs_command("stop_traffic")
-            if resp.get("status") != "ok":
-                log(f"GCS stop_traffic failed: {resp}", "WARN")
-        except Exception as e:
-            log(f"GCS stop_traffic error: {e}", "WARN")
-        try:
-            self.traffic_gen.stop()
-        except Exception:
-            pass
+        if self.mode == "MAVPROXY":
+            return
 
     def _collect_gcs_metrics(self, suite_name: str) -> Optional[Dict[str, Any]]:
         """Fetch GCS-side metrics for the suite and return them (also log to JSONL)."""
@@ -809,6 +839,14 @@ class BenchmarkScheduler:
             self.proxy.stop()
         if self.mavproxy_proc:
             self.mavproxy_proc.stop()
+        self._cleanup_done = True
+
+    def _shutdown(self, reason: str, *, error: bool) -> None:
+        if self._cleanup_done:
+            return
+        level = "ERROR" if error else "INFO"
+        log(f"Shutdown reason: {reason}", level)
+        self._cleanup()
     
     def _save_final_summary(self):
         """Save final benchmark summary."""
@@ -841,6 +879,10 @@ class BenchmarkScheduler:
 
 def cleanup_environment(aggressive: bool = False):
     """Kill stale processes if aggressive, otherwise just MAVProxy."""
+    # MAVProxy-only mode forbids name-based global process killing.
+    mode = resolve_benchmark_mode(None, default_mode="MAVPROXY")
+    if mode == "MAVPROXY":
+        return
     patterns = ["mavproxy.py"]
     if aggressive:
         patterns.append("core.run_proxy")
@@ -887,9 +929,14 @@ def main():
                        help="Print plan without executing")
     parser.add_argument("--gcs-host", type=str,
                        help="GCS control server host (override for Tailscale)")
+    parser.add_argument("--mode", type=str,
+                       help="Benchmark mode: MAVPROXY or SYNTHETIC")
     parser.add_argument("--log-dir", type=str,
                        help="Override base log directory for this run")
     args = parser.parse_args()
+
+    args.mode_resolved = resolve_benchmark_mode(args.mode, default_mode="MAVPROXY")
+    log(f"BENCHMARK_MODE resolved to {args.mode_resolved}")
 
     if args.log_dir:
         LOGS_DIR = Path(args.log_dir).expanduser().resolve()

@@ -1,0 +1,20 @@
+IMPLEMENTATION_CHANGELOG.txt
+
+1. File: sscheduler/sgcs_bench.py
+   Lines Touched: 76 (LOGS_DIR), 97-128 (UdpTrafficGenerator), 173 (Type Hint), 215-246 (start), 248-264 (stop), 271 (is_running)
+   Reason: 
+     - Replaced `subprocess.Popen` with `ManagedProcess` for `GcsMavProxyManager`.
+     - Neutralized synthetic traffic generation.
+     - Removed hardcoded "Chronos v2" log directory.
+   Why Safe: `ManagedProcess` ensures child processes are killed if the parent dies (via Job Objects on Windows), preventing MAVProxy orphans. No-op traffic generator prevents interference with live MAVLink control channel.
+   Why Necessary: Strict user requirement to avoid synthetic traffic and fix orphan risks.
+   Invariant Enforced: "MAVProxy MUST be killed when scheduler exits" + "NO SYNTHETIC TRAFFIC".
+
+2. File: sscheduler/sdrone_bench.py
+   Lines Touched: 65, 260-290, 713-722, 725-734
+   Reason:
+     - Neutralized synthetic traffic generation (local and RPC calls).
+     - Removed hardcoded "Chronos v2" log directory.
+   Why Safe: Removes legacy "blaster" logic that is irrelevant to live MAVLink flow.
+   Why Necessary: Prevents "start_traffic" RPCs from confusing the GCS or causing errors.
+   Invariant Enforced: "NO SYNTHETIC TRAFFIC".

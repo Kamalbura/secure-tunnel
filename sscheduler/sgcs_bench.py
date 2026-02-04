@@ -73,7 +73,11 @@ QGC_PORT = 14550            # Output for QGC/Local tools
 
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
 ROOT = Path(__file__).parent.parent
-LOGS_DIR = ROOT / "logs" / "benchmarks" / "chronos_v2_run_20260202_clean"
+SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
+ROOT = Path(__file__).parent.parent
+# Dynamic log directory based on timestamp
+_TS = time.strftime("%Y%m%d_%H%M%S")
+LOGS_DIR = ROOT / "logs" / "benchmarks" / f"live_run_{_TS}"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 PAYLOAD_SIZE = 1200
@@ -95,36 +99,12 @@ class UdpTrafficGenerator:
         self._sock: Optional[socket.socket] = None
 
     def start(self) -> None:
-        if self._running:
-            return
-        self._running = True
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        interval = 1.0 / self.rate_hz if self.rate_hz > 0 else 1.0
-
-        def _loop():
-            while self._running:
-                try:
-                    self._sock.sendto(self.payload, (self.host, self.port))
-                except Exception:
-                    pass
-                time.sleep(interval)
-
-        self._thread = threading.Thread(target=_loop, daemon=True)
-        self._thread.start()
+        # TRAFFIC GENERATION DISABLED FOR LIVE MAVLINK
+        pass
 
     def stop(self) -> None:
-        if not self._running:
-            return
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=1.0)
-        if self._sock:
-            try:
-                self._sock.close()
-            except Exception:
-                pass
-        self._thread = None
-        self._sock = None
+        # TRAFFIC GENERATION DISABLED FOR LIVE MAVLINK
+        pass
 
 # =============================================================================
 # Logging Setup
@@ -170,7 +150,10 @@ class GcsMavProxyManager:
     def __init__(self, logs_dir: Path, enable_gui: bool = MAVPROXY_ENABLE_GUI):
         self.logs_dir = logs_dir
         self.enable_gui = enable_gui
-        self.process: Optional[subprocess.Popen] = None
+        self.logs_dir = logs_dir
+        self.enable_gui = enable_gui
+        self.process: Optional[ManagedProcess] = None
+        self._log_handle = None
         self._log_handle = None
     
     def start(self) -> bool:
@@ -183,14 +166,18 @@ class GcsMavProxyManager:
         if platform.system() == "Windows":
             cmd = [
                 sys.executable, "-m", "MAVProxy.mavproxy",
-                f"--master=udp:127.0.0.1:{MAVLINK_INPUT_PORT}",
+                f"--master=udpin:127.0.0.1:{MAVLINK_INPUT_PORT}",
+                "--dialect=ardupilotmega",
+                "--nowait",
                 f"--out=udp:127.0.0.1:{MAVLINK_SNIFF_PORT}",
                 f"--out=udp:127.0.0.1:{QGC_PORT}",
             ]
         else:
             cmd = [
                 "mavproxy.py",
-                f"--master=udp:127.0.0.1:{MAVLINK_INPUT_PORT}",
+                f"--master=udpin:127.0.0.1:{MAVLINK_INPUT_PORT}",
+                "--dialect=ardupilotmega",
+                "--nowait",
                 f"--out=udp:127.0.0.1:{MAVLINK_SNIFF_PORT}",
                 f"--out=udp:127.0.0.1:{QGC_PORT}",
             ]
@@ -208,31 +195,21 @@ class GcsMavProxyManager:
             
             # Start MAVProxy - don't redirect stdout when GUI enabled
             # (prompt_toolkit requires a real Windows console)
-            if self.enable_gui:
-                # GUI mode: let MAVProxy use the console directly
-                self.process = subprocess.Popen(
-                    cmd,
-                    creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == "Windows" else 0
-                )
+            # Start MAVProxy using ManagedProcess
+            self.process = ManagedProcess(
+                cmd=cmd,
+                name="mavproxy-gcs",
+                stdout=None if self.enable_gui else self._log_handle,
+                stderr=None if self.enable_gui else subprocess.STDOUT,
+                new_console=self.enable_gui  # GUI needs new console
+            )
+            
+            if self.process.start():
+                log(f"[MAVPROXY] Started (PID: {self.process.process.pid})")
+                return True
             else:
-                # Headless mode: redirect to log file
-                self._log_handle = open(log_path, "w", encoding="utf-8")
-                self.process = subprocess.Popen(
-                    cmd,
-                    stdout=self._log_handle,
-                    stderr=subprocess.STDOUT,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if platform.system() == "Windows" else 0
-                )
-            
-            # Give it time to start
-            time.sleep(2.0)
-            
-            if self.process.poll() is not None:
-                log(f"[MAVPROXY] Exited early with code {self.process.returncode}")
+                log("[MAVPROXY] Failed to start ManagedProcess")
                 return False
-            
-            log(f"[MAVPROXY] Started (PID: {self.process.pid})")
-            return True
             
         except FileNotFoundError:
             log("[MAVPROXY] mavproxy.py not found in PATH")
@@ -244,27 +221,16 @@ class GcsMavProxyManager:
     def stop(self):
         """Stop MAVProxy."""
         if self.process:
-            try:
-                if platform.system() == "Windows":
-                    self.process.terminate()
-                else:
-                    self.process.terminate()
-                self.process.wait(timeout=5.0)
-                log("[MAVPROXY] Stopped")
-            except Exception as e:
-                log(f"[MAVPROXY] Error stopping: {e}")
-                try:
-                    self.process.kill()
-                except Exception:
-                    pass
+            self.process.stop()
             self.process = None
+            log("[MAVPROXY] Stopped")
         
         if self._log_handle:
             self._log_handle.close()
             self._log_handle = None
     
     def is_running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
+        return self.process is not None and self.process.is_running()
 
 
 # =============================================================================

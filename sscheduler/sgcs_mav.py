@@ -29,6 +29,7 @@ import subprocess
 import atexit
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Optional
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -80,6 +81,30 @@ LOCAL_SUITES = None
 # Get all suites (list_suites returns dict, convert to list of dicts)
 _suites_dict = list_suites()
 SUITES = [{"name": k, **v} for k, v in _suites_dict.items()]
+
+# ============================================================
+# Mode Resolution (identical logic across schedulers)
+# ============================================================
+
+def resolve_benchmark_mode(cli_value: Optional[str], default_mode: str) -> str:
+    def _norm(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip().upper()
+        return text or None
+
+    cli_mode = _norm(cli_value)
+    env_mode = _norm(os.getenv("BENCHMARK_MODE"))
+    allowed = {"MAVPROXY", "SYNTHETIC"}
+
+    if cli_mode and cli_mode not in allowed:
+        raise ValueError(f"Invalid --mode '{cli_mode}', must be MAVPROXY or SYNTHETIC")
+    if env_mode and env_mode not in allowed:
+        raise ValueError(f"Invalid BENCHMARK_MODE '{env_mode}', must be MAVPROXY or SYNTHETIC")
+    if cli_mode and env_mode and cli_mode != env_mode:
+        raise RuntimeError(f"BENCHMARK_MODE conflict: cli={cli_mode} env={env_mode}")
+
+    return cli_mode or env_mode or default_mode
 
 # ============================================================
 # Logging
@@ -201,8 +226,9 @@ class TelemetrySender:
 class ControlServer:
     """TCP control server - GCS listens for commands from drone"""
     
-    def __init__(self, proxy: GcsProxyManager):
+    def __init__(self, proxy: GcsProxyManager, mode: str):
         self.proxy = proxy
+        self.mode = mode
         self.mavproxy = MavProxyManager("gcs")
         # Persistent mavproxy subprocess handle (if started here)
         self.mavproxy_proc = None
@@ -439,6 +465,8 @@ class ControlServer:
                 return {"status": "error", "message": "proxy_start_failed"}
 
             # Persistent MAVProxy should already be running; just acknowledge
+            if self.mode == "MAVPROXY" and not (self.mavproxy_proc and self.mavproxy_proc.is_running()):
+                return {"status": "error", "message": "mavproxy_not_running"}
             log("Proxy started; persistent MAVProxy assumed running")
             return {"status": "ok", "message": "proxy_started"}
         
@@ -507,8 +535,11 @@ class ControlServer:
 # Main
 # ============================================================
 
-def cleanup_environment():
+def cleanup_environment(mode: Optional[str] = None):
     """Force kill any stale instances of our components."""
+    mode = mode or resolve_benchmark_mode(None, default_mode="MAVPROXY")
+    if mode == "MAVPROXY":
+        return
     log("Cleaning up stale processes...")
     
     # Current PID to avoid suicide (though unlikely to match targets)
@@ -534,12 +565,13 @@ def cleanup_environment():
              
     time.sleep(1.0)
 
-# Register cleanup on exit
-atexit.register(cleanup_environment)
-
 def main():
     parser = argparse.ArgumentParser(description="GCS Scheduler (Follower)")
+    parser.add_argument("--mode", type=str, help="Benchmark mode: MAVPROXY or SYNTHETIC")
     args = parser.parse_args()
+
+    args.mode_resolved = resolve_benchmark_mode(args.mode, default_mode="MAVPROXY")
+    log(f"BENCHMARK_MODE resolved to {args.mode_resolved}")
     
     print("=" * 60)
     print("Simplified GCS Scheduler (FOLLOWER) - sscheduler")
@@ -559,13 +591,16 @@ def main():
         log(f"  {k}: {v}")
     log("GCS scheduler running. Waiting for commands from drone...")
     log("(Drone will send 'start', 'rekey', 'stop' commands)")
+
+    # Register cleanup on exit
+    atexit.register(cleanup_environment, args.mode_resolved)
     
     # Cleanup environment before starting
-    cleanup_environment()
+    cleanup_environment(args.mode_resolved)
 
     # Initialize components
     proxy = GcsProxyManager()
-    control = ControlServer(proxy)
+    control = ControlServer(proxy, args.mode_resolved)
     control.start()
 
     # Start persistent MAVProxy for the scheduler lifetime
@@ -574,6 +609,11 @@ def main():
         if ok:
             log("persistent mavproxy started at scheduler startup")
         else:
+            if args.mode_resolved == "MAVPROXY":
+                log("Shutdown reason: error: mavproxy_not_running")
+                control.stop()
+                proxy.stop()
+                return 2
             log("persistent mavproxy failed to start at scheduler startup")
     except Exception as _e:
         log(f"persistent mavproxy startup exception: {_e}")
@@ -588,7 +628,7 @@ def main():
     shutdown = threading.Event()
     
     def signal_handler(sig, frame):
-        log("Shutdown signal received")
+        log("Shutdown reason: normal: interrupted")
         shutdown.set()
     
     signal.signal(signal.SIGINT, signal_handler)
@@ -598,6 +638,8 @@ def main():
         while not shutdown.is_set():
             shutdown.wait(timeout=1.0)
     finally:
+        if not shutdown.is_set():
+            log("Shutdown reason: normal: completed")
         log("Shutting down...")
         control.stop()
         proxy.stop()

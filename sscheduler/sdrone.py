@@ -28,6 +28,7 @@ import threading
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Optional
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -71,6 +72,30 @@ SUITES = [{"name": k, **v} for k, v in _suites_dict.items()]
 ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = ROOT / "logs" / "sscheduler" / "drone"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+# =============================================================================
+# Mode Resolution (identical logic across schedulers)
+# =============================================================================
+
+def resolve_benchmark_mode(cli_value: Optional[str], default_mode: str) -> str:
+    def _norm(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip().upper()
+        return text or None
+
+    cli_mode = _norm(cli_value)
+    env_mode = _norm(os.getenv("BENCHMARK_MODE"))
+    allowed = {"MAVPROXY", "SYNTHETIC"}
+
+    if cli_mode and cli_mode not in allowed:
+        raise ValueError(f"Invalid --mode '{cli_mode}', must be MAVPROXY or SYNTHETIC")
+    if env_mode and env_mode not in allowed:
+        raise ValueError(f"Invalid BENCHMARK_MODE '{env_mode}', must be MAVPROXY or SYNTHETIC")
+    if cli_mode and env_mode and cli_mode != env_mode:
+        raise RuntimeError(f"BENCHMARK_MODE conflict: cli={cli_mode} env={env_mode}")
+
+    return cli_mode or env_mode or default_mode
 
 # ============================================================
 # Logging
@@ -426,7 +451,11 @@ def main():
     parser.add_argument("--duration", type=float, default=DEFAULT_DURATION, help="Seconds per suite")
     parser.add_argument("--rate", type=float, default=DEFAULT_RATE_MBPS, help="Traffic rate Mbps")
     parser.add_argument("--max-suites", type=int, default=None, help="Max suites to run")
+    parser.add_argument("--mode", type=str, help="Benchmark mode: MAVPROXY or SYNTHETIC")
     args = parser.parse_args()
+
+    args.mode_resolved = resolve_benchmark_mode(args.mode, default_mode="MAVPROXY")
+    log(f"BENCHMARK_MODE resolved to {args.mode_resolved}")
     
     print("=" * 60)
     print("Simplified Drone Scheduler (CONTROLLER) - sscheduler")
@@ -444,6 +473,10 @@ def main():
     for k, v in cfg.items():
         log(f"  {k}: {v}")
     log(f"Duration: {args.duration}s per suite, Rate: {args.rate} Mbps")
+
+    if args.mode_resolved == "MAVPROXY":
+        log("ERROR: MAVProxy-only mode is not supported by sdrone.py; use sdrone_mav.py")
+        return 2
     
     # Determine suites to run
     if args.suite:

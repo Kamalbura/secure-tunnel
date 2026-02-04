@@ -28,6 +28,7 @@ import threading
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Optional
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -73,6 +74,30 @@ LOCAL_SUITES = None
 # Get all suites (list_suites returns dict, convert to list of dicts)
 _suites_dict = list_suites()
 SUITES = [{"name": k, **v} for k, v in _suites_dict.items()]
+
+# ============================================================
+# Mode Resolution (identical logic across schedulers)
+# ============================================================
+
+def resolve_benchmark_mode(cli_value: Optional[str], default_mode: str) -> str:
+    def _norm(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip().upper()
+        return text or None
+
+    cli_mode = _norm(cli_value)
+    env_mode = _norm(os.getenv("BENCHMARK_MODE"))
+    allowed = {"MAVPROXY", "SYNTHETIC"}
+
+    if cli_mode and cli_mode not in allowed:
+        raise ValueError(f"Invalid --mode '{cli_mode}', must be MAVPROXY or SYNTHETIC")
+    if env_mode and env_mode not in allowed:
+        raise ValueError(f"Invalid BENCHMARK_MODE '{env_mode}', must be MAVPROXY or SYNTHETIC")
+    if cli_mode and env_mode and cli_mode != env_mode:
+        raise RuntimeError(f"BENCHMARK_MODE conflict: cli={cli_mode} env={env_mode}")
+
+    return cli_mode or env_mode or default_mode
 
 # ============================================================
 # Logging
@@ -324,8 +349,9 @@ class GcsProxyManager:
 class ControlServer:
     """TCP control server - GCS listens for commands from drone"""
     
-    def __init__(self, proxy: GcsProxyManager):
+    def __init__(self, proxy: GcsProxyManager, mode: str):
         self.proxy = proxy
+        self.mode = mode
         self.traffic = None
         self.server_sock = None
         self.running = False
@@ -408,6 +434,9 @@ class ControlServer:
                 return {"status": "error", "message": "missing suite"}
             
             log(f"Start requested for suite: {suite}")
+
+            if self.mode == "MAVPROXY":
+                return {"status": "error", "message": "traffic_generation_disabled"}
             
             # Start GCS proxy
             if not self.proxy.start(suite):
@@ -443,6 +472,9 @@ class ControlServer:
         elif cmd == "start_traffic":
             # Drone tells GCS to start traffic (proxy already running)
             duration = request.get("duration", self.duration)
+
+            if self.mode == "MAVPROXY":
+                return {"status": "error", "message": "traffic_generation_disabled"}
             
             if not self.proxy.is_running():
                 return {"status": "error", "message": "proxy_not_running"}
@@ -504,7 +536,11 @@ class ControlServer:
 
 def main():
     parser = argparse.ArgumentParser(description="GCS Scheduler (Follower)")
+    parser.add_argument("--mode", type=str, help="Benchmark mode: MAVPROXY or SYNTHETIC")
     args = parser.parse_args()
+
+    args.mode_resolved = resolve_benchmark_mode(args.mode, default_mode="MAVPROXY")
+    log(f"BENCHMARK_MODE resolved to {args.mode_resolved}")
     
     print("=" * 60)
     print("Simplified GCS Scheduler (FOLLOWER) - sscheduler")
@@ -524,10 +560,14 @@ def main():
         log(f"  {k}: {v}")
     log("GCS scheduler running. Waiting for commands from drone...")
     log("(Drone will send 'start', 'rekey', 'stop' commands)")
+
+    if args.mode_resolved == "MAVPROXY":
+        log("ERROR: MAVProxy-only mode is not supported by sgcs.py; use sgcs_mav.py")
+        return 2
     
     # Initialize components
     proxy = GcsProxyManager()
-    control = ControlServer(proxy)
+    control = ControlServer(proxy, args.mode_resolved)
     control.start()
 
     # Start MAVProxy GUI (map/console) for operator visibility

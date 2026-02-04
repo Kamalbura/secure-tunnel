@@ -877,10 +877,10 @@ class BenchmarkScheduler:
 # Cleanup
 # =============================================================================
 
-def cleanup_environment(aggressive: bool = False):
+def cleanup_environment(aggressive: bool = False, mode: Optional[str] = None):
     """Kill stale processes if aggressive, otherwise just MAVProxy."""
     # MAVProxy-only mode forbids name-based global process killing.
-    mode = resolve_benchmark_mode(None, default_mode="MAVPROXY")
+    mode = mode or resolve_benchmark_mode(None, default_mode="MAVPROXY")
     if mode == "MAVPROXY":
         return
     patterns = ["mavproxy.py"]
@@ -958,7 +958,7 @@ def main():
     
     # Light cleanup before starting (just MAVProxy, not proxies)
     # Aggressive cleanup before starting to ensure clean slate (per Operational Plan)
-    cleanup_environment(aggressive=True)
+    cleanup_environment(aggressive=True, mode=args.mode_resolved)
     
     # Run benchmark
     scheduler = BenchmarkScheduler(args)

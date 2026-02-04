@@ -30,6 +30,7 @@ import logging
 import atexit
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Optional
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -83,6 +84,30 @@ SUITES = [{"name": k, **v} for k, v in _suites_dict.items()]
 ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = ROOT / "logs" / "sscheduler" / "drone"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+# ============================================================
+# Mode Resolution (identical logic across schedulers)
+# ============================================================
+
+def resolve_benchmark_mode(cli_value: Optional[str], default_mode: str) -> str:
+    def _norm(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip().upper()
+        return text or None
+
+    cli_mode = _norm(cli_value)
+    env_mode = _norm(os.getenv("BENCHMARK_MODE"))
+    allowed = {"MAVPROXY", "SYNTHETIC"}
+
+    if cli_mode and cli_mode not in allowed:
+        raise ValueError(f"Invalid --mode '{cli_mode}', must be MAVPROXY or SYNTHETIC")
+    if env_mode and env_mode not in allowed:
+        raise ValueError(f"Invalid BENCHMARK_MODE '{env_mode}', must be MAVPROXY or SYNTHETIC")
+    if cli_mode and env_mode and cli_mode != env_mode:
+        raise RuntimeError(f"BENCHMARK_MODE conflict: cli={cli_mode} env={env_mode}")
+
+    return cli_mode or env_mode or default_mode
 
 # ============================================================
 # Logging
@@ -478,6 +503,10 @@ class DroneScheduler:
 
     def __init__(self, args, suites):
         self.args = args
+        self.mode = getattr(args, "mode_resolved", None) or resolve_benchmark_mode(
+            getattr(args, "mode", None),
+            default_mode="MAVPROXY",
+        )
         self.suites = suites
         self.policy = LinearLoopPolicy(self.suites, duration_s=float(self.args.duration))
         self.proxy = DroneProxyManager()
@@ -596,10 +625,14 @@ class DroneScheduler:
 
         logging.info("--- DroneScheduler CLEANUP COMPLETE ---")
 
+    def _shutdown(self, reason: str, *, error: bool) -> None:
+        level = "ERROR" if error else "INFO"
+        log(f"Shutdown reason: {reason} ({level})")
+        self.cleanup()
+
     def run_scheduler(self):
         def _sigint(sig, frame):
-            log("Interrupted; cleaning up and exiting")
-            self.cleanup()
+            self._shutdown("normal: interrupted", error=False)
             sys.exit(0)
 
         signal.signal(signal.SIGINT, _sigint)
@@ -623,11 +656,21 @@ class DroneScheduler:
         # Start MAVProxy once
         ok = self.start_persistent_mavproxy()
         if not ok:
+            if self.mode == "MAVPROXY":
+                self._shutdown("error: mavproxy_not_running", error=True)
+                return
             log("Warning: persistent MAVProxy failed to start; continuing")
 
         count = 0
+        shutdown_reason = None
+        shutdown_error = False
         try:
             while True:
+                if self.mode == "MAVPROXY" and not (self.mavproxy_proc and self.mavproxy_proc.is_running()):
+                    shutdown_reason = "error: mavproxy_died"
+                    shutdown_error = True
+                    log("ERROR: MAVProxy died during MAVProxy-only run; aborting")
+                    break
                 suite_name = self.policy.next_suite()
                 duration = self.policy.get_duration()
                 log(f"=== Activating Suite: {suite_name} (duration={duration}) ===")
@@ -662,21 +705,29 @@ class DroneScheduler:
 
                 count += 1
                 if self.args.max_suites and count >= int(self.args.max_suites):
+                    shutdown_reason = "normal: max_suites_reached"
+                    shutdown_error = False
                     break
 
                 time.sleep(2.0)
         except Exception as e:
             logging.error(f"Scheduler crash: {e}")
         finally:
-            self.cleanup()
+            if shutdown_reason is None:
+                shutdown_reason = "normal: completed"
+                shutdown_error = False
+            self._shutdown(shutdown_reason, error=shutdown_error)
 
 
 # ============================================================
 # Main
 # ============================================================
 
-def cleanup_environment():
+def cleanup_environment(mode: Optional[str] = None):
     """Force kill any stale instances of our components (Linux/Posix)."""
+    mode = mode or resolve_benchmark_mode(None, default_mode="MAVPROXY")
+    if mode == "MAVPROXY":
+        return
     log("Cleaning up stale processes...")
     patterns = ["mavproxy.py", "core.run_proxy"]
     for p in patterns:
@@ -697,7 +748,11 @@ def main():
     parser.add_argument("--duration", type=float, default=DEFAULT_DURATION, help="Seconds per suite")
     parser.add_argument("--rate", type=float, default=DEFAULT_RATE_MBPS, help="Traffic rate Mbps")
     parser.add_argument("--max-suites", type=int, default=None, help="Max suites to run")
+    parser.add_argument("--mode", type=str, help="Benchmark mode: MAVPROXY or SYNTHETIC")
     args = parser.parse_args()
+
+    args.mode_resolved = resolve_benchmark_mode(args.mode, default_mode="MAVPROXY")
+    log(f"BENCHMARK_MODE resolved to {args.mode_resolved}")
     
     print("=" * 60)
     print("Simplified Drone Scheduler (CONTROLLER) - sscheduler")
@@ -731,7 +786,7 @@ def main():
         suites_to_run = suites_to_run[:args.max_suites]
 
     # Register cleanup on exit
-    atexit.register(cleanup_environment)
+    atexit.register(cleanup_environment, args.mode_resolved)
 
     # Apply local in-file overrides
     if LOCAL_RATE_MBPS is not None:
@@ -746,7 +801,7 @@ def main():
     log(f"Suites to run: {len(suites_to_run)}")
 
     # Cleanup environment before starting
-    cleanup_environment()
+    cleanup_environment(args.mode_resolved)
 
     # Initialize components
     scheduler = DroneScheduler(args, suites_to_run)

@@ -80,6 +80,30 @@ _TS = time.strftime("%Y%m%d_%H%M%S")
 LOGS_DIR = ROOT / "logs" / "benchmarks" / f"live_run_{_TS}"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
+# =============================================================================
+# Mode Resolution (identical logic across schedulers)
+# =============================================================================
+
+def resolve_benchmark_mode(cli_value: Optional[str], default_mode: str) -> str:
+    def _norm(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip().upper()
+        return text or None
+
+    cli_mode = _norm(cli_value)
+    env_mode = _norm(os.getenv("BENCHMARK_MODE"))
+    allowed = {"MAVPROXY", "SYNTHETIC"}
+
+    if cli_mode and cli_mode not in allowed:
+        raise ValueError(f"Invalid --mode '{cli_mode}', must be MAVPROXY or SYNTHETIC")
+    if env_mode and env_mode not in allowed:
+        raise ValueError(f"Invalid BENCHMARK_MODE '{env_mode}', must be MAVPROXY or SYNTHETIC")
+    if cli_mode and env_mode and cli_mode != env_mode:
+        raise RuntimeError(f"BENCHMARK_MODE conflict: cli={cli_mode} env={env_mode}")
+
+    return cli_mode or env_mode or default_mode
+
 PAYLOAD_SIZE = 1200
 DEFAULT_RATE_MBPS = 110.0
 
@@ -506,9 +530,10 @@ class GcsBenchmarkServer:
         shutdown: Graceful shutdown
     """
     
-    def __init__(self, logs_dir: Path, run_id: str, enable_gui: bool = True):
+    def __init__(self, logs_dir: Path, run_id: str, enable_gui: bool = True, mode: str = "MAVPROXY"):
         self.logs_dir = logs_dir
         self.run_id = run_id
+        self.mode = mode
         
         # Components
         self.proxy = GcsProxyManager(logs_dir)
@@ -535,6 +560,9 @@ class GcsBenchmarkServer:
         self.suite_log = self.logs_dir / "gcs_suite_metrics.jsonl"
 
         self._handshake_timeout_s = 45.0
+        self._shutdown_reason: Optional[str] = None
+        self._shutdown_error: bool = False
+        self._cleanup_done: bool = False
     
     def start(self):
         """Start the benchmark server."""
@@ -551,6 +579,12 @@ class GcsBenchmarkServer:
         # Start MAVProxy with GUI
         if not self.mavproxy.start():
             log("[WARNING] MAVProxy failed to start - continuing without it")
+        if self.mode == "MAVPROXY" and not self.mavproxy.is_running():
+            self._shutdown_reason = "error: mavproxy_not_running"
+            self._shutdown_error = True
+            log("MAVProxy-only mode requires MAVProxy to be running; aborting", "ERROR")
+            self.shutdown(self._shutdown_reason, error=True)
+            return
         
         log(f"GCS Benchmark Server listening on {GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}")
         log(f"Run ID: {self.run_id}")
@@ -648,10 +682,12 @@ class GcsBenchmarkServer:
             )
             self.handshake_start_time = time.time()
             
-            # Ensure MAVProxy is running (restart if crashed)
+            # Ensure MAVProxy is running (no restarts in MAVProxy-only mode)
             if not self.mavproxy.is_running():
-                 log("[MAVPROXY] Restarting crashed/stopped MAVProxy instance...")
-                 self.mavproxy.start()
+                if self.mode == "MAVPROXY":
+                    return {"status": "error", "message": "mavproxy_not_running"}
+                log("[MAVPROXY] Restarting crashed/stopped MAVProxy instance...")
+                self.mavproxy.start()
             
             # Start proxy
             if not self.proxy.start(suite):
@@ -680,6 +716,8 @@ class GcsBenchmarkServer:
         
         elif cmd == "start_traffic":
             log("CMD: start_traffic")
+            if self.mode == "MAVPROXY":
+                return {"status": "error", "message": "traffic_generation_disabled"}
             try:
                 self.traffic_gen.start()
             except Exception:
@@ -688,6 +726,8 @@ class GcsBenchmarkServer:
 
         elif cmd == "stop_traffic":
             log("CMD: stop_traffic")
+            if self.mode == "MAVPROXY":
+                return {"status": "error", "message": "traffic_generation_disabled"}
             try:
                 self.traffic_gen.stop()
             except Exception:
@@ -796,6 +836,14 @@ class GcsBenchmarkServer:
         
         if self.thread:
             self.thread.join(timeout=2.0)
+        self._cleanup_done = True
+
+    def shutdown(self, reason: str, *, error: bool) -> None:
+        if self._cleanup_done:
+            return
+        level = "ERROR" if error else "INFO"
+        log(f"Shutdown reason: {reason}", level)
+        self.stop()
 
     def _read_proxy_status(self) -> Dict[str, Any]:
         status_path = self.logs_dir / "gcs_status.json"
@@ -833,7 +881,12 @@ def main():
                         help="Disable MAVProxy GUI (map + console)")
     parser.add_argument("--log-dir", type=str,
                         help="Override base log directory for this run")
+    parser.add_argument("--mode", type=str,
+                        help="Benchmark mode: MAVPROXY or SYNTHETIC")
     args = parser.parse_args()
+
+    args.mode_resolved = resolve_benchmark_mode(args.mode, default_mode="MAVPROXY")
+    log(f"BENCHMARK_MODE resolved to {args.mode_resolved}")
 
     if args.log_dir:
         LOGS_DIR = Path(args.log_dir).expanduser().resolve()
@@ -852,12 +905,13 @@ def main():
     server = GcsBenchmarkServer(
         logs_dir=run_logs_dir,
         run_id=run_id,
-        enable_gui=not args.no_gui
+        enable_gui=not args.no_gui,
+        mode=args.mode_resolved,
     )
 
     def _atexit_cleanup():
         try:
-            server.stop()
+            server.shutdown("normal: atexit", error=False)
         except Exception:
             pass
 
@@ -866,7 +920,7 @@ def main():
     # Handle signals
     def signal_handler(sig, frame):
         log("Interrupt received, stopping...")
-        server.stop()
+        server.shutdown("normal: interrupted", error=False)
         sys.exit(0)
     
     signal.signal(signal.SIGINT, signal_handler)
@@ -886,7 +940,7 @@ def main():
             time.sleep(1.0)
     except KeyboardInterrupt:
         log("Stopping...")
-        server.stop()
+        server.shutdown("normal: interrupted", error=False)
 
 if __name__ == "__main__":
     main()

@@ -1006,7 +1006,10 @@ def main():
 
     if args.log_dir:
         LOGS_DIR = Path(args.log_dir).expanduser().resolve()
-        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    else:
+        # Default: use the base logs directory with a timestamped run folder
+        LOGS_DIR = _LOGS_DIR_BASE / f"live_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
     
     # NOTE: GUI is always enabled for benchmark runs (map + console)
     

@@ -54,6 +54,15 @@ from core.metrics_aggregator import MetricsAggregator
 # NOTE: GCS system resource metrics removed per POLICY REALIGNMENT
 # GCS is non-constrained observer; only validation metrics retained
 
+# Import RobustLogger for aggressive append-mode logging
+try:
+    from core.robust_logger import RobustLogger, SyncTracker
+    HAS_ROBUST_LOGGER = True
+except ImportError:
+    HAS_ROBUST_LOGGER = False
+    RobustLogger = None
+    SyncTracker = None
+
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -73,12 +82,10 @@ QGC_PORT = 14550            # Output for QGC/Local tools
 
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
 ROOT = Path(__file__).parent.parent
-SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
-ROOT = Path(__file__).parent.parent
-# Dynamic log directory based on timestamp
-_TS = time.strftime("%Y%m%d_%H%M%S")
-LOGS_DIR = ROOT / "logs" / "benchmarks" / f"live_run_{_TS}"
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
+# Note: LOGS_DIR is now set dynamically when drone sends run_id
+# to ensure consistent log directory between GCS and drone
+_LOGS_DIR_BASE = ROOT / "logs" / "benchmarks"
+LOGS_DIR: Path = None  # Set dynamically in GcsBenchmarkServer
 
 # =============================================================================
 # Mode Resolution (identical logic across schedulers)
@@ -531,13 +538,21 @@ class GcsBenchmarkServer:
     """
     
     def __init__(self, logs_dir: Path, run_id: str, enable_gui: bool = True, mode: str = "MAVPROXY"):
+        global LOGS_DIR
+        
         self.logs_dir = logs_dir
         self.run_id = run_id
         self.mode = mode
+        self._active_run_id = run_id  # Track the active run_id from drone
+        
+        # Set LOGS_DIR based on run_id
+        LOGS_DIR = _LOGS_DIR_BASE / f"live_run_{run_id}"
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        self.logs_dir = LOGS_DIR
         
         # Components
-        self.proxy = GcsProxyManager(logs_dir)
-        self.mavproxy = GcsMavProxyManager(logs_dir, enable_gui=enable_gui)
+        self.proxy = GcsProxyManager(self.logs_dir)
+        self.mavproxy = GcsMavProxyManager(self.logs_dir, enable_gui=enable_gui)
         self.mavlink_monitor = MavLinkMetricsCollector(role="gcs") if HAS_PYMAVLINK else None
         self.mavlink_available = HAS_PYMAVLINK
         self.clock_sync = ClockSync()
@@ -548,6 +563,22 @@ class GcsBenchmarkServer:
         )
         self.metrics_aggregator.set_run_id(run_id)
         self.traffic_gen = UdpTrafficGenerator("127.0.0.1", GCS_PLAIN_TX_PORT)
+        
+        # Initialize sync tracker and robust logger (aggressive append-mode)
+        self.sync_tracker = None
+        self.robust_logger = None
+        if HAS_ROBUST_LOGGER:
+            try:
+                self.sync_tracker = SyncTracker()
+                self.robust_logger = RobustLogger(
+                    run_id=run_id,
+                    role="gcs",
+                    base_dir=_LOGS_DIR_BASE,
+                    sync_tracker=self.sync_tracker,
+                )
+                log("RobustLogger initialized for aggressive append-mode logging")
+            except Exception as e:
+                log(f"RobustLogger init failed: {e}", "WARN")
         
         # Server state
         self.server_sock: Optional[socket.socket] = None
@@ -563,6 +594,46 @@ class GcsBenchmarkServer:
         self._shutdown_reason: Optional[str] = None
         self._shutdown_error: bool = False
         self._cleanup_done: bool = False
+    
+    def _update_run_id(self, new_run_id: str):
+        """Update log directory when drone sends its run_id."""
+        global LOGS_DIR
+        
+        if new_run_id == self._active_run_id:
+            return  # No change needed
+        
+        log(f"Updating run_id from {self._active_run_id} to {new_run_id}")
+        self._active_run_id = new_run_id
+        
+        # Update LOGS_DIR
+        LOGS_DIR = _LOGS_DIR_BASE / f"live_run_{new_run_id}"
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        self.logs_dir = LOGS_DIR
+        
+        # Reinitialize components with new directory
+        self.proxy = GcsProxyManager(self.logs_dir)
+        self.suite_log = self.logs_dir / "gcs_suite_metrics.jsonl"
+        
+        # Reinitialize metrics aggregator
+        self.metrics_aggregator = MetricsAggregator(
+            role="gcs",
+            output_dir=str(LOGS_DIR / "comprehensive")
+        )
+        self.metrics_aggregator.set_run_id(new_run_id)
+        
+        # Reinitialize robust logger
+        if HAS_ROBUST_LOGGER:
+            try:
+                if self.robust_logger:
+                    self.robust_logger.stop()
+                self.robust_logger = RobustLogger(
+                    run_id=new_run_id,
+                    role="gcs",
+                    base_dir=_LOGS_DIR_BASE,
+                    sync_tracker=self.sync_tracker,
+                )
+            except Exception as e:
+                log(f"RobustLogger reinit failed: {e}", "WARN")
     
     def start(self):
         """Start the benchmark server."""
@@ -655,7 +726,21 @@ class GcsBenchmarkServer:
             if not suite:
                 return {"status": "error", "message": "missing suite parameter"}
             
+            # Check if drone sent a run_id - use it to sync log directories
+            drone_run_id = request.get("run_id")
+            if drone_run_id and drone_run_id != self._active_run_id:
+                self._update_run_id(drone_run_id)
+            
             log(f"CMD: start_proxy({suite})")
+            
+            # Start robust logging for this suite
+            if self.robust_logger:
+                suite_config = get_suite(suite)
+                self.robust_logger.start_suite(suite, suite_config)
+                self.robust_logger.log_event("suite_started_from_drone", {
+                    "suite": suite,
+                    "drone_run_id": drone_run_id,
+                })
             
             # Reset MAVLink validation counters per suite by restarting collector
             if self.mavlink_monitor:
@@ -787,6 +872,17 @@ class GcsBenchmarkServer:
                 "metrics_export": gcs_export,
                 "proxy_status": proxy_status,
             }
+            
+            # Log metrics incrementally using robust logger (AGGRESSIVE LOGGING)
+            if self.robust_logger:
+                if mavlink_validation:
+                    self.robust_logger.log_metrics_incremental("mavlink", mavlink_validation)
+                if latency_metrics:
+                    self.robust_logger.log_metrics_incremental("latency", latency_metrics)
+                if system_gcs:
+                    self.robust_logger.log_metrics_incremental("system", system_gcs)
+                # End suite in robust logger
+                self.robust_logger.end_suite(success=True)
 
             self.metrics_aggregator.record_control_plane_metrics(
                 scheduler_action_type=cmd,
@@ -796,22 +892,37 @@ class GcsBenchmarkServer:
             )
             self.metrics_aggregator.finalize_suite()
 
-            try:
-                with open(self.suite_log, "a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(payload) + "\n")
-            except Exception:
-                pass
+            # Write to JSONL with retry (AGGRESSIVE LOGGING)
+            for attempt in range(3):
+                try:
+                    with open(self.suite_log, "a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(payload) + "\n")
+                        fh.flush()
+                        import os
+                        os.fsync(fh.fileno())
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        time.sleep(0.5)
+                    else:
+                        log(f"Failed to write suite log after 3 attempts: {e}", "WARN")
 
             return payload
         
-        elif cmd == "shutdown":
-            log("CMD: shutdown")
-            self.stop()
-            return {"status": "ok", "message": "shutting_down"}
-
         elif cmd == "chronos_sync":
             try:
                 resp = self.clock_sync.server_handle_sync(request)
+                # Record sync in robust logger
+                if self.sync_tracker and self.robust_logger:
+                    # Extract offset from response
+                    t1 = request.get("t1", 0)
+                    t2 = resp.get("t2", 0)
+                    t3 = resp.get("t3", 0)
+                    if t1 and t2 and t3:
+                        # GCS is the server, so we record from its perspective
+                        self.robust_logger.log_event("clock_sync_served", {
+                            "t1": t1, "t2": t2, "t3": t3,
+                        })
                 return resp
             except Exception as e:
                 return {"status": "error", "message": str(e)}
@@ -830,6 +941,11 @@ class GcsBenchmarkServer:
         
         self.proxy.stop()
         self.mavproxy.stop()
+        
+        # Stop robust logger (flushes all buffered data)
+        if self.robust_logger:
+            self.robust_logger.log_event("server_shutdown", {"reason": self._shutdown_reason})
+            self.robust_logger.stop()
         
         if self.server_sock:
             self.server_sock.close()

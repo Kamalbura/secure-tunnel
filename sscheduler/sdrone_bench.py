@@ -49,6 +49,15 @@ except ImportError:
     HAS_METRICS_AGGREGATOR = False
     MetricsAggregator = None
 
+# Import RobustLogger for aggressive append-mode logging
+try:
+    from core.robust_logger import RobustLogger, SyncTracker
+    HAS_ROBUST_LOGGER = True
+except ImportError:
+    HAS_ROBUST_LOGGER = False
+    RobustLogger = None
+    SyncTracker = None
+
 # Extract config values
 DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
 GCS_HOST = str(CONFIG.get("GCS_HOST"))
@@ -62,12 +71,14 @@ DRONE_PLAIN_TX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_TX", 47003))
 
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
 ROOT = Path(__file__).resolve().parents[1]
-SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
-ROOT = Path(__file__).resolve().parents[1]
-# Dynamic log directory based on timestamp
-_TS = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-LOGS_DIR = ROOT / "logs" / "benchmarks" / f"live_run_{_TS}"
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
+# Note: LOGS_DIR is now set dynamically in BenchmarkScheduler.__init__
+# to ensure consistent run_id between drone and GCS
+_LOGS_DIR_BASE = ROOT / "logs" / "benchmarks"
+LOGS_DIR: Path = None  # Set in BenchmarkScheduler.__init__
+
+# Re-sync clock every N suites or N seconds
+CLOCK_SYNC_INTERVAL_SUITES = 10
+CLOCK_SYNC_INTERVAL_SECONDS = 1200  # 20 minutes
 
 # =============================================================================
 # Mode Resolution (identical logic across schedulers)
@@ -343,6 +354,8 @@ class BenchmarkScheduler:
     """Main benchmark scheduler orchestrating suite cycling."""
     
     def __init__(self, args):
+        global LOGS_DIR
+        
         self.args = args
         self.mode = getattr(args, "mode_resolved", None) or resolve_benchmark_mode(
             getattr(args, "mode", None),
@@ -358,11 +371,19 @@ class BenchmarkScheduler:
         self._shutdown_error: bool = False
         self._cleanup_done: bool = False
         
+        # Track clock sync timing
+        self._last_sync_suite_idx = 0
+        self._last_sync_mono = time.monotonic()
+        
         # Initialize benchmark policy
         self.policy = BenchmarkPolicy(
             cycle_interval_s=args.interval,
             filter_aead=args.filter_aead
         )
+        
+        # Set up LOGS_DIR with consistent run_id (drone is the master)
+        LOGS_DIR = _LOGS_DIR_BASE / f"live_run_{self.policy.run_id}"
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
         
         # Limit suites if requested
         if args.max_suites and args.max_suites < len(self.policy.suite_list):
@@ -373,6 +394,22 @@ class BenchmarkScheduler:
         self.results_file = LOGS_DIR / f"benchmark_{self.policy.run_id}.jsonl"
         self.summary_file = LOGS_DIR / f"benchmark_summary_{self.policy.run_id}.json"
         self.gcs_results_file = LOGS_DIR / f"benchmark_gcs_{self.policy.run_id}.jsonl"
+        
+        # Initialize sync tracker and robust logger (aggressive append-mode)
+        self.sync_tracker = None
+        self.robust_logger = None
+        if HAS_ROBUST_LOGGER:
+            try:
+                self.sync_tracker = SyncTracker()
+                self.robust_logger = RobustLogger(
+                    run_id=self.policy.run_id,
+                    role="drone",
+                    base_dir=_LOGS_DIR_BASE,
+                    sync_tracker=self.sync_tracker,
+                )
+                log("RobustLogger initialized for aggressive append-mode logging")
+            except Exception as e:
+                log(f"RobustLogger init failed: {e}", "WARN")
         
         # Initialize comprehensive metrics aggregator (drone side)
         self.metrics_aggregator = None
@@ -414,23 +451,13 @@ class BenchmarkScheduler:
         log("Waiting for GCS control server...")
         if not wait_for_gcs(timeout=60.0):
             log("GCS not available, aborting", "ERROR")
+            if self.robust_logger:
+                self.robust_logger.log_event("gcs_unavailable", {"timeout": 60.0})
             return
         log("GCS connected")
 
-        # Clock sync with GCS
-        try:
-            t1 = time.time()
-            resp = send_gcs_command("chronos_sync", t1=t1)
-            t4 = time.time()
-            if resp.get("status") == "ok":
-                offset = self.clock_sync.update_from_rpc(t1, t4, resp)
-                log(f"Clock sync offset (gcs-drone): {offset:.6f}s")
-                if self.metrics_aggregator:
-                    self.metrics_aggregator.set_clock_offset(offset, method="chronos")
-            else:
-                log(f"Clock sync failed: {resp}", "WARN")
-        except Exception as e:
-            log(f"Clock sync error: {e}", "WARN")
+        # Initial clock sync with GCS
+        self._perform_clock_sync()
         
         # Start MAVProxy
         log("Starting MAVProxy...")
@@ -554,8 +581,21 @@ class BenchmarkScheduler:
         """Activate a suite on both drone and GCS."""
         log(f"Activating suite: {suite_name}")
         
+        # Check if we should re-sync clocks
+        if self._should_resync():
+            log("Performing periodic clock re-sync...")
+            self._perform_clock_sync()
+        
         # Get suite config for metrics
         suite_config = self.policy.all_suites.get(suite_name, {})
+        
+        # Start robust logging for this suite (aggressive append-mode)
+        if self.robust_logger:
+            self.robust_logger.start_suite(suite_name, suite_config)
+            self.robust_logger.log_event("suite_activation_started", {
+                "suite_index": self.policy.current_index,
+                "total_suites": len(self.policy.suite_list),
+            })
         
         # Start comprehensive metrics collection
         if self.metrics_aggregator:
@@ -584,6 +624,9 @@ class BenchmarkScheduler:
         resp = send_gcs_command("start_proxy", suite=suite_name, run_id=self.policy.run_id)
         if resp.get("status") != "ok":
             log(f"GCS rejected: {resp}", "ERROR")
+            if self.robust_logger:
+                self.robust_logger.log_event("gcs_rejected", {"response": resp})
+                self.robust_logger.end_suite(success=False, error="gcs_rejected")
             self._finalize_metrics(success=False, error="gcs_rejected")
             return False
         
@@ -592,6 +635,9 @@ class BenchmarkScheduler:
         # Start drone proxy
         if not self.proxy.start(suite_name):
             log("Drone proxy failed to start", "ERROR")
+            if self.robust_logger:
+                self.robust_logger.log_event("proxy_start_failed", {})
+                self.robust_logger.end_suite(success=False, error="proxy_start_failed")
             self._finalize_metrics(success=False, error="proxy_start_failed")
             return False
         
@@ -605,6 +651,21 @@ class BenchmarkScheduler:
             
             handshake_ms = metrics.get("rekey_ms", 0)
             log(f"  Handshake OK: {handshake_ms:.1f}ms")
+            
+            # Log handshake metrics incrementally (AGGRESSIVE LOGGING)
+            if self.robust_logger:
+                self.robust_logger.log_metrics_incremental("handshake", {
+                    "handshake_ms": handshake_ms,
+                    "rekey_ms": metrics.get("rekey_ms", 0),
+                    "kem_keygen_ms": metrics.get("kem_keygen_max_ms", 0),
+                    "kem_encaps_ms": metrics.get("kem_encaps_max_ms", 0),
+                    "kem_decaps_ms": metrics.get("kem_decaps_max_ms", 0),
+                    "sig_sign_ms": metrics.get("sig_sign_max_ms", 0),
+                    "sig_verify_ms": metrics.get("sig_verify_max_ms", 0),
+                    "pub_key_size_bytes": metrics.get("pub_key_size_bytes", 0),
+                    "ciphertext_size_bytes": metrics.get("ciphertext_size_bytes", 0),
+                    "sig_size_bytes": metrics.get("sig_size_bytes", 0),
+                })
             
             # Record crypto primitives in aggregator
             if self.metrics_aggregator:
@@ -629,6 +690,9 @@ class BenchmarkScheduler:
             return True
         else:
             log(f"  Handshake timeout/failed", "WARN")
+            if self.robust_logger:
+                self.robust_logger.log_event("handshake_failed", {"status": status})
+                self.robust_logger.end_suite(success=False, error="handshake_timeout")
             if self.metrics_aggregator:
                 try:
                     self.metrics_aggregator.record_handshake_end(success=False, failure_reason="handshake_timeout")
@@ -638,6 +702,49 @@ class BenchmarkScheduler:
             self._log_result(suite_name, {}, success=False, error="handshake_timeout")
             self._finalize_metrics(success=False, error="handshake_timeout")
             return False
+
+    def _perform_clock_sync(self) -> bool:
+        """Perform clock synchronization with GCS."""
+        try:
+            t1 = time.time()
+            resp = send_gcs_command("chronos_sync", t1=t1)
+            t4 = time.time()
+            if resp.get("status") == "ok":
+                offset = self.clock_sync.update_from_rpc(t1, t4, resp)
+                offset_ms = offset * 1000.0
+                log(f"Clock sync offset (gcs-drone): {offset:.6f}s ({offset_ms:.2f}ms)")
+                
+                # Update metrics aggregator
+                if self.metrics_aggregator:
+                    self.metrics_aggregator.set_clock_offset(offset, method="chronos")
+                
+                # Update robust logger sync tracker
+                if self.sync_tracker:
+                    self.sync_tracker.record_sync(offset_ms, method="chronos")
+                if self.robust_logger:
+                    self.robust_logger.record_sync(offset_ms, method="chronos")
+                
+                # Update tracking
+                self._last_sync_suite_idx = self.policy.current_index
+                self._last_sync_mono = time.monotonic()
+                return True
+            else:
+                log(f"Clock sync failed: {resp}", "WARN")
+                if self.robust_logger:
+                    self.robust_logger.log_event("clock_sync_failed", {"response": resp})
+                return False
+        except Exception as e:
+            log(f"Clock sync error: {e}", "WARN")
+            if self.robust_logger:
+                self.robust_logger.log_event("clock_sync_error", {"error": str(e)})
+            return False
+    
+    def _should_resync(self) -> bool:
+        """Check if we should re-sync clocks."""
+        suites_since = self.policy.current_index - self._last_sync_suite_idx
+        time_since = time.monotonic() - self._last_sync_mono
+        return (suites_since >= CLOCK_SYNC_INTERVAL_SUITES or 
+                time_since >= CLOCK_SYNC_INTERVAL_SECONDS)
 
     def _ready_to_advance(self) -> bool:
         """Return True when suite can advance."""
@@ -684,31 +791,49 @@ class BenchmarkScheduler:
     
     def _finalize_metrics(self, success: bool, error: str = "", gcs_metrics: Dict = None):
         """Finalize and save comprehensive metrics for current suite."""
+        # Read data plane metrics from proxy status file (allow a brief window for the status writer to run)
+        status_file = LOGS_DIR / "drone_status.json"
+        counters: Dict[str, Any] = {}
+        if status_file.exists():
+            for _ in range(3):  # up to ~3s total
+                try:
+                    with open(status_file, "r") as f:
+                        status_data = json.load(f)
+                    candidate = status_data.get("counters", {})
+                    counters = candidate or counters
+                    # Break early if counters are present and non-empty
+                    if candidate:
+                        break
+                except Exception:
+                    pass
+                time.sleep(1.0)
+        
+        # Log data plane metrics incrementally (AGGRESSIVE LOGGING)
+        if counters and self.robust_logger:
+            self.robust_logger.log_metrics_incremental("data_plane", {
+                "ptx_in": counters.get("ptx_in", 0),
+                "ptx_out": counters.get("ptx_out", 0),
+                "enc_in": counters.get("enc_in", 0),
+                "enc_out": counters.get("enc_out", 0),
+            })
+            log(
+                "  Data plane: ptx_in=%s, enc_out=%s" %
+                (counters.get("ptx_in", 0), counters.get("enc_out", 0))
+            )
+        
+        # Log GCS metrics incrementally
+        if gcs_metrics and self.robust_logger:
+            self.robust_logger.log_metrics_incremental("gcs", gcs_metrics)
+        
+        # End suite in robust logger
+        if self.robust_logger:
+            self.robust_logger.end_suite(success=success, error=error)
+        
         if not self.metrics_aggregator:
             return
         try:
-            # Read data plane metrics from proxy status file (allow a brief window for the status writer to run)
-            status_file = LOGS_DIR / "drone_status.json"
-            counters: Dict[str, Any] = {}
-            if status_file.exists():
-                for _ in range(3):  # up to ~3s total
-                    try:
-                        with open(status_file, "r") as f:
-                            status_data = json.load(f)
-                        candidate = status_data.get("counters", {})
-                        counters = candidate or counters
-                        # Break early if counters are present and non-empty
-                        if candidate:
-                            break
-                    except Exception:
-                        pass
-                    time.sleep(1.0)
             if counters:
                 self.metrics_aggregator.record_data_plane_metrics(counters)
-                log(
-                    "  Data plane: ptx_in=%s, enc_out=%s" %
-                    (counters.get("ptx_in", 0), counters.get("enc_out", 0))
-                )
             
             # NOTE: record_handshake_end() is NOT called here.
             # It was already called in _activate_suite() immediately after handshake completion.
@@ -839,6 +964,10 @@ class BenchmarkScheduler:
             self.proxy.stop()
         if self.mavproxy_proc:
             self.mavproxy_proc.stop()
+        # Stop robust logger (flushes all buffered data)
+        if self.robust_logger:
+            self.robust_logger.log_event("benchmark_cleanup", {"reason": self._shutdown_reason})
+            self.robust_logger.stop()
         self._cleanup_done = True
 
     def _shutdown(self, reason: str, *, error: bool) -> None:

@@ -3,6 +3,7 @@ import glob
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from datetime import datetime, timedelta
 
 try:
     from .models import (
@@ -24,6 +25,9 @@ logger = logging.getLogger(__name__)
 LOGS_DIR = Path("logs/benchmarks")
 COMPREHENSIVE_DIR = LOGS_DIR / "comprehensive"
 GCS_METRICS_GLOB = str(LOGS_DIR / "**" / "gcs_suite_metrics.jsonl")
+
+# Strict filter for specific demo run
+STRICT_RUN_FILTER = "20260205_145749"
 
 
 class MetricsStore:
@@ -139,6 +143,101 @@ def _parse_comprehensive_filename(path: Path) -> Optional[tuple]:
     if role not in {"gcs", "drone"}:
         return None
     return suite_id, run_id, role
+
+
+def _parse_run_id(run_id: str) -> Optional[datetime]:
+    """Parse run_id timestamp (YYYYMMDD_HHMMSS)."""
+    try:
+        # Expected format: 20260205_043852
+        return datetime.strptime(run_id, "%Y%m%d_%H%M%S")
+    except ValueError:
+        return None
+
+
+def _consolidate_runs(
+    suites: Dict[str, ComprehensiveSuiteMetrics],
+    time_threshold: timedelta = timedelta(minutes=5)
+) -> Dict[str, ComprehensiveSuiteMetrics]:
+    """
+    Consolidate runs that are within `time_threshold` of each other.
+    
+    This fixes the issue where distributed benchmarks output files with slightly 
+    different timestamps, causing them to appear as fragmented runs.
+    """
+    if not suites:
+        return suites
+
+    # 1. Group run IDs by time
+    run_ids = set()
+    for s in suites.values():
+        if s.run_context.run_id:
+            run_ids.add(s.run_context.run_id)
+    
+    sorted_runs = []
+    for rid in run_ids:
+        dt = _parse_run_id(rid)
+        if dt:
+            sorted_runs.append((dt, rid))
+    
+    # Sort by time ascending
+    sorted_runs.sort(key=lambda x: x[0])
+
+    if not sorted_runs:
+        return suites
+
+    # 2. Cluster runs
+    # Map original_run_id -> canonical_run_id
+    run_map: Dict[str, str] = {}
+    
+    current_canonical_id = sorted_runs[0][1]
+    
+    run_map[current_canonical_id] = current_canonical_id
+    
+    for i in range(1, len(sorted_runs)):
+        dt, rid = sorted_runs[i]
+        prev_dt, _ = sorted_runs[i-1]
+        
+        # Check gap from PREVIOUS run (single-linkage), not cluster start.
+        # This handles long benchmarks where timestamps might drift sequentially.
+        if dt - prev_dt <= time_threshold:
+            # Within window of previous item - map to current canonical
+            run_map[rid] = current_canonical_id
+        else:
+            # Gap > threshold -> New cluster
+            current_canonical_id = rid
+            run_map[rid] = current_canonical_id
+
+    # 3. Remap suites
+    consolidated_suites: Dict[str, ComprehensiveSuiteMetrics] = {}
+    
+    for original_key, suite in suites.items():
+        original_run_id = suite.run_context.run_id
+        suite_id = suite.run_context.suite_id
+        
+        # If run_id didn't parse or wasn't mapped, keep original
+        if not original_run_id or original_run_id not in run_map:
+            consolidated_suites[original_key] = suite
+            continue
+            
+        canonical_run_id = run_map[original_run_id]
+        
+        # Update suite context
+        suite.run_context.run_id = canonical_run_id
+        
+        # New key
+        new_key = f"{canonical_run_id}:{suite_id}"
+        
+        # Collision handling: 
+        # If we have a collision (e.g. same suite ID in two merged timestamps),
+        # we generally prefer the 'later' one or the one we just processed.
+        # Since we're iterating in arbitrary dictionary order, let's just overwrite for now.
+        # Real duplicates shouldn't happen often in this specific benchmark flow unless retried.
+        consolidated_suites[new_key] = suite
+
+    log_msg = f"Consolidated {len(suites)} suites into {len(consolidated_suites)} unique suites across {len(set(run_map.values()))} logical runs."
+    logger.info(log_msg)
+    
+    return consolidated_suites
 
 
 def _build_invalid_suite(
@@ -312,18 +411,79 @@ def _merge_gcs_metrics(
         system_gcs = entry.get("system_gcs")
         if isinstance(system_gcs, dict):
             validation["system_gcs"] = system_gcs
+            # Map GCS system metrics into primary suite fields if missing
+            sg = suite.system_gcs
+            if sg.cpu_usage_avg_percent is None:
+                sg.cpu_usage_avg_percent = system_gcs.get("cpu_usage_avg_percent")
+            if sg.cpu_usage_peak_percent is None:
+                sg.cpu_usage_peak_percent = system_gcs.get("cpu_usage_peak_percent")
+            if sg.cpu_freq_mhz is None:
+                sg.cpu_freq_mhz = system_gcs.get("cpu_freq_mhz")
+            if sg.memory_rss_mb is None:
+                sg.memory_rss_mb = system_gcs.get("memory_rss_mb")
+            if sg.memory_vms_mb is None:
+                sg.memory_vms_mb = system_gcs.get("memory_vms_mb")
+            if sg.thread_count is None:
+                sg.thread_count = system_gcs.get("thread_count")
+            if sg.temperature_c is None:
+                sg.temperature_c = system_gcs.get("temperature_c")
+            if sg.uptime_s is None:
+                sg.uptime_s = system_gcs.get("uptime_s")
+            if sg.load_avg_1m is None:
+                sg.load_avg_1m = system_gcs.get("load_avg_1m")
+            if sg.load_avg_5m is None:
+                sg.load_avg_5m = system_gcs.get("load_avg_5m")
+            if sg.load_avg_15m is None:
+                sg.load_avg_15m = system_gcs.get("load_avg_15m")
 
         latency_jitter = entry.get("latency_jitter")
         if isinstance(latency_jitter, dict):
             validation["latency_jitter"] = latency_jitter
+            # Map GCS latency metrics into primary suite fields if missing
+            lj = suite.latency_jitter
+            if lj.one_way_latency_avg_ms is None:
+                lj.one_way_latency_avg_ms = latency_jitter.get("one_way_latency_avg_ms")
+            if lj.one_way_latency_p95_ms is None:
+                lj.one_way_latency_p95_ms = latency_jitter.get("one_way_latency_p95_ms")
+            if lj.jitter_avg_ms is None:
+                lj.jitter_avg_ms = latency_jitter.get("jitter_avg_ms")
+            if lj.jitter_p95_ms is None:
+                lj.jitter_p95_ms = latency_jitter.get("jitter_p95_ms")
+            if lj.latency_sample_count is None:
+                lj.latency_sample_count = latency_jitter.get("latency_sample_count")
+            if not lj.latency_invalid_reason:
+                lj.latency_invalid_reason = latency_jitter.get("latency_invalid_reason")
+            if lj.one_way_latency_valid is None:
+                lj.one_way_latency_valid = latency_jitter.get("one_way_latency_valid")
+
+            if lj.rtt_avg_ms is None:
+                lj.rtt_avg_ms = latency_jitter.get("rtt_avg_ms")
+            if lj.rtt_p95_ms is None:
+                lj.rtt_p95_ms = latency_jitter.get("rtt_p95_ms")
+            if lj.rtt_sample_count is None:
+                lj.rtt_sample_count = latency_jitter.get("rtt_sample_count")
+            if not lj.rtt_invalid_reason:
+                lj.rtt_invalid_reason = latency_jitter.get("rtt_invalid_reason")
+            if lj.rtt_valid is None:
+                lj.rtt_valid = latency_jitter.get("rtt_valid")
 
         mavlink_validation = entry.get("mavlink_validation")
         if isinstance(mavlink_validation, dict):
             validation["mavlink_validation"] = mavlink_validation
+            # Map GCS MAVLink validation into primary suite fields if missing
+            mg = suite.mavproxy_gcs
+            if mg.mavproxy_gcs_total_msgs_received is None:
+                mg.mavproxy_gcs_total_msgs_received = mavlink_validation.get("total_msgs_received")
+            if mg.mavproxy_gcs_seq_gap_count is None:
+                mg.mavproxy_gcs_seq_gap_count = mavlink_validation.get("seq_gap_count")
 
         proxy_status = entry.get("proxy_status")
         if isinstance(proxy_status, dict):
             validation["proxy_status"] = proxy_status
+            # Map proxy counters into data plane if missing
+            counters = proxy_status.get("counters") if isinstance(proxy_status.get("counters"), dict) else None
+            if counters and suite.data_plane.packets_sent is None:
+                _apply_proxy_counters_to_data_plane(suite, counters)
 
 
 def _apply_proxy_counters_to_data_plane(
@@ -487,6 +647,18 @@ def _build_runs(suites: Dict[str, ComprehensiveSuiteMetrics]) -> Dict[str, RunSu
 def build_store() -> MetricsStore:
     load_errors: List[tuple] = []
     suites = _load_comprehensive(load_errors)
+    
+    # Consolidate runs before processing
+    suites = _consolidate_runs(suites)
+
+    if STRICT_RUN_FILTER:
+        logger.info(f"Applying strict filter: {STRICT_RUN_FILTER}")
+        filtered = {}
+        for k, v in suites.items():
+            # Check if canonical run_id matches filter
+            if v.run_context.run_id == STRICT_RUN_FILTER:
+                filtered[k] = v
+        suites = filtered
 
     gcs_entries = _load_gcs_jsonl_entries(load_errors)
     if gcs_entries:

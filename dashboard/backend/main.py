@@ -43,7 +43,7 @@ app.add_middleware(
 class RunLabelRequest(BaseModel):
     run_id: str
     label: str
-    run_type: str  # baseline | ddos_light | ddos_heavy
+    run_type: str  # no_ddos | ddos_xgboost | ddos_txt
 
 class ActiveRunsRequest(BaseModel):
     run_ids: List[str]
@@ -62,16 +62,20 @@ def read_root():
 # ── Settings endpoints ───────────────────────────────────────────────────────
 
 @app.get("/api/settings")
-def get_settings(min_suites: int = 20):
+def get_settings():
     """Return all dashboard settings including run labels, active runs, thresholds."""
     ss = get_settings_store()
     store = get_store()
     settings = ss.get_all()
-    # Attach available runs from data, filtered to only significant runs
+    # Attach ALL available runs — only 3-folder data is loaded now, no min_suites filter needed
     all_runs = store.list_runs()
-    settings["available_runs"] = [
-        r.model_dump() for r in all_runs if r.suite_count >= min_suites
-    ]
+    run_dicts = []
+    for r in all_runs:
+        d = r.model_dump()
+        d["run_type"] = store.get_run_type(r.run_id)
+        run_dicts.append(d)
+    settings["available_runs"] = run_dicts
+    settings["scenario_status"] = store.get_scenario_status()
     return settings
 
 @app.post("/api/settings/run-label")
@@ -117,11 +121,11 @@ def multi_run_compare(suite_id: str):
         suite = store.get_suite_by_key(key)
         if suite is None:
             continue
-        label_info = ss.get_run_label(run_id) or {"label": run_id, "type": "baseline"}
+        label_info = ss.get_run_label(run_id) or {"label": run_id, "type": store.get_run_type(run_id)}
         results.append({
             "run_id": run_id,
             "label": label_info.get("label", run_id),
-            "run_type": label_info.get("type", "baseline"),
+            "run_type": store.get_run_type(run_id),
             "suite": suite.model_dump(),
         })
     if not results:
@@ -144,7 +148,7 @@ def multi_run_overview():
 
     overview = []
     for run_id in active:
-        label_info = ss.get_run_label(run_id) or {"label": run_id, "type": "baseline"}
+        label_info = ss.get_run_label(run_id) or {"label": run_id, "type": store.get_run_type(run_id)}
         suites_for_run = [
             s for s in store._suites.values()
             if s.run_context.run_id == run_id
@@ -169,7 +173,7 @@ def multi_run_overview():
         overview.append({
             "run_id": run_id,
             "label": label_info.get("label", run_id),
-            "run_type": label_info.get("type", "baseline"),
+            "run_type": store.get_run_type(run_id),
             "total_suites": total,
             "passed": passed,
             "failed": failed,

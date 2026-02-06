@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 
 SETTINGS_FILE = Path("dashboard_settings.json")
 
-# Default run type labels
+# Default run type labels — matches SCENARIO_MAP in ingest.py
 RUN_TYPES = {
-    "baseline": {"label": "Baseline (Normal)", "color": "#3b82f6", "order": 0},
-    "ddos_light": {"label": "DDoS Lightweight", "color": "#f59e0b", "order": 1},
-    "ddos_heavy": {"label": "DDoS Heavy", "color": "#ef4444", "order": 2},
+    "no_ddos":       {"label": "No DDoS (Baseline)", "color": "#3b82f6", "order": 0},
+    "ddos_xgboost":  {"label": "DDoS – XGBoost",     "color": "#f59e0b", "order": 1},
+    "ddos_txt":      {"label": "DDoS – TXT",          "color": "#ef4444", "order": 2},
 }
 
 

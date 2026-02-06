@@ -378,6 +378,8 @@ export interface RunSummary {
     drone_hostname: string | null;
     suite_count: number | null;
     git_commit_hash: string | null;
+    run_type?: string | null;
+    scenario_folder?: string | null;
 }
 
 export interface SchemaField {
@@ -433,7 +435,7 @@ export interface SuiteInventoryResponse {
 // SETTINGS & MULTI-RUN TYPES
 // =============================================================================
 
-export type RunType = 'baseline' | 'ddos_light' | 'ddos_heavy';
+export type RunType = 'no_ddos' | 'ddos_xgboost' | 'ddos_txt';
 
 export interface RunTypeInfo {
     label: string;
@@ -456,12 +458,22 @@ export interface AnomalyThresholds {
     [key: string]: number;
 }
 
+export interface ScenarioStatus {
+    run_type: string;
+    folder_exists: boolean;
+    file_count: number;
+    run_count: number;
+    suite_count: number;
+    run_ids: string[];
+}
+
 export interface DashboardSettings {
     run_labels: Record<string, RunLabel>;
     active_runs: string[];
     anomaly_thresholds: AnomalyThresholds;
     run_types: Record<RunType, RunTypeInfo>;
     available_runs: RunSummary[];
+    scenario_status?: Record<string, ScenarioStatus>;
 }
 
 export interface MultiRunOverviewItem {
@@ -516,13 +528,13 @@ export interface AnomalyResponse {
 
 // Run type colors for consistent UI theming
 export const RUN_TYPE_COLORS: Record<RunType, string> = {
-    baseline: '#3b82f6',
-    ddos_light: '#f59e0b',
-    ddos_heavy: '#ef4444',
+    no_ddos: '#3b82f6',
+    ddos_xgboost: '#f59e0b',
+    ddos_txt: '#ef4444',
 };
 
 export const RUN_TYPE_LABELS: Record<RunType, string> = {
-    baseline: 'Baseline (Normal)',
-    ddos_light: 'DDoS Lightweight',
-    ddos_heavy: 'DDoS Heavy',
+    no_ddos: 'No DDoS (Baseline)',
+    ddos_xgboost: 'DDoS – XGBoost',
+    ddos_txt: 'DDoS – TXT',
 };

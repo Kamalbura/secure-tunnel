@@ -466,6 +466,8 @@ class RunSummary(BaseModel):
     drone_hostname: Optional[str] = None
     suite_count: Optional[int] = None
     git_commit_hash: Optional[str] = None
+    run_type: Optional[str] = None        # no_ddos | ddos_xgboost | ddos_txt
+    scenario_folder: Optional[str] = None  # original folder name (no-ddos, ddos-xgboost, ddos-txt)
 
 
 class ComparisonResult(BaseModel):

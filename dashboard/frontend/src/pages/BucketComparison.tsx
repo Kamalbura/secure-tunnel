@@ -139,7 +139,7 @@ export default function BucketComparison() {
 
     // Run type info for header
     const runLabel = selectedRunId ? (runLabels[selectedRunId] as { label?: string; type?: RunType })?.label || selectedRunId : 'All Runs';
-    const runType = selectedRunId ? (runLabels[selectedRunId] as { type?: RunType })?.type || 'baseline' : undefined;
+    const runType = selectedRunId ? (runLabels[selectedRunId] as { type?: RunType })?.type || 'no_ddos' : undefined;
 
     return (
         <div className="space-y-6">

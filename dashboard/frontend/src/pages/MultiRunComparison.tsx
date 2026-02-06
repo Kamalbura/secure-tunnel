@@ -1,6 +1,6 @@
 /**
  * MultiRunComparison Page — Compare same suite across 3 run scenarios.
- * Baseline vs DDoS Lightweight vs DDoS Heavy — side-by-side.
+ * No DDoS vs DDoS XGBoost vs DDoS TXT — side-by-side.
  */
 
 import { useEffect, useState } from 'react';
@@ -155,7 +155,7 @@ export default function MultiRunComparison() {
                                                 <XAxis type="number" tick={{ fill: '#9ca3af', fontSize: 11 }} />
                                                 <YAxis type="category" dataKey="metric" hide />
                                                 <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }} />
-                                                {['baseline', 'ddos_light', 'ddos_heavy'].map(rt => (
+                                                {['no_ddos', 'ddos_xgboost', 'ddos_txt'].map(rt => (
                                                     <Bar key={rt} dataKey={rt} fill={RUN_TYPE_COLORS[rt as RunType]} name={RUN_TYPE_LABELS[rt as RunType]} barSize={18} />
                                                 ))}
                                             </BarChart>
@@ -175,7 +175,7 @@ export default function MultiRunComparison() {
                                     <PolarGrid stroke="#374151" />
                                     <PolarAngleAxis dataKey="metric" tick={{ fill: '#d1d5db', fontSize: 12 }} />
                                     <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: '#6b7280', fontSize: 10 }} />
-                                    {['baseline', 'ddos_light', 'ddos_heavy'].filter(rt => runs.some(r => r.run_type === rt)).map(rt => (
+                                    {['no_ddos', 'ddos_xgboost', 'ddos_txt'].filter(rt => runs.some(r => r.run_type === rt)).map(rt => (
                                         <Radar key={rt} name={RUN_TYPE_LABELS[rt as RunType]} dataKey={rt}
                                             stroke={RUN_TYPE_COLORS[rt as RunType]} fill={RUN_TYPE_COLORS[rt as RunType]}
                                             fillOpacity={0.15} strokeWidth={2} />

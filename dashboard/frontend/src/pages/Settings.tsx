@@ -4,10 +4,10 @@
 
 import { useEffect, useState } from 'react';
 import { useDashboardStore } from '../state/store';
-import type { RunType } from '../types/metrics';
+import type { RunType, ScenarioStatus } from '../types/metrics';
 import { RUN_TYPE_COLORS, RUN_TYPE_LABELS } from '../types/metrics';
 
-const RUN_TYPES: RunType[] = ['baseline', 'ddos_light', 'ddos_heavy'];
+const RUN_TYPES: RunType[] = ['no_ddos', 'ddos_xgboost', 'ddos_txt'];
 
 export default function Settings() {
     const {
@@ -40,7 +40,7 @@ export default function Settings() {
 
     const handleSaveLabel = (runId: string) => {
         const label = editLabel[runId] || runId;
-        const type = editType[runId] || 'baseline';
+        const type = editType[runId] || 'no_ddos';
         saveRunLabel(runId, label, type);
         setEditLabel(prev => { const n = { ...prev }; delete n[runId]; return n; });
         setEditType(prev => { const n = { ...prev }; delete n[runId]; return n; });
@@ -117,7 +117,7 @@ export default function Settings() {
                                         className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
                                     />
                                     <select
-                                        value={editType[run.run_id] ?? currentLabel?.type ?? 'baseline'}
+                                        value={editType[run.run_id] ?? currentLabel?.type ?? 'no_ddos'}
                                         onChange={e => setEditType(p => ({ ...p, [run.run_id]: e.target.value as RunType }))}
                                         className="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
                                     >
@@ -140,7 +140,7 @@ export default function Settings() {
                     })}
                     {availableRuns.length === 0 && (
                         <div className="text-gray-500 text-sm italic py-4 text-center">
-                            No benchmark runs detected. Place benchmark data in logs/benchmarks/comprehensive/.
+                            No benchmark runs detected. Place benchmark data in logs/benchmarks/runs/no-ddos/, ddos-xgboost/, or ddos-txt/.
                         </div>
                     )}
                 </div>
@@ -158,15 +158,62 @@ export default function Settings() {
                             <div>
                                 <div className="text-white text-sm font-medium">{RUN_TYPE_LABELS[t]}</div>
                                 <div className="text-gray-500 text-xs">
-                                    {t === 'baseline' && 'Normal operation — no attack vectors'}
-                                    {t === 'ddos_light' && 'Lightweight DDoS detection active'}
-                                    {t === 'ddos_heavy' && 'Full DDoS mitigation engaged'}
+                                    {t === 'no_ddos' && 'Normal operation — no attack vectors'}
+                                    {t === 'ddos_xgboost' && 'DDoS detection via XGBoost ML model'}
+                                    {t === 'ddos_txt' && 'DDoS detection via TXT-based rules'}
                                 </div>
                             </div>
                         </div>
                     ))}
                 </div>
             </section>
+
+            {/* ── Scenario Folder Status ── */}
+            {settings.scenario_status && (
+                <section className="card">
+                    <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                        <span className="text-green-400">📁</span> Scenario Folders
+                    </h2>
+                    <p className="text-gray-400 text-xs mb-4">
+                        Data is loaded exclusively from these 3 folders under <code className="text-gray-300">logs/benchmarks/runs/</code>.
+                    </p>
+                    <div className="grid grid-cols-3 gap-4">
+                        {Object.entries(settings.scenario_status).map(([folder, status]) => {
+                            const s = status as ScenarioStatus;
+                            const rt = s.run_type as RunType;
+                            const color = RUN_TYPE_COLORS[rt] || '#6b7280';
+                            return (
+                                <div key={folder} className="p-4 rounded-lg border border-gray-700 bg-gray-800/50">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+                                        <span className="text-white font-mono text-sm font-medium">{folder}/</span>
+                                    </div>
+                                    <div className="space-y-1 text-xs text-gray-400">
+                                        <div className="flex justify-between">
+                                            <span>Status</span>
+                                            <span className={s.folder_exists ? 'text-green-400' : 'text-red-400'}>
+                                                {s.folder_exists ? '✓ exists' : '✗ missing'}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>JSON files</span>
+                                            <span className="text-white">{s.file_count}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Runs</span>
+                                            <span className="text-white">{s.run_count}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Suites loaded</span>
+                                            <span className="text-white">{s.suite_count}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </section>
+            )}
 
             {/* ── Anomaly Thresholds ── */}
             <section className="card">

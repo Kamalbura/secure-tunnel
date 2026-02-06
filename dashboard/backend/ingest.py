@@ -27,7 +27,7 @@ COMPREHENSIVE_DIR = LOGS_DIR / "comprehensive"
 GCS_METRICS_GLOB = str(LOGS_DIR / "**" / "gcs_suite_metrics.jsonl")
 
 # Strict filter for specific demo run
-STRICT_RUN_FILTER = "20260205_145749"
+STRICT_RUN_FILTER = "20260206_032324"
 
 
 class MetricsStore:
@@ -79,13 +79,13 @@ class MetricsStore:
                     sig_algorithm=suite.crypto_identity.sig_algorithm,
                     aead_algorithm=suite.crypto_identity.aead_algorithm,
                     suite_security_level=suite.crypto_identity.suite_security_level,
-                    handshake_success=get_metric_value_for_summary(suite, "handshake.handshake_success"),
-                    handshake_total_duration_ms=get_metric_value_for_summary(suite, "handshake.handshake_total_duration_ms"),
-                    power_sensor_type=get_metric_value_for_summary(suite, "power_energy.power_sensor_type"),
-                    power_avg_w=get_metric_value_for_summary(suite, "power_energy.power_avg_w"),
-                    energy_total_j=get_metric_value_for_summary(suite, "power_energy.energy_total_j"),
+                    handshake_success=suite.handshake.handshake_success,
+                    handshake_total_duration_ms=suite.handshake.handshake_total_duration_ms,
+                    power_sensor_type=suite.power_energy.power_sensor_type,
+                    power_avg_w=suite.power_energy.power_avg_w,
+                    energy_total_j=suite.power_energy.energy_total_j,
                     benchmark_pass_fail=suite.validation.benchmark_pass_fail,
-                        ingest_status=suite.ingest_status,
+                    ingest_status=suite.ingest_status,
                 )
             )
 
@@ -129,19 +129,38 @@ def _load_json(path: Path, load_errors: List[tuple]) -> Dict[str, Any]:
 
 
 def _parse_comprehensive_filename(path: Path) -> Optional[tuple]:
-    """Return (suite_id, run_id, role) from `suite_runid_role.json`."""
+    """Return (suite_id, run_id, role) from comprehensive JSON filename.
+
+    Supports two naming patterns:
+      - {suite}_{date}_{time}_{role}.json   (legacy drone output)
+      - {date}_{time}_{suite}_{role}.json   (current GCS + drone output)
+
+    Detection: if the first two underscore-separated parts look like
+    YYYYMMDD (8 digits) and HHMMSS (6 digits), treat them as the run_id.
+    """
     if path.suffix.lower() != ".json":
         return None
     parts = path.stem.split("_")
     if len(parts) < 4:
         return None
     role = parts[-1]
-    time_part = parts[-2]
-    date_part = parts[-3]
-    run_id = f"{date_part}_{time_part}"
-    suite_id = "_".join(parts[:-3])
     if role not in {"gcs", "drone"}:
         return None
+
+    # Detect {date}_{time}_{suite}_{role} pattern
+    if (len(parts[0]) == 8 and parts[0].isdigit() and
+            len(parts[1]) == 6 and parts[1].isdigit()):
+        date_part = parts[0]
+        time_part = parts[1]
+        run_id = f"{date_part}_{time_part}"
+        suite_id = "_".join(parts[2:-1])
+    else:
+        # Legacy pattern: {suite}_{date}_{time}_{role}
+        time_part = parts[-2]
+        date_part = parts[-3]
+        run_id = f"{date_part}_{time_part}"
+        suite_id = "_".join(parts[:-3])
+
     return suite_id, run_id, role
 
 
@@ -375,7 +394,12 @@ def _load_gcs_jsonl_entries(load_errors: List[tuple]) -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     for fpath in glob.glob(GCS_METRICS_GLOB, recursive=True):
         path = Path(fpath)
-        run_id = path.parent.name
+        parent_name = path.parent.name
+        # Strip 'live_run_' prefix so run_id matches comprehensive filenames
+        if parent_name.startswith("live_run_"):
+            dir_run_id = parent_name[len("live_run_"):]
+        else:
+            dir_run_id = parent_name
         try:
             with path.open("r", encoding="utf-8") as fh:
                 for line in fh:
@@ -383,7 +407,9 @@ def _load_gcs_jsonl_entries(load_errors: List[tuple]) -> List[Dict[str, Any]]:
                         continue
                     try:
                         entry = json.loads(line)
-                        entry["run_id"] = run_id
+                        # Prefer entry's own run_id if present; else use dir-derived
+                        if not entry.get("run_id"):
+                            entry["run_id"] = dir_run_id
                         entries.append(entry)
                     except Exception:
                         continue
@@ -590,6 +616,9 @@ def _load_comprehensive(load_errors: List[tuple]) -> Dict[str, ComprehensiveSuit
             continue
         key = f"{run_id}:{suite_id}"
         suite.raw_drone = payload
+        # Preserve existing entry (e.g. one already merged with GCS data)
+        if key in suites and suites[key].raw_gcs is not None:
+            continue
         if key in gcs_only:
             suite.raw_gcs = gcs_only.pop(key)
             suite.gcs_validation = {"source": "gcs_json", "payload": suite.raw_gcs}

@@ -1,0 +1,207 @@
+PQC Secure-Tunnel Benchmark + Dashboard Consistency Plan
+Date: 2026-02-06
+Scope: sdrone_bench.py, sgcs_bench.py, core metrics/logging, dashboard backend/UI ingest.
+Goal: Make benchmark outputs, logging, and dashboard ingestion consistent and reliable.
+
+============================================================
+1) OBSERVATIONS (PROBLEMS) AND FIX PLANS
+============================================================
+
+1.1 Comprehensive metrics file naming mismatch
+Problem:
+- MetricsAggregator saves two filename patterns:
+  A) run_id_suite_id_role.json via _save_metrics()
+  B) suite_id_run_id_role.json via save_suite_metrics()
+- Dashboard ingestion parses only suite_id_run_id_role.json, so files written by
+  _save_metrics() are parsed with wrong run_id/suite_id or ignored.
+Impact:
+- Suites appear missing or mis-attributed in dashboard; inventory shows legacy
+  or invalid status due to missing canonical files.
+Fix plan:
+- Choose ONE canonical filename format and use it everywhere.
+- Preferred: suite_id_run_id_role.json (matches current dashboard parser).
+- Update core/metrics_aggregator.py to remove _save_metrics() or align it to
+  suite_id_run_id_role.json.
+- Add a temporary migration: copy/rename existing run_id_suite_id_role.json files
+  into suite_id_run_id_role.json for historical runs.
+
+1.2 Comprehensive metrics directory mismatch
+Problem:
+- sdrone_bench/sgcs_bench write comprehensive metrics to:
+  logs/benchmarks/live_run_<run_id>/comprehensive
+- Dashboard backend expects:
+  logs/benchmarks/comprehensive
+Impact:
+- Dashboard does not load the actual run outputs from sdrone_bench/sgcs_bench.
+Fix plan:
+- Option A (preferred): change dashboard ingest to include live_run_*/comprehensive
+  in its search paths and keep the run folder structure.
+- Option B: change MetricsAggregator output_dir in sdrone_bench/sgcs_bench to
+  logs/benchmarks/comprehensive and keep live_run_* only for robust logger files.
+- Add compatibility: allow both paths during a transition period.
+
+1.3 GCS handshake timestamps not in schema
+Problem:
+- MetricsAggregator writes handshake_start_time_gcs and handshake_end_time_gcs
+  but canonical schema has only handshake_start_time_drone and end_time_drone.
+Impact:
+- GCS fields appear as legacy/not_in_schema in inventory tables.
+Fix plan:
+- Decide one of:
+  (a) Add gcs handshake fields to schema and dashboard types, OR
+  (b) Stop emitting GCS handshake fields and only keep drone timestamps.
+- If (a), update core/metrics_schema.py, dashboard backend schemas, and frontend
+  types to include gcs fields.
+
+1.4 Metric status keys are category-level not field-level
+Problem:
+- MetricsAggregator records metric_status at category level (data_plane, rekey,
+  power_energy, crypto_primitives). Dashboard expects field-level keys (e.g.
+  data_plane.packets_sent) for precise UI messages.
+Impact:
+- UI shows Not collected without the exact reason even when metric_status exists.
+Fix plan:
+- Expand metric_status entries to include specific canonical field paths for all
+  fields set to None due to missing sources.
+- Keep category-level entries as a summary if desired, but add field-level too.
+
+1.5 MAVLink latency invalid reasons are correct but data flow is fragile
+Problem:
+- Latency invalid reasons are expected if no SYSTEM_TIME or no COMMAND traffic.
+- In MAVPROXY-only mode, commands may not be sent, causing rtt_invalid_reason.
+Impact:
+- Dashboard shows invalid latency metrics and FAIL even when proxies run.
+Fix plan:
+- Decide runtime policy: either accept invalid latency as expected in MAVPROXY
+  mode, or add a minimal command/ack heartbeat to generate RTT samples.
+- Document this behavior in dashboard UI and in benchmark run instructions.
+
+1.6 Dashboard strict run filter hides real runs
+Problem:
+- dashboard/backend/ingest.py has STRICT_RUN_FILTER = "20260205_145749".
+Impact:
+- Only one run is visible; all other runs are ignored.
+Fix plan:
+- Remove or gate STRICT_RUN_FILTER with an env var or config.
+- Ensure default is no filter.
+
+1.7 RobustLogger outputs are not ingested
+Problem:
+- RobustLogger writes live_run_<run_id>/events_*.jsonl, metrics_*.jsonl, suite_*.json
+  but dashboard ignores them.
+Impact:
+- High-fidelity incremental logging is unused by UI and analysis.
+Fix plan:
+- Optionally add a dashboard ingest path for robust logs, or keep as debug-only.
+- If ingesting, define a transform that maps robust logger metrics to canonical
+  schema and tags them as secondary/diagnostic sources.
+
+1.8 Mixed field origins for GCS validation metrics
+Problem:
+- sgcs_bench stop_suite returns mavlink_validation.* and latency_jitter.* in
+  a payload that is merged by MetricsAggregator via merge_from.
+- If merge_from is missing or partial, dashboard will show gcs validation as legacy.
+Impact:
+- Inconsistent visibility of GCS validation data.
+Fix plan:
+- Ensure sdrone_bench always passes gcs_metrics into MetricsAggregator.finalize.
+- Add explicit checks/logging when merge_from is missing or empty.
+
+1.9 Chronos run outputs are outside dashboard ingest paths
+Problem:
+- chronos_runs/... outputs are not under logs/benchmarks.
+Impact:
+- Dashboard never reads these files.
+Fix plan:
+- Add a dashboard config to include chronos_runs in ingest, OR
+- Provide a migration step to copy chronos_runs/*/comprehensive into
+  logs/benchmarks/live_run_<run_id>/comprehensive.
+
+============================================================
+2) FIX SEQUENCE (ORDERED PLAN)
+============================================================
+
+Step 1: Normalize comprehensive file naming
+- Update MetricsAggregator to emit only suite_id_run_id_role.json.
+- Remove or align _save_metrics() to avoid dual naming.
+- Provide a migration script to rename historical files.
+
+Step 2: Align ingest paths
+- Update dashboard ingest to scan:
+  logs/benchmarks/comprehensive
+  logs/benchmarks/live_run_*/comprehensive
+  (optional) chronos_runs/*/comprehensive
+- Make this list configurable (env var or config file).
+
+Step 3: Resolve schema vs emitted fields
+- Decide on GCS handshake timestamps: schema update or removal.
+- Update dashboard backend schema models and frontend types if adding fields.
+
+Step 4: Metric status granularity
+- Emit field-level metric_status entries for each null field due to missing source.
+- Keep category-level status as a summary, not as a substitute.
+
+Step 5: Latency/RTT validity policy
+- If MAVPROXY-only mode is the standard, update UI messaging to treat invalid
+  latency as expected and not as suite failure, OR
+- Add minimal COMMAND traffic to populate RTT and mark latency valid.
+
+Step 6: Remove strict run filter
+- Disable STRICT_RUN_FILTER or make it conditional.
+
+Step 7: Decide on RobustLogger ingestion (optional)
+- If needed, define a mapping into canonical fields or a separate diagnostics
+  endpoint in the dashboard.
+
+============================================================
+3) SPECIFIC FILE-LEVEL NOTES
+============================================================
+
+sdrone_bench.py
+- Uses MetricsAggregator with output_dir logs/benchmarks/live_run_<run_id>/comprehensive.
+- Calls finalize_suite(merge_from=gcs_metrics) and saves comprehensive output.
+- Marks FAIL when missing MAVLink traffic, invalid latency, or no data plane.
+
+sgcs_bench.py
+- stop_suite returns mavlink_validation and latency_jitter in payload.
+- Writes gcs_suite_metrics.jsonl for GCS validation.
+
+core/metrics_aggregator.py
+- Writes two different filename patterns (needs normalization).
+- Emits GCS handshake fields not in schema.
+- Writes category-level metric_status rather than per-field.
+
+core/mavlink_collector.py
+- Validity rules for latency and RTT are correct but need consistent expectations
+  in benchmark mode and dashboard UI.
+
+core/robust_logger.py
+- Produces valuable incremental metrics but unused by dashboard.
+
+dashboard/backend/ingest.py
+- Hardcoded strict run filter.
+- Parses only suite_id_runid_role.json in logs/benchmarks/comprehensive.
+- Needs path expansion to live_run_*/comprehensive and optional chronos_runs.
+
+============================================================
+4) EXPECTED OUTCOMES AFTER FIXES
+============================================================
+
+- Dashboard lists all sdrone_bench/sgcs_bench suites without manual copying.
+- Inventory shows canonical keys, not legacy placeholders.
+- Run IDs and suite IDs are correct and consistent.
+- Latency/RRT invalid reasons are understood and either collected properly or
+  explicitly treated as non-fatal in MAVPROXY mode.
+- Metric status reasons appear at the field level in UI.
+
+============================================================
+5) VALIDATION CHECKLIST
+============================================================
+
+- A new sdrone/sgcs run produces comprehensive files with suite_id_run_id_role.json.
+- Dashboard can load a new run without changing ingest code or moving files.
+- SuiteDetail shows canonical metrics (no unexpected legacy tags).
+- metric_status entries appear for fields that are null due to missing sources.
+- Latency invalid reasons match expected runtime conditions (e.g., no_command_sent).
+
+END

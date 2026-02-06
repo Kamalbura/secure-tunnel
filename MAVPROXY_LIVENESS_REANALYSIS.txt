@@ -1,0 +1,42 @@
+1) CURRENT DESIGN (AS CODED)
+- Drone benchmark (main branch): sscheduler/sdrone_bench.py starts MAVProxy via start_mavproxy(), stores ManagedProcess in self.mavproxy_proc, and logs start. It does NOT register any OS-level watcher or callback for MAVProxy exit.
+- Liveness detection in sdrone_bench (main):
+  - At start(): if mode == MAVPROXY and mavproxy_proc missing/not running, it sets shutdown reason "error: mavproxy_not_running" and calls _shutdown().
+  - In _run_loop(): at the top of the outer while loop, it checks mavproxy_proc.is_running() and, if false, logs "MAVProxy died..." and returns with shutdown reason "error: mavproxy_died".
+  - In _ready_to_advance(): if mode == MAVPROXY it checks mavproxy_proc.is_running() and GCS ping.
+- GCS benchmark (main branch): sscheduler/sgcs_bench.py starts MAVProxy via GcsMavProxyManager.start(), holds ManagedProcess in self.process, and uses is_running() for status. In mode MAVPROXY it refuses to restart MAVProxy in start_proxy and returns an error instead. It also fails early at startup if MAVProxy is not running.
+
+2) HISTORICAL DESIGN (WORKING BRANCH)
+- Drone benchmark (working branch): sscheduler/sdrone_bench.py starts MAVProxy via start_mavproxy() and stores ManagedProcess in self.mavproxy_proc. If MAVProxy fails to start, it logs a warning and continues. No explicit MAVProxy liveness checks appear in the run loop (no MAVProxy check in _run_loop and no _ready_to_advance function is present in the working branch output).
+- GCS benchmark (working branch): sscheduler/sgcs_bench.py starts MAVProxy in start(); if it is not running when a suite starts, start_proxy attempts to restart MAVProxy ("Restarting crashed/stopped MAVProxy instance...").
+
+3) DIFF ANALYSIS (WHAT CHANGED, WHAT DID NOT)
+- Added in main: BENCHMARK_MODE parsing and MAVPROXY-only mode; explicit fail-fast at startup if MAVProxy is not running; liveness check at top of _run_loop; MAVProxy-only readiness check in _ready_to_advance; explicit shutdown reason logging.
+- Unchanged in both: MAVProxy is started by sdrone_bench and held as a ManagedProcess handle; no process.wait() or continuous monitoring loop exists.
+- Changed on GCS: working branch restarts crashed MAVProxy on start_proxy; main branch refuses restart in MAVPROXY mode and returns "mavproxy_not_running".
+
+4) OWNERSHIP & RESPONSIBILITY MODEL
+- sdrone_bench owns MAVProxy process lifecycle in both branches (it starts MAVProxy and stores the process handle). Cleanup stops the process if present.
+- sgcs_bench owns MAVProxy lifecycle on GCS (GcsMavProxyManager holds and stops the process).
+- Detection responsibility in main is partial: only explicit checks in _run_loop (outer loop) and _ready_to_advance; there is no continuous liveness monitor.
+
+5) WHY FAIL-FAST DID NOT TRIGGER (FACTUAL)
+- In main, the MAVProxy liveness check exists only at the top of _run_loop and in _ready_to_advance. The inner while loop runs for the duration of a suite and only calls _ready_to_advance when the policy reaches NEXT_SUITE or COMPLETE. While in HOLD (sleeping 1s at a time), no MAVProxy check is executed. Therefore, if MAVProxy dies during the inner loop, the code path that logs "MAVProxy died during MAVProxy-only run" will not execute until the outer loop is reached again. This is consistent with observed continued running after a MAVProxy kill.
+
+6) IS THIS A REGRESSION? (YES / NO / UNCLEAR)
+- UNCLEAR.
+  - Working branch did not implement any MAVProxy fail-fast checks at all, so the current behavior (no immediate fail-fast) is not clearly worse than historical behavior.
+  - Main branch added checks but only at specific control points. The observed lack of immediate fail-fast aligns with the control flow, not necessarily a regression.
+
+7) IS THIS A BUG OR A DESIGN GAP? (JUSTIFY)
+- Likely a design gap rather than a regression. The code indicates MAVProxy liveness checks are not continuous and are only performed at specific points. The observed behavior can occur without violating any explicit code path. There is no explicit invariant in code stating "fail-fast immediately on MAVProxy death at any time".
+
+8) CONDITIONS UNDER WHICH A FIX IS LEGITIMATE
+- A fix is legitimate only if the desired invariant is explicitly documented or required: e.g., "immediate shutdown on MAVProxy death at any time" or a test that expects the fail-fast to occur within the inner loop. If no such invariant is documented, the current behavior matches the coded control flow and should not be treated as a regression.
+
+9) WHAT MUST NOT BE CHANGED
+- Do not alter MAVProxy-only mode semantics, suite selection logic, or traffic generation disabling.
+- Do not add synthetic traffic or change benchmark scope.
+- Do not change MAVProxy ownership between scheduler and external tooling without explicit design approval.
+
+Re-analysis complete. Awaiting fix approval.

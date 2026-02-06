@@ -1,0 +1,152 @@
+================================================================================
+LIVE BENCHMARK TRACE — Operation Chronos Clean Run
+Date: 2026-02-05 / 2026-02-06
+Commit: 5615e88 (synced GCS + Drone)
+Suite: cs-classicmceliece348864-aesgcm-falcon512
+Mode: MAVPROXY (live Pixhawk FCU on /dev/ttyACM1)
+================================================================================
+
+STEP 0 — HARD RESET
+────────────────────
+  GCS (Windows, 192.168.0.101):
+    - Killed Python PID 21336 (old GCS server on :8000)
+    - Cleared logs/benchmarks/ → 0 items
+    - Cleared chronos_runs/ → 0 items
+  Drone (Raspberry Pi, 192.168.0.100, Tailscale 100.101.93.23):
+    - pkill -f sdrone → no processes found (exit 1 = clean)
+    - Cleared logs/benchmarks/ → 0 items
+    - Cleared chronos_runs/ → 0 items
+  Git: stash popped → committed (5615e88) → pushed → drone git reset --hard
+  STATUS: VERIFIED — both sides clean
+
+STEP 1 — PROCESS TOPOLOGY (LIVE RUN)
+─────────────────────────────────────
+
+  DRONE SIDE (Raspberry Pi):
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ Pixhawk FCU (/dev/ttyACM1)                                     │
+  │   └─ MAVLink 2.0 serial @ ~50Hz telemetry                      │
+  └──────────────────┬──────────────────────────────────────────────┘
+                     │ serial
+  ┌──────────────────▼──────────────────────────────────────────────┐
+  │ MAVProxy (headless)                                             │
+  │   master=/dev/ttyACM1                                           │
+  │   --out=udp:127.0.0.1:47003   ← plaintext to drone crypto proxy│
+  │   --out=udp:127.0.0.1:47005   ← sniff port for MAVLink coll.   │
+  │   --out=udp:127.0.0.1:14560   ← debug                          │
+  └──────────────────┬──────────────────────────────────────────────┘
+                     │ UDP 47003 (plaintext MAVLink)
+  ┌──────────────────▼──────────────────────────────────────────────┐
+  │ Drone Crypto Proxy (run_proxy.py / async_proxy.py)              │
+  │   ptx_listen = udp:127.0.0.1:47003                             │
+  │   enc_remote = udp:192.168.0.101:46012                         │
+  │   enc_listen = udp:0.0.0.0:46011                               │
+  │   Handshake via TCP:192.168.0.101:46000 (role=drone/client)     │
+  │   Status file: drone_status.json                                │
+  │   Counters: ptx_in=34923, enc_out=34923, enc_in=174, ptx_out=174│
+  └──────────────────┬──────────────────────────────────────────────┘
+                     │ UDP 46011→46012 (encrypted, LAN)
+                     │ 3,572,729 bytes drone→GCS
+                     │ 11,586 bytes GCS→drone
+                     ▼
+
+  GCS SIDE (Windows):
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ GCS Crypto Proxy (run_proxy.py / async_proxy.py)                │
+  │   enc_listen = udp:0.0.0.0:46012                               │
+  │   enc_remote = udp:192.168.0.100:46011                         │
+  │   ptx_listen = udp:127.0.0.1:47001 (GCS MAVLink in)            │
+  │   ptx_remote = udp:127.0.0.1:47002 (to GCS MAVProxy)           │
+  │   Handshake via TCP:0.0.0.0:46000 (role=gcs/server)            │
+  │   Status file: gcs_status.json                                  │
+  │   Counters: enc_in=34852, ptx_out=34852, ptx_in=173, enc_out=173│
+  └──────────────────┬──────────────────────────────────────────────┘
+                     │ UDP 47002 (decrypted MAVLink)
+  ┌──────────────────▼──────────────────────────────────────────────┐
+  │ GCS MAVProxy (headless)                                         │
+  │   master=udpin:127.0.0.1:47002                                  │
+  │   --out=udp:127.0.0.1:14552   ← sniff for GCS MAVLink coll.    │
+  │   --out=udp:127.0.0.1:14550   ← GCS application/dashboard      │
+  └──────────────────┬──────────────────────────────────────────────┘
+                     │ UDP 14552 (sniff)
+  ┌──────────────────▼──────────────────────────────────────────────┐
+  │ GCS MAVLink Collector (mavlink_collector.py, role=gcs)          │
+  │   Sniffing udpin:127.0.0.1:14552                                │
+  │   34952 msgs received, 195 seq gaps                             │
+  └─────────────────────────────────────────────────────────────────┘
+
+  DRONE MAVLink Collector:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ Drone MAVLink Collector (mavlink_collector.py, role=drone)      │
+  │   Sniffing udpin:127.0.0.1:47005                                │
+  │   37215 msgs received, 212 seq gaps                             │
+  │   Heartbeat interval: 999.94ms (expected 1000ms)                │
+  │   Vehicle: sysid=1, compid=1, MANUAL mode                      │
+  └─────────────────────────────────────────────────────────────────┘
+
+STEP 2 — HANDSHAKE TRACE
+─────────────────────────
+  1. Drone scheduler sends TCP "start_proxy" to GCS:48080
+  2. GCS starts crypto proxy (server role, listening TCP:46000)
+  3. Drone starts crypto proxy (client role, connects TCP:192.168.0.101:46000)
+  4. TLS-like PQC handshake:
+     - GCS: KEM keygen (53.14ms) → sends ServerHello (261,832 bytes)
+     - Drone: KEM encapsulate (0.868ms) → sends encapsulated secret
+     - GCS: Signature sign (2.55ms) → sends proof
+     - Drone: Signature verify (2.65ms) → validates
+     - GCS: KEM decapsulate (21.28ms) → derives shared secret
+     - GCS: KDF (4.01ms) → session keys
+  5. Protocol handshake: 128.4ms (drone view) / 153.1ms (GCS view)
+  6. End-to-end handshake: 4121ms (drone) / 2844ms (GCS)
+     Difference due to: process startup overhead + drone_status.json polling
+  7. Status: handshake_ok written to drone_status.json
+  8. STATUS: VERIFIED — handshake succeeded, keys established
+
+STEP 3 — DATA FLOW TRACE
+─────────────────────────
+  Duration: ~107s active (110s interval configured)
+  
+  DRONE → GCS (telemetry):
+    Pixhawk → MAVProxy → UDP:47003 → Drone Proxy (encrypt) → UDP:46012 → GCS Proxy (decrypt) → UDP:47002 → GCS MAVProxy
+    Packets: 34,923 encrypted (drone enc_out) → 34,852 delivered (GCS ptx_out)
+    Loss: 71 packets (0.20%) — VERIFIED normal for UDP
+    Bytes: 3,572,729 encrypted on wire
+    
+  GCS → DRONE (commands):
+    GCS MAVProxy → UDP:47001 → GCS Proxy (encrypt) → UDP:46011 → Drone Proxy (decrypt) → UDP:47003 → Drone MAVProxy
+    Packets: 173 encrypted (GCS enc_out) → 174 delivered (drone ptx_out)
+    Note: GCS→drone traffic is minimal (no active commanding, just heartbeats)
+    STATUS: VERIFIED — asymmetry is EXPECTED for one-way telemetry
+
+  MAVLink Sniffing:
+    Drone collector (UDP:47005): 37,215 msgs — BEFORE encryption (higher count)
+    GCS collector (UDP:14552): 34,952 msgs — AFTER decryption
+    Difference: 2,263 msgs — EXPECTED (pre-encryption tap sees all; post-decryption tap misses losses)
+
+STEP 4 — METRIC STATUS SUMMARY
+───────────────────────────────
+  DRONE COMPREHENSIVE JSON (authoritative):
+    ✓ VERIFIED: run_context, crypto_identity, lifecycle, handshake, data_plane,
+                mavproxy_drone, mavproxy_gcs, mavlink_integrity, fc_telemetry,
+                system_drone, system_gcs, power_energy, observability, control_plane
+    ✗ NULL METRICS (requiring forensic trace):
+        1. latency_jitter — ALL NULL
+        2. crypto_primitives — PARTIAL NULL (keygen, decaps, sign missing)
+        3. validation.benchmark_pass_fail — "FAIL"
+
+  GCS COMPREHENSIVE JSON:
+    ✓ VERIFIED: run_context (partial), crypto_identity, lifecycle, handshake,
+                observability, validation="PASS"
+    ✗ ALL NULL: crypto_primitives, data_plane, rekey, power_energy, system_gcs
+    Note: GCS comprehensive is a SECONDARY artifact. The drone file is authoritative
+          because _merge_peer_data() enriches it with GCS data.
+
+  GCS JSONL (stop_suite payload):
+    ✓ VERIFIED: proxy_status with FULL counters + handshake_metrics
+    ✓ VERIFIED: system_gcs with cpu/memory
+    ✓ VERIFIED: mavlink_validation with msg counts + seq gaps
+    ✗ NULL: latency_jitter (same root cause as drone)
+
+================================================================================
+END OF TRACE
+================================================================================

@@ -1,0 +1,157 @@
+================================================================================
+FIX PLAN — Operation Chronos Metric Loss Resolution
+Date: 2026-02-06
+Commit: 2af45a0 (applied, pushed, synced GCS + Drone)
+Previous: 5615e88
+================================================================================
+
+STATUS: FIXES APPLIED (no rollback needed)
+
+================================================================================
+FIX 1 — GCS Crypto Primitives Merge [HIGH] [APPLIED]
+================================================================================
+
+  File: core/metrics_aggregator.py
+  Function: _merge_peer_data()
+  Commit: 2af45a0
+
+  PROBLEM:
+    The GCS proxy performs keygen, decapsulation, and signature signing.
+    These timings were present in proxy_status.counters.handshake_metrics
+    (returned by the stop_suite TCP response) but _merge_peer_data()
+    did not extract them. Result: kem_keygen_time_ms, kem_decapsulation_time_ms,
+    signature_sign_time_ms all null in drone comprehensive JSON.
+
+  FIX:
+    Added extraction block after the latency_jitter merge section:
+    1. Reads proxy_status.counters.handshake_metrics from peer_data
+    2. Maps GCS ms-level fields → schema fields (with alias handling):
+       kem_keygen_ms / kem_keygen_avg_ms → kem_keygen_time_ms
+       kem_decaps_ms / kem_decap_ms      → kem_decapsulation_time_ms
+       sig_sign_ms / sig_sign_avg_ms     → signature_sign_time_ms
+    3. Extracts ns-level timings from primitives.kem / primitives.signature blocks
+    4. Fills artifact sizes (pub_key, ciphertext, sig, shared_secret) if missing
+    5. Recalculates total_crypto_time_ms = sum of all 5 primitives
+    6. Merges AEAD encrypt/decrypt metrics into data_plane section
+
+  GUARD: Only fills fields that are still None (drone-side values take precedence)
+
+  EXPECTED RESULT AFTER FIX:
+    crypto_primitives:
+      kem_keygen_time_ms:        53.1401   (from GCS)
+      kem_encapsulation_time_ms:  0.868    (from drone — already populated)
+      kem_decapsulation_time_ms: 21.2831   (from GCS)
+      signature_sign_time_ms:     2.5518   (from GCS)
+      signature_verify_time_ms:   2.65     (from drone — already populated)
+      total_crypto_time_ms:      80.3      (sum of all 5)
+      kem_keygen_ns:          53,140,100   (from GCS)
+      kem_decaps_ns:          21,283,100   (from GCS)
+      sig_sign_ns:             2,551,800   (from GCS)
+
+  ROLLBACK: git revert 2af45a0 (or manual: remove the proxy_status extraction
+    block in _merge_peer_data(), lines ~1138-1199 in current version)
+
+================================================================================
+FIX 2 — False FAIL on Structural Latency Unavailability [HIGH] [APPLIED]
+================================================================================
+
+  File: sscheduler/sdrone_bench.py
+  Function: _finalize_metrics()
+  Commit: 2af45a0
+
+  PROBLEM:
+    After finalize_suite(), the code checked:
+      if latency_valid is not True and rtt_valid is not True:
+          invalid_reasons.append("mavlink_latency_invalid")
+    This caused benchmark_pass_fail="FAIL" whenever latency metrics were
+    null — including cases where they are STRUCTURALLY unavailable (no GPS
+    time, no commands sent). The benchmark actually succeeded: handshake OK,
+    34,923 packets encrypted, telemetry flowing.
+
+  FIX:
+    Added structural-reason check before flagging:
+      _structural_latency_reasons = {
+          "missing_system_time_reference",
+          "no_command_sent",
+          "no_timestamped_messages",
+      }
+    The latency check now only appends "mavlink_latency_invalid" when:
+      - latency is not valid AND
+      - RTT is not valid AND
+      - latency reason is NOT structural AND
+      - RTT reason is NOT structural
+
+  EXPECTED RESULT AFTER FIX:
+    For indoor/no-GPS runs:
+      latency_invalid_reason = "missing_system_time_reference" → structural → skip
+      rtt_invalid_reason = "no_command_sent" → structural → skip
+      → "mavlink_latency_invalid" NOT added
+      → No invalid_reasons (assuming MAVLink msgs > 0 and data plane has traffic)
+      → benchmark_pass_fail = "PASS" (from finalize_suite)
+
+    For actual failures (e.g., broken MAVLink):
+      latency_invalid_reason = "insufficient_samples" → NOT structural → flag
+      → benchmark_pass_fail = "FAIL" (correctly)
+
+  ROLLBACK: git revert 2af45a0 (or manual: restore the simple 2-line check
+    replacing the 15-line structural-awareness block)
+
+================================================================================
+NOT FIXED (by design — no code bug)
+================================================================================
+
+  1. latency_jitter.one_way_latency_avg_ms = null
+     Root: No GPS time → no SYSTEM_TIME offset → cannot compute one-way latency
+     Status: MISSING (not a code bug)
+     Would require: GPS lock on Pixhawk (impossible indoors) OR implementing
+     MAVLink TIMESYNC protocol for NTP-like time sync
+     Priority: ENHANCEMENT for future work
+
+  2. latency_jitter.rtt_avg_ms = null
+     Root: No commands sent to FCU during benchmark
+     Status: EXPECTED (benchmark design choice)
+     Would require: Sending periodic COMMAND_LONG to FCU and measuring ACK time
+     Priority: ENHANCEMENT — could add optional RTT probe
+
+  3. GCS comprehensive data_plane = all null
+     Root: GCS sgcs_bench.py doesn't call record_data_plane_metrics() before finalize
+     Status: BROKEN (LOW priority — drone comprehensive is authoritative)
+     Would require: Adding self.metrics_aggregator.record_data_plane_metrics(
+       proxy_status.get("counters", {})) in sgcs_bench.py stop_suite handler
+     Priority: LOW — not fixing now, drone JSON is the primary record
+
+  4. GCS comprehensive system_gcs = all null (naming confusion)
+     Root: GCS aggregator stores its own system metrics in system_drone field
+     Status: BROKEN (LOW priority — cosmetic naming issue)
+     Priority: LOW — not fixing now
+
+  5. system_drone.thread_count = null (drone comprehensive)
+     Root: Drone system collector may not capture thread count in all samples
+     Status: MISSING (minor)
+     Priority: LOW
+
+================================================================================
+VERIFICATION PLAN
+================================================================================
+
+  To verify the fixes work, run another benchmark:
+
+  GCS:
+    conda activate oqs-dev
+    python sscheduler/sgcs_bench.py
+
+  Drone:
+    source ~/cenv/bin/activate
+    python sscheduler/sdrone_bench.py --max-suites 1 --interval 110 \
+      --mav-master=/dev/ttyACM1
+
+  Then check the drone comprehensive JSON:
+    1. crypto_primitives.kem_keygen_time_ms should be ~53ms (not null)
+    2. crypto_primitives.kem_decapsulation_time_ms should be ~21ms (not null)
+    3. crypto_primitives.signature_sign_time_ms should be ~2.5ms (not null)
+    4. crypto_primitives.total_crypto_time_ms should be ~80ms (not null)
+    5. validation.benchmark_pass_fail should be "PASS" (not "FAIL")
+
+================================================================================
+END OF FIX PLAN
+================================================================================

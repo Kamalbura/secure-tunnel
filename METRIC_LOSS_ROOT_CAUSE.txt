@@ -1,0 +1,249 @@
+================================================================================
+METRIC LOSS ROOT CAUSE ANALYSIS — Operation Chronos
+Date: 2026-02-06
+Suite: cs-classicmceliece348864-aesgcm-falcon512 (live Pixhawk)
+Commit: 5615e88
+================================================================================
+
+CLASSIFICATION VOCABULARY:
+  VERIFIED    — metric is populated and correct
+  MISSING     — metric is null due to missing data source (not a code bug)
+  BROKEN      — metric is null due to a code bug (data exists but isn't used)
+  EXPECTED    — metric is correctly null for this configuration/role
+  UNKNOWN     — cannot determine root cause
+
+================================================================================
+1. LATENCY & JITTER (latency_jitter) — ALL NULL
+================================================================================
+
+  METRIC: one_way_latency_avg_ms = null
+  STATUS: MISSING
+  ROOT CAUSE:
+    → mavlink_collector._track_message_latency() requires SYSTEM_TIME messages
+      from the Pixhawk to compute _boot_to_unix_offset_s
+    → SYSTEM_TIME.time_unix_usec requires GPS time lock
+    → Pixhawk is operating INDOORS without GPS fix
+    → time_unix_usec = 0 → offset never computed → _boot_to_unix_offset_s = None
+    → All messages with time_boot_ms only are SKIPPED (line 585: "if ... is None: return")
+    → latency_invalid_reason = "missing_system_time_reference"
+  CODE PATH:
+    mavlink_collector.py:562-575 (_track_message_latency)
+    mavlink_collector.py:638-641 (latency_invalid_reason assignment)
+  EVIDENCE: Both drone and GCS collectors report identical reason
+  RESOLUTION: NOT A BUG. Would require either:
+    (a) GPS lock on Pixhawk (not possible indoors), or
+    (b) Alternative timestamp source (e.g., TIMESYNC protocol)
+  PRIORITY: ENHANCEMENT (not a fix)
+
+  METRIC: rtt_avg_ms = null
+  STATUS: EXPECTED
+  ROOT CAUSE:
+    → RTT is measured from COMMAND_LONG/INT → COMMAND_ACK round-trip
+    → The benchmark does NOT send any commands to the Pixhawk
+    → _commands.cmd_sent = 0 → no RTT samples
+    → rtt_invalid_reason = "no_command_sent"
+  CODE PATH:
+    mavlink_collector.py:400-411 (command tracking)
+    mavlink_collector.py:643-648 (rtt_invalid_reason)
+  RESOLUTION: NOT A BUG. RTT requires active commanding (e.g., REQUEST_DATA_STREAM).
+    The benchmark intentionally avoids commanding to not disturb the FCU.
+  PRIORITY: EXPECTED — no fix needed
+
+  ALL RELATED NULL FIELDS:
+    one_way_latency_p95_ms, jitter_avg_ms, jitter_p95_ms,
+    latency_sample_count, rtt_p95_ms, rtt_sample_count
+  STATUS: MISSING/EXPECTED (cascading from above two root causes)
+
+================================================================================
+2. CRYPTO PRIMITIVES (crypto_primitives) — PARTIAL NULL
+================================================================================
+
+  POPULATED (drone-side operations):
+    kem_encapsulation_time_ms = 0.868ms    ← drone performs encapsulation
+    signature_verify_time_ms = 2.65ms      ← drone performs verify
+    pub_key_size_bytes = 261120
+    ciphertext_size_bytes = 96
+    sig_size_bytes = 652
+    shared_secret_size_bytes = 32
+
+  NULL (GCS-side operations):
+    kem_keygen_time_ms = null
+    kem_decapsulation_time_ms = null
+    signature_sign_time_ms = null
+    total_crypto_time_ms = null
+    kem_keygen_ns = null
+    kem_decaps_ns = null
+    sig_sign_ns = null
+    sig_verify_ns = null  (populated only at ms level, not ns)
+
+  STATUS: BROKEN
+  ROOT CAUSE:
+    → The drone reads handshake_metrics from drone_status.json after handshake
+      (sdrone_bench.py:649). This contains ONLY drone-role primitives:
+      kem_encaps_ms, sig_verify_ms, pub_key_size_bytes, etc.
+    → The GCS-role primitives (kem_keygen_ms=53.14, kem_decaps_ms=21.28,
+      sig_sign_ms=2.55) are available in the GCS proxy_status, which is
+      returned in the stop_suite response payload.
+    → The stop_suite payload IS passed to _merge_peer_data() as gcs_metrics.
+    → BUT: _merge_peer_data() (metrics_aggregator.py:1072-1142) handles:
+        ✓ system_gcs, system_drone, power_energy, mavlink_validation,
+          latency_jitter, gcs_info, handshake timing
+        ✗ Does NOT handle proxy_status.counters.handshake_metrics
+    → The GCS crypto primitives are PRESENT in the data but NEVER EXTRACTED.
+    → After _merge_peer_data(), finalize_suite() checks if ALL crypto fields
+      are zero (metrics_aggregator.py:802-810). Since kem_encaps and sig_verify
+      are non-zero, the null-out guard does NOT trigger. The partial data remains.
+    → total_crypto_time_ms is null because it sums all parts, and keygen/decaps/sign
+      are None (metrics_aggregator.py:430-435: sum skips None → still produces value
+      only if some parts exist... let me verify)
+  
+  SPECIFIC BUG LOCATION:
+    File: core/metrics_aggregator.py
+    Function: _merge_peer_data() — lines 1072-1142
+    Missing: extraction of proxy_status.counters.handshake_metrics → crypto_primitives
+    
+    File: sscheduler/sdrone_bench.py
+    Function: _collect_gcs_metrics() — lines 891-929
+    Note: The function DOES return proxy_status in the payload.
+    But the payload key is "proxy_status" which _merge_peer_data ignores.
+    
+  EVIDENCE:
+    GCS JSONL proxy_status.counters.handshake_metrics contains:
+      kem_keygen_ms: 53.1401
+      kem_decaps_ms: 21.2831 (as "kem_decap_ms")
+      sig_sign_ms: 2.5518
+      pub_key_size_bytes: 261120
+      ciphertext_size_bytes: 96
+      sig_size_bytes: 652
+
+  RESOLUTION: Add proxy_status.handshake_metrics extraction to _merge_peer_data()
+  PRIORITY: HIGH — this is a real data loss bug
+
+================================================================================
+3. VALIDATION (validation.benchmark_pass_fail = "FAIL")
+================================================================================
+
+  STATUS: BROKEN (false negative)
+  ROOT CAUSE:
+    → After finalize_suite() + merge, sdrone_bench.py:853-870 re-evaluates:
+        if latency_valid is not True AND rtt_valid is not True:
+            invalid_reasons.append("mavlink_latency_invalid")
+    → Since both latency and RTT are null (MISSING, not BROKEN), the check fails
+    → This overrides the original "PASS" from finalize_suite() with "FAIL"
+    → The benchmark DID succeed: handshake OK, 34,923 packets encrypted,
+      telemetry flowing, no drops. The "FAIL" is a FALSE NEGATIVE.
+    
+  CODE PATH:
+    sdrone_bench.py:853-858 (latency check)
+    sdrone_bench.py:866-870 (override to FAIL)
+    
+  EVIDENCE:
+    GCS comprehensive: validation.benchmark_pass_fail = "PASS"
+    Drone comprehensive: validation.benchmark_pass_fail = "FAIL"
+    Same run, same suite — contradiction proves the FAIL is wrong.
+    
+  RESOLUTION: The latency check should not cause FAIL when latency is
+    structurally unavailable (MISSING, not BROKEN). Two options:
+    (a) Skip the latency validity check when latency_invalid_reason is
+        "missing_system_time_reference" (GPS-dependent, not a test failure)
+    (b) Downgrade from "FAIL" to "WARN" for missing-but-expected metrics
+  PRIORITY: HIGH — false FAIL invalidates real benchmark data
+
+================================================================================
+4. DATA PLANE COUNTERS IN GCS COMPREHENSIVE — ALL NULL
+================================================================================
+
+  STATUS: BROKEN
+  ROOT CAUSE:
+    → The GCS metrics_aggregator never receives data_plane metrics.
+    → GCS sgcs_bench.py stop_suite handler:
+        1. Reads proxy_status via _read_proxy_status() ← HAS counters
+        2. Calls self.metrics_aggregator.finalize_suite() ← does NOT pass counters
+    → The aggregator's finalize_suite() uses self._last_proxy_counters which was
+      never populated because record_data_plane_metrics() was never called on GCS.
+    → The proxy_status IS written to the payload and JSONL, but the GCS aggregator
+      doesn't consume it.
+    
+  CODE PATH:
+    sgcs_bench.py:844 (reads proxy_status)
+    sgcs_bench.py:890 (calls finalize_suite without passing counters)
+    metrics_aggregator.py:690-730 (data_plane section checks _last_proxy_counters)
+    
+  NOTE: This is a SECONDARY issue. The drone comprehensive JSON IS the authoritative
+    record, and it DOES have the correct data_plane counters via direct proxy reading.
+    The GCS comprehensive is a redundant backup.
+    
+  RESOLUTION: Call self.metrics_aggregator.record_data_plane_metrics(proxy_status["counters"])
+    before finalize_suite() in sgcs_bench.py
+  PRIORITY: LOW — drone comprehensive already has correct data
+
+================================================================================
+5. GCS COMPREHENSIVE system_gcs — ALL NULL
+================================================================================
+
+  STATUS: BROKEN (minor)
+  ROOT CAUSE:
+    → GCS sgcs_bench.py stop_suite: collects system_gcs via self.system_metrics.stop()
+    → Includes it in the stop_suite PAYLOAD (sent to drone, which merges it correctly)
+    → BUT the GCS metrics_aggregator stores system metrics in system_drone (because
+      it measures its own system — the GCS process is "local" from its perspective)
+    → The GCS comprehensive JSON has system_drone populated with GCS data (15.6% CPU)
+      and system_gcs all-null
+    → This is a NAMING CONFUSION in the GCS comprehensive, not a data loss
+    
+  EVIDENCE:
+    GCS comprehensive: system_drone.cpu_usage_avg_percent = 15.56 (this IS GCS data)
+    GCS comprehensive: system_gcs = ALL NULL
+    
+  RESOLUTION: No fix needed for drone comprehensive (it's correct).
+    GCS comprehensive could remap system_drone → system_gcs for clarity.
+  PRIORITY: LOW — cosmetic, drone comprehensive is authoritative
+
+================================================================================
+6. SYSTEM_DRONE.THREAD_COUNT = NULL (in drone comprehensive)
+================================================================================
+
+  STATUS: MISSING
+  ROOT CAUSE:
+    → The system metrics collector on the drone uses psutil.Process().num_threads()
+    → On Raspberry Pi with the benchmark process, thread_count is collected but
+      may not propagate to the comprehensive JSON if the sampling window misses it
+    → Actually checking the data: drone comprehensive has thread_count = null
+      but GCS comprehensive (via its own system_drone) has thread_count = 16
+    → The drone system collector may not record thread_count in its samples
+    
+  RESOLUTION: Minor — investigate system collector on drone side
+  PRIORITY: LOW
+
+================================================================================
+7. CLOCK OFFSET (run_context.clock_offset_ms)
+================================================================================
+
+  STATUS: VERIFIED (in drone comprehensive = -671.7ms)
+  Note: Present in drone JSON, null in GCS JSON.
+  GCS comprehensive correctly marks: "clock_sync_not_performed"
+    (clock sync is performed by drone scheduler, not GCS)
+  No issue.
+
+================================================================================
+SUMMARY TABLE
+================================================================================
+
+  Metric Category            Status    Class    Priority  Fix?
+  ─────────────────────────  ────────  ───────  ────────  ────
+  latency_jitter (all)       NULL      MISSING  —         No (needs GPS)
+  rtt (all)                  NULL      EXPECTED —         No (by design)
+  crypto_primitives (GCS)    NULL      BROKEN   HIGH      YES
+  validation.pass_fail       "FAIL"    BROKEN   HIGH      YES
+  GCS data_plane             NULL      BROKEN   LOW       Optional
+  GCS system_gcs naming      NULL      BROKEN   LOW       Optional
+  drone thread_count         NULL      MISSING  LOW       Investigate
+  clock_offset (GCS side)    NULL      EXPECTED —         No
+
+  BROKEN items requiring fix: 2 HIGH, 2 LOW
+  MISSING items (no code fix): 2
+  EXPECTED items (by design): 2
+
+================================================================================
+END OF ROOT CAUSE ANALYSIS
+================================================================================

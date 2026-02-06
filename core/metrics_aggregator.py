@@ -1133,7 +1133,74 @@ class MetricsAggregator:
             for key, value in lj.items():
                 if hasattr(m.latency_jitter, key):
                     setattr(m.latency_jitter, key, value)
-    
+
+        # Merge GCS-side crypto primitives from proxy_status
+        proxy_status = peer_data.get("proxy_status")
+        if isinstance(proxy_status, dict):
+            counters = proxy_status.get("counters", proxy_status)
+            hs_metrics = counters.get("handshake_metrics", {})
+            if isinstance(hs_metrics, dict) and hs_metrics:
+                cp = m.crypto_primitives
+                # GCS-side operations: keygen, decapsulation, signature signing
+                # Only fill if not already populated (drone-side takes precedence)
+                gcs_ms_fields = {
+                    "kem_keygen_ms": "kem_keygen_time_ms",
+                    "kem_keygen_avg_ms": "kem_keygen_time_ms",
+                    "kem_decaps_ms": "kem_decapsulation_time_ms",
+                    "kem_decap_ms": "kem_decapsulation_time_ms",
+                    "kem_decaps_avg_ms": "kem_decapsulation_time_ms",
+                    "sig_sign_ms": "signature_sign_time_ms",
+                    "sig_sign_avg_ms": "signature_sign_time_ms",
+                }
+                for src_key, dst_field in gcs_ms_fields.items():
+                    val = hs_metrics.get(src_key)
+                    if val and getattr(cp, dst_field, None) is None:
+                        setattr(cp, dst_field, float(val))
+                # GCS-side ns fields
+                primitives_block = hs_metrics.get("primitives", {})
+                kem_block = primitives_block.get("kem", {})
+                sig_block = primitives_block.get("signature", {})
+                if kem_block.get("keygen_ns") and cp.kem_keygen_ns is None:
+                    cp.kem_keygen_ns = int(kem_block["keygen_ns"])
+                if kem_block.get("decap_ns") and cp.kem_decaps_ns is None:
+                    cp.kem_decaps_ns = int(kem_block["decap_ns"])
+                if sig_block.get("sign_ns") and cp.sig_sign_ns is None:
+                    cp.sig_sign_ns = int(sig_block["sign_ns"])
+                # Artifact sizes (fill if missing)
+                if cp.pub_key_size_bytes is None and hs_metrics.get("pub_key_size_bytes"):
+                    cp.pub_key_size_bytes = int(hs_metrics["pub_key_size_bytes"])
+                if cp.ciphertext_size_bytes is None and hs_metrics.get("ciphertext_size_bytes"):
+                    cp.ciphertext_size_bytes = int(hs_metrics["ciphertext_size_bytes"])
+                if cp.sig_size_bytes is None and hs_metrics.get("sig_size_bytes"):
+                    cp.sig_size_bytes = int(hs_metrics["sig_size_bytes"])
+                if cp.shared_secret_size_bytes is None and hs_metrics.get("shared_secret_size_bytes"):
+                    cp.shared_secret_size_bytes = int(hs_metrics["shared_secret_size_bytes"])
+                # Recalculate total_crypto_time_ms after merge
+                total_parts = [
+                    cp.kem_keygen_time_ms,
+                    cp.kem_encapsulation_time_ms,
+                    cp.kem_decapsulation_time_ms,
+                    cp.signature_sign_time_ms,
+                    cp.signature_verify_time_ms,
+                ]
+                if all(part is not None for part in total_parts):
+                    cp.total_crypto_time_ms = sum(total_parts)
+
+                # Merge GCS AEAD metrics into data_plane
+                prim_metrics = counters.get("primitive_metrics", {})
+                if prim_metrics:
+                    aead_enc = prim_metrics.get("aead_encrypt", {})
+                    aead_dec = prim_metrics.get("aead_decrypt_ok", {})
+                    dp = m.data_plane
+                    if aead_enc.get("count") and dp.aead_encrypt_count is None:
+                        dp.aead_encrypt_count = aead_enc["count"]
+                        if aead_enc.get("total_ns") and aead_enc["count"] > 0:
+                            dp.aead_encrypt_avg_ns = aead_enc["total_ns"] / aead_enc["count"]
+                    if aead_dec.get("count") and dp.aead_decrypt_count is None:
+                        dp.aead_decrypt_count = aead_dec["count"]
+                        if aead_dec.get("total_ns") and aead_dec["count"] > 0:
+                            dp.aead_decrypt_avg_ns = aead_dec["total_ns"] / aead_dec["count"]
+
     def _save_metrics(self, m: ComprehensiveSuiteMetrics):
         """Save metrics to JSON file."""
         filename = f"{m.run_context.run_id}_{m.run_context.suite_id}_{self.role}.json"

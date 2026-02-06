@@ -848,7 +848,23 @@ class BenchmarkScheduler:
                 rtt_valid = comprehensive.latency_jitter.rtt_valid
                 if mav_msgs is None or int(mav_msgs) <= 0:
                     invalid_reasons.append("mavlink_no_messages")
-                if latency_valid is not True and rtt_valid is not True:
+                # Only flag latency as invalid if it's a real failure, not structural
+                # unavailability (e.g., no GPS time → missing_system_time_reference)
+                _structural_latency_reasons = {
+                    "missing_system_time_reference",
+                    "no_command_sent",
+                    "no_timestamped_messages",
+                }
+                latency_reason = comprehensive.latency_jitter.latency_invalid_reason or ""
+                rtt_reason = comprehensive.latency_jitter.rtt_invalid_reason or ""
+                latency_structural = latency_reason in _structural_latency_reasons
+                rtt_structural = rtt_reason in _structural_latency_reasons
+                if (
+                    latency_valid is not True
+                    and rtt_valid is not True
+                    and not latency_structural
+                    and not rtt_structural
+                ):
                     invalid_reasons.append("mavlink_latency_invalid")
                 packets_sent = comprehensive.data_plane.packets_sent
                 packets_received = comprehensive.data_plane.packets_received

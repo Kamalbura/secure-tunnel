@@ -26,8 +26,8 @@ LOGS_DIR = Path("logs/benchmarks")
 COMPREHENSIVE_DIR = LOGS_DIR / "comprehensive"
 GCS_METRICS_GLOB = str(LOGS_DIR / "**" / "gcs_suite_metrics.jsonl")
 
-# Strict filter for specific demo run
-STRICT_RUN_FILTER = "20260206_032324"
+# Strict filter: set to a run_id string to limit to one run, or None to load all
+STRICT_RUN_FILTER = None  # Was "20260206_032324"; now loads all runs for multi-run comparison
 
 
 class MetricsStore:

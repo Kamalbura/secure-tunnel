@@ -1,9 +1,22 @@
 /**
  * Zustand store for dashboard state management.
+ * v3: Multi-run support, settings, anomaly detection.
  */
 
 import { create } from 'zustand';
-import type { SuiteSummary, ComprehensiveSuiteMetrics, FiltersResponse, RunSummary, SuiteInventoryResponse } from '../types/metrics';
+import type {
+    SuiteSummary,
+    ComprehensiveSuiteMetrics,
+    FiltersResponse,
+    RunSummary,
+    SuiteInventoryResponse,
+    DashboardSettings,
+    MultiRunOverviewItem,
+    MultiRunCompareResult,
+    AnomalyItem,
+    AnomalyThresholds,
+    RunType,
+} from '../types/metrics';
 
 // =============================================================================
 // API FUNCTIONS
@@ -16,6 +29,16 @@ async function fetchJson<T>(url: string): Promise<T> {
     if (!res.ok) {
         throw new Error(`API error: ${res.status} ${res.statusText}`);
     }
+    return res.json();
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
     return res.json();
 }
 
@@ -32,6 +55,13 @@ interface DashboardState {
     comparisonSuiteA: ComprehensiveSuiteMetrics | null;
     comparisonSuiteB: ComprehensiveSuiteMetrics | null;
     filters: FiltersResponse | null;
+
+    // Settings & Multi-run
+    settings: DashboardSettings | null;
+    multiRunOverview: MultiRunOverviewItem[];
+    multiRunCompare: MultiRunCompareResult | null;
+    anomalies: AnomalyItem[];
+    buckets: Record<string, unknown> | null;
 
     // UI State
     isLoading: boolean;
@@ -54,6 +84,14 @@ interface DashboardState {
     fetchSuiteDetail: (suiteKey: string) => Promise<void>;
     fetchSuiteInventory: (suiteKey: string) => Promise<void>;
     fetchComparison: (suiteKeyA: string, suiteKeyB: string) => Promise<void>;
+    fetchSettings: () => Promise<void>;
+    saveRunLabel: (runId: string, label: string, runType: RunType) => Promise<void>;
+    saveActiveRuns: (runIds: string[]) => Promise<void>;
+    saveThresholds: (thresholds: Partial<AnomalyThresholds>) => Promise<void>;
+    fetchMultiRunOverview: () => Promise<void>;
+    fetchMultiRunCompare: (suiteId: string) => Promise<void>;
+    fetchAnomalies: (runId?: string) => Promise<void>;
+    fetchBuckets: (runId?: string) => Promise<void>;
     setFilter: (key: keyof Pick<DashboardState, 'selectedKemFamily' | 'selectedSigFamily' | 'selectedAead' | 'selectedNistLevel' | 'selectedRunId'>, value: string | null) => void;
     clearFilters: () => void;
     setBaseline: (suiteKey: string | null) => void;
@@ -74,6 +112,13 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     comparisonSuiteB: null,
     filters: null,
 
+    // Settings & Multi-run
+    settings: null,
+    multiRunOverview: [],
+    multiRunCompare: null,
+    anomalies: [],
+    buckets: null,
+
     // Initial UI State
     isLoading: false,
     error: null,
@@ -88,7 +133,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     // Baseline
     baselineSuiteKey: null,
 
-    // Actions
+    // ── Data Actions ────────────────────────────────────────────────────────
+
     fetchSuites: async () => {
         set({ isLoading: true, error: null });
         try {
@@ -159,6 +205,87 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
             set({ error: err instanceof Error ? err.message : 'Failed to fetch comparison', isLoading: false });
         }
     },
+
+    // ── Settings Actions ────────────────────────────────────────────────────
+
+    fetchSettings: async () => {
+        try {
+            const settings = await fetchJson<DashboardSettings>(`${API_BASE}/settings`);
+            set({ settings });
+        } catch (err) {
+            console.error('Failed to fetch settings:', err);
+        }
+    },
+
+    saveRunLabel: async (runId: string, label: string, runType: RunType) => {
+        try {
+            await postJson(`${API_BASE}/settings/run-label`, { run_id: runId, label, run_type: runType });
+            get().fetchSettings();
+        } catch (err) {
+            set({ error: err instanceof Error ? err.message : 'Failed to save run label' });
+        }
+    },
+
+    saveActiveRuns: async (runIds: string[]) => {
+        try {
+            await postJson(`${API_BASE}/settings/active-runs`, { run_ids: runIds });
+            get().fetchSettings();
+        } catch (err) {
+            set({ error: err instanceof Error ? err.message : 'Failed to save active runs' });
+        }
+    },
+
+    saveThresholds: async (thresholds: Partial<AnomalyThresholds>) => {
+        try {
+            await postJson(`${API_BASE}/settings/thresholds`, { thresholds });
+            get().fetchSettings();
+        } catch (err) {
+            set({ error: err instanceof Error ? err.message : 'Failed to save thresholds' });
+        }
+    },
+
+    // ── Multi-run Actions ───────────────────────────────────────────────────
+
+    fetchMultiRunOverview: async () => {
+        try {
+            const data = await fetchJson<{ runs: MultiRunOverviewItem[] }>(`${API_BASE}/multi-run/overview`);
+            set({ multiRunOverview: data.runs });
+        } catch (err) {
+            console.error('Failed to fetch multi-run overview:', err);
+        }
+    },
+
+    fetchMultiRunCompare: async (suiteId: string) => {
+        set({ isLoading: true, error: null });
+        try {
+            const data = await fetchJson<MultiRunCompareResult>(`${API_BASE}/multi-run/compare?suite_id=${encodeURIComponent(suiteId)}`);
+            set({ multiRunCompare: data, isLoading: false });
+        } catch (err) {
+            set({ error: err instanceof Error ? err.message : 'Failed to fetch multi-run comparison', isLoading: false });
+        }
+    },
+
+    fetchAnomalies: async (runId?: string) => {
+        try {
+            const url = runId ? `${API_BASE}/anomalies?run_id=${encodeURIComponent(runId)}` : `${API_BASE}/anomalies`;
+            const data = await fetchJson<{ anomalies: AnomalyItem[] }>(url);
+            set({ anomalies: data.anomalies });
+        } catch (err) {
+            console.error('Failed to fetch anomalies:', err);
+        }
+    },
+
+    fetchBuckets: async (runId?: string) => {
+        try {
+            const url = runId ? `${API_BASE}/buckets?run_id=${encodeURIComponent(runId)}` : `${API_BASE}/buckets`;
+            const data = await fetchJson<Record<string, unknown>>(url);
+            set({ buckets: data });
+        } catch (err) {
+            console.error('Failed to fetch buckets:', err);
+        }
+    },
+
+    // ── Filter Actions ──────────────────────────────────────────────────────
 
     setFilter: (key, value) => {
         set({ [key]: value } as Partial<DashboardState>);

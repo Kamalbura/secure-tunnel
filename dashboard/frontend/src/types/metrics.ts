@@ -428,3 +428,101 @@ export interface SuiteInventoryResponse {
         gcs_validation?: Record<string, unknown>;
     };
 }
+
+// =============================================================================
+// SETTINGS & MULTI-RUN TYPES
+// =============================================================================
+
+export type RunType = 'baseline' | 'ddos_light' | 'ddos_heavy';
+
+export interface RunTypeInfo {
+    label: string;
+    color: string;
+    order: number;
+}
+
+export interface RunLabel {
+    label: string;
+    type: RunType;
+}
+
+export interface AnomalyThresholds {
+    handshake_ms_high: number;
+    handshake_ms_critical: number;
+    packet_loss_warning: number;
+    packet_loss_critical: number;
+    power_deviation_pct: number;
+    energy_deviation_pct: number;
+    [key: string]: number;
+}
+
+export interface DashboardSettings {
+    run_labels: Record<string, RunLabel>;
+    active_runs: string[];
+    anomaly_thresholds: AnomalyThresholds;
+    run_types: Record<RunType, RunTypeInfo>;
+    available_runs: RunSummary[];
+}
+
+export interface MultiRunOverviewItem {
+    run_id: string;
+    label: string;
+    run_type: RunType;
+    total_suites: number;
+    passed: number;
+    failed: number;
+    pass_rate: number;
+    avg_handshake_ms: number | null;
+    max_handshake_ms: number | null;
+    avg_power_w: number | null;
+    avg_energy_j: number | null;
+    total_energy_j: number | null;
+    avg_packet_loss: number | null;
+    anomaly_count: number;
+}
+
+export interface MultiRunCompareResult {
+    suite_id: string;
+    runs: Array<{
+        run_id: string;
+        label: string;
+        run_type: RunType;
+        suite: ComprehensiveSuiteMetrics;
+    }>;
+}
+
+export interface AnomalyFlag {
+    metric: string;
+    value: number | string;
+    severity: 'warning' | 'critical';
+    threshold: number | null;
+}
+
+export interface AnomalyItem {
+    suite_id: string;
+    run_id: string;
+    key: string;
+    kem: string | null;
+    sig: string | null;
+    flags: AnomalyFlag[];
+    severity: 'warning' | 'critical';
+}
+
+export interface AnomalyResponse {
+    anomalies: AnomalyItem[];
+    total: number;
+    thresholds: AnomalyThresholds;
+}
+
+// Run type colors for consistent UI theming
+export const RUN_TYPE_COLORS: Record<RunType, string> = {
+    baseline: '#3b82f6',
+    ddos_light: '#f59e0b',
+    ddos_heavy: '#ef4444',
+};
+
+export const RUN_TYPE_LABELS: Record<RunType, string> = {
+    baseline: 'Baseline (Normal)',
+    ddos_light: 'DDoS Lightweight',
+    ddos_heavy: 'DDoS Heavy',
+};

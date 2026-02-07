@@ -1,0 +1,231 @@
+% ============================================================================
+%  CHAPTER 5 — THE MAVLINK PROTOCOL
+% ============================================================================
+\chapter{The MAVLink Protocol}
+\label{ch:mavlink}
+
+\epigraph{MAVLink is the lingua franca of autonomous vehicles---simple enough for an 8-bit microcontroller, expressive enough for an autonomous fleet.}{}
+
+This chapter introduces MAVLink, the application-layer protocol that flows through the secure tunnel. Understanding MAVLink is essential because the tunnel must be completely transparent to it: every MAVLink packet that enters the tunnel must emerge unchanged on the other side.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{What Is MAVLink?}
+\label{sec:mav-what}
+
+\begin{definition}[MAVLink]
+\textbf{MAVLink} (Micro Air Vehicle Link) is a lightweight, header-only binary protocol for communicating between unmanned vehicles and ground control stations. It was created in 2009 by Lorenz Meier at ETH Zurich and has become the de facto standard for drone telemetry and command-and-control.
+\end{definition}
+
+MAVLink is used by:
+\begin{itemize}
+  \item \textbf{ArduPilot:} The most popular open-source autopilot software.
+  \item \textbf{PX4:} Another major open-source flight controller.
+  \item \textbf{Mission Planner, QGroundControl:} Popular ground station software.
+  \item \textbf{MAVProxy:} A command-line MAVLink ground station and proxy.
+\end{itemize}
+
+\begin{analogy}
+MAVLink is to drones what HTTP is to the web. Just as your browser uses HTTP to talk to web servers, your ground station uses MAVLink to talk to the autopilot on the drone. And just as HTTPS wraps HTTP in TLS for security, our system wraps MAVLink in a post-quantum tunnel for quantum-resistant security.
+\end{analogy}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{MAVLink Versions}
+\label{sec:mav-versions}
+
+Two versions of MAVLink are in common use:
+
+\begin{description}
+  \item[MAVLink v1:] The original protocol. Uses a 6-byte header and 2-byte CRC. Maximum payload: 255 bytes. No authentication. No signing.
+  
+  \item[MAVLink v2:] The current standard. Uses a 10-byte header. Adds support for message signing (optional, rarely used), message extensions, and a 3-byte message ID space (16.7 million possible message types vs.\ 256 in v1).
+\end{description}
+
+This system is protocol-version agnostic: it encrypts the \emph{entire} MAVLink datagram as an opaque byte payload, regardless of version.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{MAVLink Packet Structure}
+\label{sec:mav-packet}
+
+A MAVLink v2 packet has the following structure:
+
+\begin{table}[htbp]
+  \centering
+  \caption{MAVLink v2 frame structure.}
+  \label{tab:mavlink-frame}
+  \begin{tabular}{clcl}
+    \toprule
+    \textbf{Offset} & \textbf{Field} & \textbf{Bytes} & \textbf{Description} \\
+    \midrule
+    0  & STX (Magic)     & 1 & \texttt{0xFD} for v2 (\texttt{0xFE} for v1) \\
+    1  & Payload Length  & 1 & Length of the payload (0--255) \\
+    2  & Incompat. Flags & 1 & Incompatibility flags \\
+    3  & Compat. Flags   & 1 & Compatibility flags \\
+    4  & Sequence        & 1 & Per-component packet counter (0--255) \\
+    5  & System ID       & 1 & ID of the sending system (1--255) \\
+    6  & Component ID    & 1 & ID of the sending component \\
+    7--9 & Message ID    & 3 & 24-bit message type identifier \\
+    10+ & Payload        & 0--255 & Message-specific data \\
+    ---  & CRC            & 2 & CRC-16/MCRF4XX checksum \\
+    ---  & Signature      & 13 & Optional (if signed) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{System IDs and Component IDs}
+
+Every device on a MAVLink network is identified by a unique \textbf{(System ID, Component ID)} pair:
+
+\begin{description}
+  \item[System ID:] Identifies the vehicle or ground station (1--255). The autopilot and all on-board components share the same System ID.
+  \item[Component ID:] Identifies a specific component within a system. For example, the autopilot is typically component 1, a camera is component 100, and the ground station is component 191.
+\end{description}
+
+\begin{keyinsight}
+The secure tunnel is \textbf{transparent} with respect to MAVLink addressing. It does not need to understand System IDs or Component IDs---it simply encrypts and decrypts the raw bytes. This means it works with any MAVLink network topology without configuration changes.
+\end{keyinsight}
+
+\subsection{Sequence Numbers}
+
+Each MAVLink component maintains an 8-bit sequence counter (0--255) that wraps around. The receiver uses this to detect lost packets.
+
+\begin{securitynote}
+Do not confuse the MAVLink sequence number (8-bit, wraps at 255, \textbf{not} cryptographic) with the tunnel's AEAD sequence number (64-bit, \textbf{never} wraps, \textbf{cryptographic}). They serve different purposes: MAVLink's sequence detects transport loss; the tunnel's sequence provides replay protection and nonce uniqueness.
+\end{securitynote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Key MAVLink Messages}
+\label{sec:mav-messages}
+
+The MAVLink protocol defines hundreds of message types. The most important for understanding this system are:
+
+\begin{description}
+  \item[\texttt{HEARTBEAT} (ID 0):] Sent at 1 Hz by every system. Contains the vehicle type, autopilot type, base mode (armed/disarmed), system status, and MAVLink version. If the GCS stops receiving heartbeats, it assumes the link is lost.
+  
+  \item[\texttt{SYS\_STATUS} (ID 1):] System health: battery voltage, CPU load, sensor health bitmask.
+  
+  \item[\texttt{GPS\_RAW\_INT} (ID 24):] Raw GPS data: latitude, longitude, altitude, ground speed, heading, fix type, satellite count.
+  
+  \item[\texttt{ATTITUDE} (ID 30):] Vehicle orientation: roll, pitch, yaw angles and their rates.
+  
+  \item[\texttt{GLOBAL\_POSITION\_INT} (ID 33):] Fused position estimate (GPS + IMU): latitude, longitude, altitude above sea level and ground, velocity components.
+  
+  \item[\texttt{COMMAND\_LONG} (ID 76):] Sends a command to a component (e.g., arm motors, change mode, start mission).
+  
+  \item[\texttt{COMMAND\_ACK} (ID 77):] Acknowledges a command with a result code (accepted, denied, failed, etc.).
+  
+  \item[\texttt{STATUSTEXT} (ID 253):] Human-readable status messages (e.g., ``PreArm: GPS Fix required'').
+\end{description}
+
+\begin{implementationnote}
+The MAVLink collector (\filename{core/mavlink\_collector.py}) sniffs these messages on the plaintext ports to compute metrics: heartbeat interval, message rates, sequence gaps, and command-ACK latency. It does this by connecting to the local plaintext port and passively observing traffic---it never modifies or injects packets.
+\end{implementationnote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{MAVLink's Security Problem}
+\label{sec:mav-security}
+
+MAVLink was designed in 2009 for simplicity and efficiency on 8-bit microcontrollers. Security was not a design goal:
+
+\begin{enumerate}
+  \item \textbf{No encryption:} All traffic is in plaintext. Anyone who can receive the WiFi signal can read GPS coordinates, battery levels, and flight commands.
+  
+  \item \textbf{No authentication:} There is no mechanism to verify that a command came from the legitimate ground station. An attacker can forge \texttt{COMMAND\_LONG} messages to disarm motors, change flight mode, or trigger return-to-home.
+  
+  \item \textbf{No replay protection:} MAVLink's 8-bit sequence number is not cryptographic. An attacker can capture a valid arm/disarm command and replay it.
+  
+  \item \textbf{Optional signing is inadequate:} MAVLink v2 supports optional message signing (HMAC-SHA256), but:
+  \begin{itemize}
+    \item It uses a single static key (no forward secrecy).
+    \item The key must be manually provisioned.
+    \item It provides authentication but not confidentiality.
+    \item It uses classical cryptography (vulnerable to quantum attacks).
+    \item Adoption is minimal---most systems disable it.
+  \end{itemize}
+\end{enumerate}
+
+\begin{securitynote}
+These are not theoretical vulnerabilities. Researchers have demonstrated MAVLink injection attacks using \$20 hardware (a WiFi adapter in monitor mode) at distances exceeding 1 km. Securing MAVLink is the core motivation for this entire system.
+\end{securitynote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{MAVProxy}
+\label{sec:mav-mavproxy}
+
+\textbf{MAVProxy} is a command-line MAVLink ground station and packet router, used extensively in this system.
+
+\subsection{What MAVProxy Does}
+
+\begin{enumerate}
+  \item \textbf{Serial-to-UDP bridge:} On the drone, MAVProxy reads MAVLink frames from the serial port (connected to the Pixhawk flight controller) and forwards them as UDP datagrams.
+  
+  \item \textbf{Multi-output routing:} MAVProxy can forward the same MAVLink stream to multiple destinations simultaneously (e.g., to the tunnel proxy \emph{and} to a local log file).
+  
+  \item \textbf{Parameter management:} Provides a command interface for reading and writing autopilot parameters.
+  
+  \item \textbf{Script automation:} Supports Python scripting for automated test sequences.
+\end{enumerate}
+
+\subsection{MAVProxy in the Secure Tunnel}
+
+On the \textbf{drone side}, MAVProxy serves as the bridge between the Pixhawk's serial port and the tunnel:
+
+\begin{enumerate}
+  \item The Pixhawk outputs MAVLink over USB serial (e.g., \texttt{/dev/ttyAMA0}).
+  \item MAVProxy reads from the serial port.
+  \item MAVProxy forwards UDP datagrams to \texttt{127.0.0.1:47003} (the drone proxy's plaintext input).
+  \item MAVProxy also listens on \texttt{127.0.0.1:47004} for return traffic from the tunnel.
+\end{enumerate}
+
+On the \textbf{GCS side}, MAVProxy (or Mission Planner) sends/receives traffic via the GCS proxy's plaintext ports (\texttt{47001}/\texttt{47002}).
+
+\begin{designdecision}
+MAVProxy is used on the drone rather than a custom serial reader because it provides robust MAVLink framing, parameter management, and multi-output routing. The tunnel proxy operates at the UDP datagram level, completely below the MAVLink framing layer---it never parses MAVLink packets.
+\end{designdecision}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{MAVLink Metrics}
+\label{sec:mav-metrics}
+
+The system collects detailed MAVLink metrics to verify that the tunnel does not degrade communication quality:
+
+\begin{table}[htbp]
+  \centering
+  \caption{MAVLink metrics collected by the system.}
+  \label{tab:mav-metrics}
+  \begin{tabular}{lp{8cm}}
+    \toprule
+    \textbf{Metric} & \textbf{Description} \\
+    \midrule
+    \texttt{heartbeat\_count}       & Number of \texttt{HEARTBEAT} messages received \\
+    \texttt{heartbeat\_loss\_count}  & Number of expected heartbeats that were not received \\
+    \texttt{heartbeat\_avg\_ms}      & Average interval between heartbeats (should be $\sim$1000 ms) \\
+    \texttt{msg\_rate\_rx}           & Messages received per second \\
+    \texttt{msg\_rate\_tx}           & Messages transmitted per second \\
+    \texttt{seq\_gaps}               & Number of MAVLink sequence number gaps \\
+    \texttt{seq\_duplicates}         & Number of duplicate sequence numbers \\
+    \texttt{crc\_errors}             & Number of MAVLink CRC failures \\
+    \texttt{cmd\_ack\_latency\_ms}   & Average time from command send to ACK receive \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{keyinsight}
+By comparing these metrics across different suites, the benchmarking system can determine the real-world impact of each post-quantum algorithm on MAVLink communication quality. For example, does using Classic McEliece (with its 1.3 MB public key) cause heartbeat loss during the handshake?
+\end{keyinsight}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Summary}
+\label{sec:mav-summary}
+
+\begin{itemize}
+  \item \textbf{MAVLink} is a lightweight binary protocol for drone telemetry and command-and-control, used by ArduPilot, PX4, and all major ground stations.
+  \item MAVLink v2 packets have a 10-byte header, variable payload (up to 255 bytes), and CRC.
+  \item Devices are identified by (System~ID, Component~ID) pairs; an 8-bit sequence counter detects transport loss.
+  \item MAVLink has \textbf{no native encryption, authentication, or replay protection}---this is the core problem the secure tunnel solves.
+  \item \textbf{MAVProxy} bridges the Pixhawk's serial port to UDP datagrams, feeding the tunnel's plaintext input port.
+  \item The tunnel is \textbf{fully transparent} to MAVLink: it operates at the UDP datagram level and never parses MAVLink content.
+  \item MAVLink metrics (heartbeat rate, sequence gaps, command latency) are collected to verify tunnel transparency.
+\end{itemize}
+
+\medskip
+\noindent The next chapter presents the complete \textbf{system architecture}, showing how the tunnel, MAVProxy, the handshake, and the data plane fit together.

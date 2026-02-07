@@ -1,277 +1,290 @@
-\documentclass[11pt,oneside]{book}
-\usepackage[margin=1in]{geometry}
-\usepackage{hyperref}
-\usepackage{listings}
-\usepackage{xcolor}
-\usepackage{longtable}
-\usepackage{booktabs}
+% ============================================================================
+%  Post-Quantum Secure MAVLink Tunnel
+%  A Comprehensive Technical Reference
+%
+%  LaTeX master document — compile with:
+%    latexmk -pdf -interaction=nonstopmode main.tex
+% ============================================================================
+\documentclass[12pt,a4paper,twoside,openright]{book}
+
+% ── Encoding & Fonts ────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}            % Latin Modern — clean, scalable
+\usepackage{microtype}          % Microtypographic improvements
+
+% ── Page Geometry ───────────────────────────────────────────────────────────
+\usepackage[
+  a4paper,
+  top=2.5cm,
+  bottom=2.5cm,
+  left=3cm,
+  right=2.5cm,
+  headheight=15pt
+]{geometry}
+
+% ── Language ────────────────────────────────────────────────────────────────
+\usepackage[english]{babel}
+
+% ── Mathematics ─────────────────────────────────────────────────────────────
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+
+% ── Graphics & Color ────────────────────────────────────────────────────────
 \usepackage{graphicx}
-\usepackage{amsmath}
-\usepackage{amssymb}
-\usepackage{enumitem}
-\usepackage{titlesec}
+\usepackage[dvipsnames,svgnames,x11names]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,fit,
+                 decorations.pathreplacing,backgrounds,matrix}
 
-% Listings configuration for Python
-\definecolor{codegray}{rgb}{0.5,0.5,0.5}
-\definecolor{codepurple}{rgb}{0.58,0,0.82}
-\definecolor{backcolour}{rgb}{0.98,0.98,0.98}
-\lstdefinestyle{pystyle}{
-  backgroundcolor=\color{backcolour},
-  commentstyle=\color{codegray},
-  keywordstyle=\color{black}\bfseries,
-  numberstyle=\tiny\color{codegray},
-  stringstyle=\color{codepurple},
-  basicstyle=\ttfamily\footnotesize,
-  breaklines=true,
-  columns=fullflexible,
+% ── Tables ──────────────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{array}
+
+% ── Listings (Source Code) ──────────────────────────────────────────────────
+\usepackage{listings}
+\usepackage{listingsutf8}
+
+\definecolor{codebg}{HTML}{F8F8F8}
+\definecolor{codeframe}{HTML}{CCCCCC}
+\definecolor{codecomment}{HTML}{6A9955}
+\definecolor{codestring}{HTML}{CE9178}
+\definecolor{codekeyword}{HTML}{569CD6}
+\definecolor{codenumber}{HTML}{B5CEA8}
+
+\lstset{
+  backgroundcolor=\color{codebg},
   frame=single,
+  rulecolor=\color{codeframe},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codekeyword}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  numberstyle=\tiny\color{codenumber},
+  numbers=left,
+  numbersep=8pt,
+  breaklines=true,
+  breakatwhitespace=false,
   showstringspaces=false,
+  tabsize=4,
   captionpos=b,
-  tabsize=2,
-  language=Python
+  aboveskip=1em,
+  belowskip=1em,
+  xleftmargin=2em,
+  framexleftmargin=1.5em,
 }
-\lstset{style=pystyle}
 
-% Simple TODO marker
-\newcommand{\TODO}[1]{\textbf{TODO:} #1}
+\lstdefinestyle{python}{
+  language=Python,
+  morekeywords={self,True,False,None,as,with,async,await,yield,from,import},
+}
 
-\title{Secure Tunnel System Reference}\author{Generated from codebase}\date{\today}
+\lstdefinestyle{typescript}{
+  language=Java,  % close enough for TS highlighting
+  morekeywords={interface,type,export,const,let,async,await,import,from,
+                extends,implements,readonly,string,number,boolean,any,void,
+                null,undefined,Record,Partial,Promise},
+}
 
+\lstdefinestyle{json}{
+  basicstyle=\ttfamily\small,
+  string=[s]{"}{"},
+  stringstyle=\color{codestring},
+  comment=[l]{//},
+  morecomment=[s]{/*}{*/},
+}
+
+\lstdefinestyle{bash}{
+  language=bash,
+  morekeywords={sudo,ssh,cd,source,python,conda,activate,git,pip},
+}
+
+% ── Algorithms / Pseudocode ────────────────────────────────────────────────
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\SetAlgoSkip{medskip}
+
+% ── Cross-references & Hyperlinks ──────────────────────────────────────────
+\usepackage[
+  colorlinks=true,
+  linkcolor=NavyBlue,
+  citecolor=ForestGreen,
+  urlcolor=RoyalBlue,
+  bookmarks=true,
+  bookmarksnumbered=true,
+  pdfstartview=FitH
+]{hyperref}
+\usepackage[nameinlink,capitalise]{cleveref}
+
+% ── Bibliography ────────────────────────────────────────────────────────────
+\usepackage[
+  backend=biber,
+  style=ieee,
+  sorting=nyt,
+  maxbibnames=6,
+  doi=true,
+  isbn=false,
+  url=true,
+]{biblatex}
+\addbibresource{references.bib}
+
+% ── Headers & Footers ──────────────────────────────────────────────────────
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\small\nouppercase{\leftmark}}
+\fancyhead[RO]{\small\nouppercase{\rightmark}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ── Theorem-like environments ──────────────────────────────────────────────
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[chapter]
+\newtheorem{example}{Example}[chapter]
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[chapter]
+\newtheorem{lemma}[theorem]{Lemma}
+
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+\newtheorem*{note}{Note}
+\newtheorem*{warning}{Warning}
+
+% ── Custom boxes ───────────────────────────────────────────────────────────
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+
+\newtcolorbox{keyinsight}[1][]{%
+  enhanced, breakable,
+  colback=blue!5, colframe=NavyBlue,
+  fonttitle=\bfseries,
+  title={Key Insight},
+  #1
+}
+
+\newtcolorbox{analogy}[1][]{%
+  enhanced, breakable,
+  colback=green!5, colframe=ForestGreen,
+  fonttitle=\bfseries,
+  title={Analogy},
+  #1
+}
+
+\newtcolorbox{designdecision}[1][]{%
+  enhanced, breakable,
+  colback=orange!5, colframe=BurntOrange,
+  fonttitle=\bfseries,
+  title={Design Decision},
+  #1
+}
+
+\newtcolorbox{securitynote}[1][]{%
+  enhanced, breakable,
+  colback=red!5, colframe=BrickRed,
+  fonttitle=\bfseries,
+  title={Security Note},
+  #1
+}
+
+\newtcolorbox{implementationnote}[1][]{%
+  enhanced, breakable,
+  colback=purple!5, colframe=RoyalPurple,
+  fonttitle=\bfseries,
+  title={Implementation Note},
+  #1
+}
+
+% ── Miscellaneous ──────────────────────────────────────────────────────────
+\usepackage{enumitem}
+\usepackage{siunitx}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{pdfpages}
+\usepackage{epigraph}
+\usepackage{etoolbox}
+
+% Depth of table of contents
+\setcounter{tocdepth}{3}
+\setcounter{secnumdepth}{3}
+
+% Prevent widows and orphans
+\widowpenalty=10000
+\clubpenalty=10000
+
+% ── Custom Commands ────────────────────────────────────────────────────────
+\newcommand{\suiteid}[1]{\texttt{#1}}
+\newcommand{\configkey}[1]{\texttt{CONFIG["{#1}"]}}
+\newcommand{\filename}[1]{\texttt{#1}}
+\newcommand{\classname}[1]{\texttt{#1}}
+\newcommand{\funcname}[1]{\texttt{#1}}
+\newcommand{\pqctunnel}{\textsc{PQC-Tunnel}}
+
+% ============================================================================
+%  DOCUMENT BEGIN
+% ============================================================================
 \begin{document}
-\frontmatter
-\maketitle
-\tableofcontents
 
+% ── Front Matter ───────────────────────────────────────────────────────────
+\frontmatter
+
+\input{chapters/titlepage}
+\input{chapters/dedication}
+\input{chapters/preface}
+
+\tableofcontents
+\listoffigures
+\listoftables
+\listofalgorithms
+
+\input{chapters/glossary}
+
+% ── Main Matter ────────────────────────────────────────────────────────────
 \mainmatter
 
-\part{System Overview}
-\chapter{Scope and Objectives}
-\section{Purpose and Non-goals}
-This book is a code-grounded reference for the drone--GCS post-quantum secure tunnel. It targets engineers who need to audit, extend, or operate the system without relying on tribal knowledge. In scope: network/data-plane behavior, handshake and AEAD framing, control-plane state, schedulers, telemetry, and power monitoring. Out of scope: airframe dynamics, flight controller internals, or generic PQC background beyond what the code uses.
+% Part I: Foundations
+\part{Foundations}
+\input{chapters/ch01-introduction}
+\input{chapters/ch02-networking}
+\input{chapters/ch03-cryptography}
+\input{chapters/ch04-post-quantum}
 
-\section{Architecture at a Glance}
-The system is a split proxy: the GCS hosts the TCP handshake server and a UDP encrypted socket; the drone hosts the TCP handshake client and its own UDP encrypted socket. Plaintext adapters on each side front local apps/flight controllers. After the handshake, AEAD senders/receivers wrap UDP payloads with replay protection and epoch-based rekey triggers. Optional components include a TCP control server for rekey orchestration, schedulers that drive automated rekeys and telemetry, and power monitors for hardware characterization.
+% Part II: The Domain
+\part{The Domain: Drones and Secure Communication}
+\input{chapters/ch05-mavlink}
+\input{chapters/ch06-architecture}
 
-\section{Threat Model and Assumptions}
-The design assumes an active network adversary who can intercept, replay, or inject packets on the untrusted link. TCP handshake authenticity is enforced via GCS signature and drone PSK; confidentiality and integrity are provided by the negotiated AEAD. Replay protection is required on both directions. Hosts and keys are assumed uncompromised; OS-level hardening is outside scope. NAT traversal is optional; strict peer matching is enabled by default.
+% Part III: The Implementation
+\part{The Implementation}
+\input{chapters/ch07-handshake}
+\input{chapters/ch08-aead-framing}
+\input{chapters/ch09-proxy-engine}
+\input{chapters/ch10-suites}
 
-\chapter{Configuration Surface}\label{chap:config}
-\section{Global Defaults (core/config.py, CONFIG)}
-All runtime keys live in a single CONFIG map that defines network ports, host defaults, crypto knobs, scheduler parameters, and automation settings. Required keys and types are declared in \texttt{\_REQUIRED\_KEYS}; anything missing or mistyped fails validation. Defaults target LAN addresses (e.g., DRONE\_HOST/GCS\_HOST), enforce replay window bounds, set WIRE\_VERSION=1, and leave DRONE\_PSK empty to force env injection outside development.
+% Part IV: Orchestration and Measurement
+\part{Orchestration and Measurement}
+\input{chapters/ch11-scheduler}
+\input{chapters/ch12-metrics}
+\input{chapters/ch13-dashboard}
 
-\section{Validation Logic (validate\_config)}
-The validator checks presence and types for all required keys, bounds TCP/UDP ports to 1--65535, freezes WIRE\_VERSION to 1, and requires REPLAY\_WINDOW within [64, 8192]. Hosts must parse as IP literals; plaintext hosts may be restricted to loopback unless ALLOW\_NON\_LOOPBACK\_PLAINTEXT is set. ENCRYPTED\_DSCP is bounded to 0--63. DRONE\_PSK must be hex and 32 bytes when provided, and is mandatory when ENV != ``dev'' (see core/config.py\#L401-L470).
+% Part V: Engineering and Reflection
+\part{Engineering and Reflection}
+\input{chapters/ch14-engineering}
+\input{chapters/ch15-conclusion}
 
-\section{Environment Overrides (_apply\_env\_overrides)}
-Environment variables listed in \texttt{\_ENV\_OVERRIDABLE} are parsed with type-aware casting (int/str/bool/float) and merged before validation. Unsupported keys or malformed literals raise ConfigError, preventing partial override application (see core/config.py\#L508-L549). This preserves a single source of truth while allowing per-host tuning without editing code.
+% ── Appendices ─────────────────────────────────────────────────────────────
+\appendix
+\input{chapters/appendix-a-config}
+\input{chapters/appendix-b-wire}
+\input{chapters/appendix-c-schema}
 
-\section{Operational Profiles}
-The ENV guard treats ``dev'' as permissive (DRONE\_PSK may be empty) and non-dev as strict (DRONE\_PSK required). CONTROL\_COORDINATOR\_ROLE defaults to ``gcs'' but can be flipped to ``drone'' via env. ENABLE\_TCP\_CONTROL is opt-in; STRICT\_UDP\_PEER\_MATCH and STRICT\_HANDSHAKE\_IP default to True to pin traffic to the authenticated peer unless NAT overrides are necessary.
-
-\section{Port Map}
-\begin{longtable}{llp{8cm}}
-\toprule
-Port/Key & Role & Notes \\
-\midrule
-\endfirsthead
-\toprule
-Port/Key & Role & Notes \\
-\midrule
-\endhead
-TCP\_HANDSHAKE\_PORT & Handshake & 46000 (GCS listens, drone connects). \\
-UDP\_DRONE\_RX & Encrypted data plane (drone bind) & 46012 (GCS sends here). \\
-UDP\_GCS\_RX & Encrypted data plane (gcs bind) & 46011 (drone sends here). \\
-DRONE\_PLAINTEXT\_TX/RX & Local app interface (drone) & 47003/47004 on 127.0.0.1; feeds FC/app to proxy. \\
-GCS\_PLAINTEXT\_TX/RX & Local app interface (gcs) & 47001/47002 on 127.0.0.1; feeds ground apps. \\
-GCS\_TELEMETRY\_PORT & Telemetry (GCS\,$\to$\,Drone) & 52080 UDP feedback channel. \\
-DRONE\_CONTROL\_PORT & Optional TCP control & 48080; drone side when ENABLE\_TCP\_CONTROL. \\
-GCS\_CONTROL\_PORT & Optional TCP control & 48080; GCS side when ENABLE\_TCP\_CONTROL. \\
-DRONE\_TO\_GCS\_CTL\_PORT & Encrypted control return & 48181; drone-originated control over encrypted plane. \\
-\bottomrule
-\end{longtable}
-
-\part{Cryptographic Pipeline}
-\chapter{Suite Registry and Selection}
-\section{Registry Structure (core/suites.py)}
-KEM, signature, and AEAD registries are explicit dictionaries with display names, OQS names, parameter IDs, and tokens. Alias maps normalize legacy names and shorthand; \_build\_alias\_map folds each entry's aliases, oqs\_name, display\_name, and token into a case-insensitive lookup (core/suites.py\#L430-L463). This guarantees consistent resolution even when OQS exposes variant capitalizations.
-
-\section{Suite Composition (build\_suite\_id, \_compose\_suite)}
-Suites are composed only from primitives sharing the same NIST level. \texttt{build\_suite\_id} resolves aliases and returns the canonical identifier \texttt{cs-<kem>-<aead>-<sig>} (core/suites.py\#L467-L489). \texttt{\_compose\_suite} embeds KEM/SIG parameter IDs and the AEAD token, raising if levels mismatch to prevent downgrade by mix-level pairing (core/suites.py\#L508-L545). Level-consistent matrices drive deterministic suite generation across all AEAD options.
-
-\section{Runtime Filtering (available\_aead\_tokens, enabled\_sigs)}
-AEAD availability is probed at runtime: ChaCha20-Poly1305 is optional; Ascon-128a is gated by CONFIG flags and native/pyascon backends. \texttt{available\_aead\_tokens} returns only working tokens while exposing missing-reason details for diagnostics (core/suites.py\#L390-L429). Signature availability is detected via OQS loader fallbacks, and \texttt{\_prune\_suites\_for\_runtime} removes suites whose signatures are not present, logging the removed set while keeping registry immutability (core/suites.py\#L640-L712).
-
-\section{Header ID Mapping (header\_ids\_for\_suite)}
-Each suite embeds deterministic header bytes (kem\_id, kem\_param\_id, sig\_id, sig\_param\_id). \texttt{header\_ids\_for\_suite} extracts the tuple used by the AEAD header encoder; \texttt{header\_ids\_from\_names} resolves IDs from negotiated names for async proxy fast-paths (core/suites.py\#L756-L790). These IDs bind the encrypted stream to the authenticated handshake transcript.
-
-\section{Tables}
-Add a matrix of suite IDs with NIST level, AEAD token, and header IDs, generated from SUITES to avoid drift.
-
-\chapter{Handshake Protocol}\label{chap:handshake}
-\section{Key Roles}
-The GCS runs the TCP handshake server, signs the transcript, and decapsulates KEM ciphertexts; the drone runs the TCP client, verifies the signature, encapsulates, and authenticates with a PSK tag. Both sides capture timings for keygen/encap/decap/sign/verify to inform suite selection.
-
-\section{ServerHello Construction (build\_server\_hello)}
-The server selects a suite, generates a KEM keypair, and signs a transcript binding WIRE\_VERSION, session ID, kem/sig names, and KEM public key (core/handshake.py\#L115-L208). It seeds metrics with role/suite metadata and records wall/perf timings for KEM keygen and signature generation. The wire format is length-prefixed and includes version, name lengths, session ID, challenge, KEM pub, and signature.
-
-\section{ServerHello Verification (parse\_and\_verify\_server\_hello)}
-The client parses the length-prefixed message, reconstructs the transcript verbatim, and verifies the signature using the pinned GCS public key (core/handshake.py\#L199-L290). Downgrade is prevented by embedding version and algorithm names into the signed transcript. Metrics capture signature verify timings and KEM public key sizes when provided.
-
-\section{PSK Auth Tag (\_drone\_psk\_bytes)}
-After receiving the ciphertext, the GCS validates an HMAC-SHA256 tag over the raw ServerHello using the drone PSK (core/handshake.py\#L305-L338, core/handshake.py\#L440-L475). The PSK must be 32 bytes of hex and is mandatory outside ``dev'' environment; missing or malformed secrets abort the handshake.
-
-\section{Client Encapsulation (client\_encapsulate)}
-The drone instantiates the negotiated KEM, encapsulates with the server’s public key, and records ciphertext length plus timing for encap (core/handshake.py\#L314-L343). Failures raise HandshakeError and free OQS resources when possible.
-
-\section{Server Decapsulation (server\_decapsulate)}
-The GCS uses the ephemeral KEM object retained from ServerHello construction to decapsulate and logs timing plus ciphertext/shared-secret sizes (core/handshake.py\#L345-L381). Ephemeral objects are freed and nulled to avoid reuse.
-
-\section{Key Derivation (derive\_transport\_keys)}
-Both sides derive 64 bytes via HKDF-SHA256 with salt ``pq-drone-gcs|hkdf|v1'' and info binding session ID, KEM name, and SIG name (core/handshake.py\#L382-L428). The tuple is split into direction-specific keys; ordering differs by role to align send/receive perspectives. Metrics optionally record derivation timings.
-
-\section{Full Flows (server\_gcs\_handshake, client\_drone\_handshake)}
-\texttt{server\_gcs\_handshake} sends the ServerHello, receives ciphertext and PSK tag, verifies tag, decapsulates, derives keys, and finalizes metrics including total handshake time (core/handshake.py\#L429-L525). \texttt{client\_drone\_handshake} enforces socket timeouts, parses and verifies ServerHello, checks suite match, generates ciphertext, computes HMAC tag, and sends both with length prefixes (core/handshake.py\#L539-L653). Both paths are strict: any verification failure aborts with HandshakeVerifyError.
-
-\section{Message Formats}
-Document the length-prefixed ServerHello fields and the tuple (ciphertext length, ciphertext, HMAC tag) sent by the drone; include diagrams for clarity.
-
-\chapter{AEAD Framing and Replay Protection}
-\section{Header Format and Epochs}
-Headers pack version, kem/sig IDs, session ID, sequence number, and epoch using \texttt{HEADER\_STRUCT = !BBBBB8sQB} (core/aead.py\#L33-L45). The IV is not transmitted; only header+ciphertext are on the wire. Epoch increments accompany rekeys and forbid wrapping 255\,$\to$\,0 without a new handshake.
-
-\section{Nonce Construction (\_build\_nonce)}
-Nonces are deterministic: one epoch byte plus 11-byte sequence, optionally right-padded when AEAD nonce length exceeds 12 (core/aead.py\#L166-L191). This design removes IV-on-wire overhead while preserving unique nonces until REKEY\_SEQ\_THRESHOLD triggers.
-
-\section{Token Support (\_canonicalize\_aead\_token, \_instantiate\_aead)}
-Tokens are validated against a supported set and reject retired aliases (core/aead.py\#L47-L77). Instantiation enforces key sizes: AES-256-GCM and ChaCha20-Poly1305 require 32-byte keys; Ascon-128a accepts 16-byte keys with optional strict 16-byte enforcement (core/aead.py\#L79-L165). Ascon prefers native C backend and falls back to pyascon with consistent error signaling.
-
-\section{Sender State Machine (Sender.encrypt, bump\_epoch)}
-Sender validates wire version, IDs, session ID length, and epoch bounds at construction. Encryption packs the header, derives IV from epoch/seq, enforces REKEY\_SEQ\_THRESHOLD (default 2\textsuperscript{63}), and increments sequence after successful AEAD encryption (core/aead.py\#L193-L286). \texttt{bump\_epoch} resets sequence and forbids epoch wrap to prevent IV reuse.
-
-\section{Receiver State Machine (Receiver.decrypt, \_check\_replay)}
-Receiver mirrors validation and uses \_check\_replay to maintain a sliding bitmask window over the highest seen sequence, rejecting duplicates and too-old packets (core/aead.py\#L288-L421). In strict mode it raises exceptions; in silent mode it returns None on header/session/epoch mismatch to avoid oracle leakage. Header binding ensures wrong session/IDs fail before decrypt.
-
-\section{Error Semantics}
-Header mismatches raise HeaderMismatch in strict mode; AeadAuthError wraps AEAD decrypt failures; ReplayError distinguishes duplicate vs. stale packets. SequenceOverflow signals proactive rekey needs when approaching IV exhaustion.
-
-\section{Tables}
-Add constants table covering REKEY\_SEQ\_THRESHOLD (default 2\textsuperscript{63}) and CONFIG.REPLAY\_WINDOW (64--8192).
-
-\chapter{Control Plane State Machine}
-\section{Data Structures (ControlState, ControlResult)}
-ControlState holds role, coordinator\_role, current\_suite, thread lock, outbox queue, pending request map, FSM state, active request ID, last rekey metadata, last status, and stats counters; seen request IDs are capped via a deque to 256 (core/policy_engine.py\#L20-L63). ControlResult aggregates outbound control messages, optional handshake triggers, and debug notes (core/policy_engine.py\#L66-L74).
-
-\section{Coordinator Role (set\_coordinator\_role, is\_coordinator)}
-Coordinator role normalizes to ``gcs'' or ``drone''; invalid inputs raise (core/policy_engine.py\#L76-L117). Helpers normalize config values and compare roles to decide which side drives commits, ensuring only the coordinator initiates rekeys.
-
-\section{Prepare/Commit Flow (request\_prepare, handle\_control)}
-\texttt{request\_prepare} moves the FSM to NEGOTIATING, enqueues a prepare\_rekey with suite and rid, and bumps counters (core/policy_engine.py\#L131-L157). \texttt{handle\_control} implements two-phase commit over packet-type 0x02: the coordinator processes prepare\_ok/fail and emits commit\_rekey; the follower accepts prepare\_rekey if safe and replies prepare\_ok or prepare\_fail, then executes commit\_rekey by starting a handshake (core/policy_engine.py\#L159-L259). Unknown or malformed messages are ignored with notes.
-
-\section{Outbox Handling (enqueue\_json)}
-Messages are queued via enqueue\_json into a thread-safe queue consumed by the proxy loop, decoupling control decisions from I/O (core/policy_engine.py\#L123-L129).
-
-\section{Metrics and Stats}
-Counters track prepare sent/received and rekey outcomes; timestamps for last rekey suite/ms and last status are recorded for status introspection (core/policy_engine.py\#L33-L63).
-
-\chapter{TCP Control Server (Optional)}
-\section{Server Lifecycle (ControlTcpServer.start/stop)}
-The control server is a threaded TCP listener that binds with SO\_REUSEADDR and 0.5s accept timeout; start() spins an accept loop thread and logs allowed peers, stop() sets a stop flag, closes the socket, and joins the thread (core/control_tcp.py\#L22-L105). Accept and client loops are defensive: errors are logged at debug level, secrets are never logged.
-
-\section{Authorization (_is\_allowed\_peer, _is\_allowed\_rekey\_peer)}
-Peers must be in an allow-list built from LAN/Tailscale hosts; loopback is always allowed for convenience (core/control_tcp.py\#L157-L188). Rekey commands are stricter: only drone endpoints (and loopback when server runs on drone) may request rekey, enforcing coordinator policy (core/control_tcp.py\#L190-L217).
-
-\section{Command Set (ping, status, rekey)}
-Commands are newline-delimited JSON: ping/health returns ok and coordinator role; status snapshots ControlState fields; rekey validates peer authorization, coordinator role, and suite ID via get\_suite, then calls request\_prepare returning rid on success (core/control_tcp.py\#L79-L154). Errors are explicit (unauthorized, missing\_suite, invalid\_suite, rekey\_failed).* 
-
-\section{Factory Helpers (start\_control\_server\_if\_enabled)}
-start\_control\_server\_if\_enabled selects role-specific host/port keys, builds allow-lists, derives coordinator\_role from config, constructs ControlTcpServer, and starts it if ENABLE\_TCP\_CONTROL is set (core/control_tcp.py\#L219-L265). Failure to bind yields None, leaving proxy without TCP control.
-
-\chapter{Proxy Runtime (Selector-Based)}
-\section{Process Layout}
-The proxy uses selectors (not asyncio) for deterministic I/O. Threads: optional TCP control server thread; optional manual console thread; main thread runs a selector loop over plaintext and encrypted UDP sockets with per-direction AEAD contexts. ControlPlane shares ControlState with lock-protected stats.
-
-\section{Handshake Invocation (_perform\_handshake)}
-Role-gated: GCS binds TCP on TCP\_HANDSHAKE\_PORT, rate-limits via per-IP token bucket, enforces DRONE\_HOST allowlist (STRICT\_HANDSHAKE\_IP), prunes rate-limit state, and performs server\_gcs\_handshake; drone connects outbound to GCS and runs client\_drone\_handshake (core/async_proxy.py\#L300-L470). I/O timeouts default to REKEY\_HANDSHAKE\_TIMEOUT (min 10s). Returned: send/recv keys, nonce seeds, session ID, optional kem/sig names, peer UDP addr, and handshake metrics.
-
-\section{Socket Wiring (_setup\_sockets)}
-Sockets are nonblocking UDP. Drone role binds encrypted at UDP\_DRONE\_RX and plaintext at DRONE\_PLAINTEXT\_TX (loopback by default); peers point to GCS_HOST/UDP\_GCS\_RX and local plaintext RX. GCS role mirrors with UDP\_GCS\_RX and plaintext ports (core/async_proxy.py\#L472-L560). ENCRYPTED\_DSCP is converted to TOS when set. Plaintext in/out may reuse the same socket to preserve source ports.
-
-\section{AEAD Context Construction (_build\_sender\_receiver)}
-Describe how AeadIds are derived from suite or header IDs when available, selecting AEAD token from suite aead token or CONFIG.ENABLE\_ASCON flags. (Fill with specific lines when added.)
-
-\section{Packet Flow (main loop)}
-Document selector loop: plaintext->encrypted path encrypts and forwards to peer; encrypted->plaintext path validates header, replay window, decrypts, and forwards to local app; control-plane messages (packet type 0x02 when ENABLE\_PACKET\_TYPE) are dispatched to policy\_engine and may trigger rekey. (Cite run\_proxy once sections are filled.)
-
-\section{Counters (ProxyCounters)}
-ProxyCounters tracks plaintext/encrypted in/out, drops (replay/auth/header/session/src), rekey outcomes, last rekey metadata, handshake metrics, and AEAD primitive timing histograms. It flattens OQS primitive metrics into part B fields (kem/sig times, sizes) for external reporting (core/async_proxy.py\#L24-L180).
-
-\section{Manual Control (_launch\_manual\_console)}
-Interactive console (when enabled) to inspect counters and trigger actions; document once lines are located.
-
-\section{TCP Control Integration}
-If ENABLE\_TCP\_CONTROL, start\_control\_server\_if\_enabled creates per-role listener and bridges JSON commands into policy\_engine state. Rekey worker watches ControlState, performs handshakes, and swaps AEAD contexts.
-
-\section{Error Handling}
-Drop reasons are classified before AEAD decrypt via _parse\_header\_fields, distinguishing header/ID/session mismatches vs auth/replay. Replay and auth failures increment granular counters; rate-limit and unauthorized peers are logged with role/expected/received context.
-
-\chapter{Process Lifecycle and Logging}
-\section{ManagedProcess}\TODO{Explain start/stop cross-platform safeguards.}\newline Inline ref: core/process.py:ManagedProcess (lines TBD).
-\section{Registry Cleanup (kill\_all\_managed\_processes)}\TODO{Describe atexit behavior.}\newline Inline ref: core/process.py:kill_all_managed_processes (lines TBD).
-\section{Logging Utilities}\TODO{Summarize JsonFormatter, get\_logger, configure\_file\_logger.}\newline Inline ref: core/logging_utils.py (lines TBD).
-\section{Exception Taxonomy}\TODO{List ConfigError, HandshakeError, AeadError, SequenceOverflow.}\newline Inline ref: core/exceptions.py (lines TBD).
-\section{CLI Entry (core/run\_proxy.py)}\TODO{Sketch subcommands (init-identity, gcs, drone) and argument surfaces.}\newline Inline ref: core/run_proxy.py (lines TBD).
-
-\part{Schedulers, Telemetry, and Policy}
-\chapter{Drone Scheduler (Controller)}
-\section{Telemetry Intake (TelemetryListener)}\TODO{Packet schema checks, logging, window feed.}\newline Inline ref: sscheduler/sdrone.py:TelemetryListener (lines TBD).
-\section{Decision Context (DecisionContext)}\TODO{Build DecisionInput and summarize telemetry.}\newline Inline ref: sscheduler/sdrone.py:DecisionContext (lines TBD).
-\section{Policy Evaluation (TelemetryAwarePolicyV2)}\TODO{Link to policy module and actions.}\newline Inline ref: sscheduler/policy.py:TelemetryAwarePolicyV2 (lines TBD).
-\section{Action Execution (execute\_action)}\TODO{Switch/rekey workflows and cooldown handling.}\newline Inline ref: sscheduler/sdrone.py:execute_action (lines TBD).
-\section{Echo Path (UdpEchoServer)}\TODO{Describe traffic loopback and counters.}\newline Inline ref: sscheduler/sdrone.py:UdpEchoServer (lines TBD).
-\section{Proxy Management (DroneProxyManager)}\TODO{Startup/shutdown, key lookup.}\newline Inline ref: sscheduler/sdrone.py:DroneProxyManager (lines TBD).
-\section{Main Loop (run\_scheduler)}\TODO{Tick cadence, logging, failure handling.}\newline Inline ref: sscheduler/sdrone.py:run_scheduler (lines TBD).
-\section{Tables}\TODO{Insert timing constants (cooldowns, TICK_INTERVAL_S).}
-
-\chapter{GCS Scheduler (Follower)}
-\section{Control Server (ControlServer)}\TODO{Command handling and telemetry loop.}\newline Inline ref: sscheduler/sgcs.py:ControlServer (lines TBD).
-\section{Proxy Management (GcsProxyManager)}\TODO{Start/stop logic and key material.}\newline Inline ref: sscheduler/sgcs.py:GcsProxyManager (lines TBD).
-\section{Telemetry Sender}\TODO{Sequenced UDP updates to drone.}\newline Inline ref: sscheduler/sgcs.py:TelemetrySender (lines TBD).
-\section{MAVProxy Lifecycle (start\_persistent\_mavproxy)}\TODO{Platform-specific flags and ports.}\newline Inline ref: sscheduler/sgcs.py:start_persistent_mavproxy (lines TBD).
-\section{Cleanup and Main}\TODO{Environment cleanup strategy.}\newline Inline ref: sscheduler/sgcs.py:cleanup_environment, main (lines TBD).
-
-\chapter{Policy Engine (Telemetry-Aware)}
-\section{Settings (load\_settings)}\TODO{Configurable thresholds and hysteresis.}\newline Inline ref: sscheduler/policy.py:load_settings (lines TBD).
-\section{Decision Input/Output (DecisionInput, PolicyOutput)}\TODO{Fields and invariants.}\newline Inline ref: sscheduler/policy.py:DecisionInput, PolicyOutput (lines TBD).
-\section{Scoring Logic (TelemetryAwarePolicyV2.evaluate)}\TODO{Explain gates: telemetry validity, safety, link, rekey limits.}\newline Inline ref: sscheduler/policy.py:TelemetryAwarePolicyV2.evaluate (lines TBD).
-\section{Suite Tiering (get\_suite\_tier)}\TODO{Mapping of algorithms to tiers.}\newline Inline ref: sscheduler/policy.py:get_suite_tier (lines TBD).
-\section{Rekey Accounting (record\_rekey)}\TODO{Windowed counting for rekey rate limits.}\newline Inline ref: sscheduler/policy.py:record_rekey (lines TBD).
-
-\chapter{Telemetry Collection and Windows}
-\section{GCS Metrics Collector (GcsMetricsCollector)}\TODO{MAVLink/UDP capture, sliding windows, schema v1.}\newline Inline ref: sscheduler/gcs_metrics.py:GcsMetricsCollector (lines TBD).
-\section{Local Monitor (LocalMonitor)}\TODO{Thermal/battery/cpu ROC computation.}\newline Inline ref: sscheduler/local_mon.py:LocalMonitor (lines TBD).
-\section{Sliding Window (TelemetryWindow)}\TODO{Confidence, jitter, missing sequence metrics.}\newline Inline ref: sscheduler/telemetry_window.py:TelemetryWindow (lines TBD).
-\section{Tables}\TODO{Add message schema table for telemetry packets.}
-
-\part{Power and Monitoring}
-\chapter{Power Monitoring Backends}
-\section{Interfaces (PowerMonitor, PowerSummary, PowerSample)}\TODO{Define protocol expectations.}\newline Inline ref: core/power_monitor.py (lines TBD).
-\section{INA219 Backend (Ina219PowerMonitor)}\TODO{Sampling loop, CSV logging, sign detection.}\newline Inline ref: core/power_monitor.py:Ina219PowerMonitor (lines TBD).
-\section{Raspberry Pi 5 hwmon (Rpi5PowerMonitor)}\TODO{Channel discovery and scaling.}\newline Inline ref: core/power_monitor.py:Rpi5PowerMonitor (lines TBD).
-\section{Pi PMIC (Rpi5PmicPowerMonitor)}\TODO{vcgencmd parsing and power derivation.}\newline Inline ref: core/power_monitor.py:Rpi5PmicPowerMonitor (lines TBD).
-\section{Factory (create\_power\_monitor)}\TODO{Backend selection rules and fallbacks.}\newline Inline ref: core/power_monitor.py:create_power_monitor (lines TBD).
-\section{Tables}\TODO{Backends vs dependencies vs sample rates.}
-
-\part{Appendices}
-\chapter{Command-Line Interfaces}
-\section{core/run\_proxy.py}
-\subsection{init-identity} \TODO{Describe inputs and outputs.}
-\subsection{gcs} \TODO{Describe required keys and files.}
-\subsection{drone} \TODO{Describe required keys and files.}
-\section{Scheduler Entrypoints} \TODO{Summaries for sscheduler/sdrone.py and sscheduler/sgcs.py.}
-
-\chapter{Open Questions and Design Gaps}
-\section{Design Intent Unclear}\TODO{List ambiguous behaviors and propose clarifications.}
-\section{Future Work}\TODO{Outline next documentation tasks and test gaps.}
-
+% ── Back Matter ────────────────────────────────────────────────────────────
 \backmatter
+
+\printbibliography[heading=bibintoc,title={Bibliography}]
+
+\input{chapters/colophon}
+
 \end{document}

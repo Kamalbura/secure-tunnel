@@ -1,0 +1,234 @@
+% ============================================================================
+%  CHAPTER 10 — THE SUITE REGISTRY
+% ============================================================================
+\chapter{The Suite Registry}
+\label{ch:suites}
+
+\epigraph{The suite registry is a Cartesian product machine: given $n$ KEMs, $m$ AEADs, and $k$ signatures, it generates $n \times m \times k$ suites---but only those that make cryptographic sense.}{}
+
+This chapter examines \filename{core/suites.py}, the module that defines, generates, validates, and resolves the 72+ cryptographic suites available in the system.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The Three Registries}
+\label{sec:suites-registries}
+
+The suite system is built from three independent registries:
+
+\subsection{KEM Registry}
+
+Nine entries across three families, each with a canonical token, OQS algorithm name, NIST level, and numeric IDs for the wire header:
+
+\begin{table}[htbp]
+  \centering
+  \caption{KEM registry entries.}
+  \label{tab:kem-registry}
+  \small
+  \begin{tabular}{llccc}
+    \toprule
+    \textbf{Token} & \textbf{OQS Name} & \textbf{Level} & \textbf{kem\_id} & \textbf{kem\_param\_id} \\
+    \midrule
+    \texttt{mlkem512}  & ML-KEM-512   & L1 & 1 & 1 \\
+    \texttt{mlkem768}  & ML-KEM-768   & L3 & 1 & 2 \\
+    \texttt{mlkem1024} & ML-KEM-1024  & L5 & 1 & 3 \\
+    \texttt{classicmceliece348864}  & Classic-McEliece-348864  & L1 & 3 & 1 \\
+    \texttt{classicmceliece460896}  & Classic-McEliece-460896  & L3 & 3 & 2 \\
+    \texttt{classicmceliece8192128} & Classic-McEliece-8192128 & L5 & 3 & 3 \\
+    \texttt{hqc128} & HQC-128 & L1 & 5 & 1 \\
+    \texttt{hqc192} & HQC-192 & L3 & 5 & 2 \\
+    \texttt{hqc256} & HQC-256 & L5 & 5 & 3 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Signature Registry}
+
+Eight entries across three families:
+
+\begin{table}[htbp]
+  \centering
+  \caption{Signature registry entries.}
+  \label{tab:sig-registry}
+  \small
+  \begin{tabular}{llccc}
+    \toprule
+    \textbf{Token} & \textbf{OQS Name} & \textbf{Level} & \textbf{sig\_id} & \textbf{sig\_param\_id} \\
+    \midrule
+    \texttt{mldsa44}  & ML-DSA-44  & L1 & 1 & 1 \\
+    \texttt{mldsa65}  & ML-DSA-65  & L3 & 1 & 2 \\
+    \texttt{mldsa87}  & ML-DSA-87  & L5 & 1 & 3 \\
+    \texttt{falcon512}  & Falcon-512  & L1 & 2 & 1 \\
+    \texttt{falcon1024} & Falcon-1024 & L5 & 2 & 2 \\
+    \texttt{sphincs128s} & SPHINCS+-SHA2-128s-simple & L1 & 3 & 1 \\
+    \texttt{sphincs192s} & SPHINCS+-SHA2-192s-simple & L3 & 3 & 2 \\
+    \texttt{sphincs256s} & SPHINCS+-SHA2-256s-simple & L5 & 3 & 3 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{AEAD Registry}
+
+Three entries, all paired with HKDF-SHA256 for key derivation:
+
+\begin{table}[htbp]
+  \centering
+  \caption{AEAD registry entries.}
+  \label{tab:aead-registry}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Token} & \textbf{Display Name} \\
+    \midrule
+    \texttt{aesgcm}           & AES-256-GCM \\
+    \texttt{chacha20poly1305}  & ChaCha20-Poly1305 \\
+    \texttt{ascon128a}         & Ascon-128a \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Suite Generation}
+\label{sec:suites-generation}
+
+Suites are generated in two stages:
+
+\subsection{Stage 1: Level-Consistent Pairing}
+
+The function \funcname{\_generate\_level\_consistent\_matrix()} iterates over all KEM--SIG pairs and keeps only those sharing the same NIST level:
+
+\begin{equation}
+  \text{Matrix} = \{(k, s) \mid k \in \text{KEMs}, s \in \text{SIGs}, \text{level}(k) = \text{level}(s)\}
+\end{equation}
+
+This produces:
+\begin{itemize}
+  \item L1: 3 KEMs $\times$ 3 SIGs = 9 pairs
+  \item L3: 3 KEMs $\times$ 2 SIGs = 6 pairs (no Falcon at L3)
+  \item L5: 3 KEMs $\times$ 3 SIGs = 9 pairs
+  \item Total: 24 KEM--SIG pairs
+\end{itemize}
+
+\subsection{Stage 2: AEAD Cross Product}
+
+Each KEM--SIG pair is crossed with all three AEAD tokens:
+
+\begin{equation}
+  \text{Suites} = \{(k, a, s) \mid (k, s) \in \text{Matrix}, a \in \{\text{aesgcm}, \text{chacha20poly1305}, \text{ascon128a}\}\}
+\end{equation}
+
+Total: $24 \times 3 = 72$ suites.
+
+\subsection{Suite ID Format}
+
+Each suite has a canonical identifier:
+
+\begin{equation}
+  \text{suite\_id} = \texttt{cs-}\langle\text{kem\_token}\rangle\texttt{-}\langle\text{aead\_token}\rangle\texttt{-}\langle\text{sig\_token}\rangle
+\end{equation}
+
+Examples:
+\begin{itemize}
+  \item \texttt{cs-mlkem768-aesgcm-mldsa65} (default suite)
+  \item \texttt{cs-classicmceliece348864-chacha20poly1305-falcon512}
+  \item \texttt{cs-hqc256-ascon128a-sphincs256s}
+\end{itemize}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Alias Resolution}
+\label{sec:suites-aliases}
+
+The registry supports extensive aliasing to handle the naming chaos of post-quantum cryptography:
+
+\begin{itemize}
+  \item \textbf{Legacy NIST names:} \texttt{kyber512} $\to$ \texttt{mlkem512}, \texttt{dilithium3} $\to$ \texttt{mldsa65}
+  \item \textbf{Case/punctuation variants:} \texttt{ML-KEM-768}, \texttt{ml-kem-768}, \texttt{mlkem768} all resolve to the same entry.
+  \item \textbf{Suite-level aliases:} \texttt{cs-kyber512-aesgcm-dilithium2} $\to$ \texttt{cs-mlkem512-aesgcm-mldsa44}
+  \item \textbf{SPHINCS+ variant aliases:} Both ``f'' (fast) and ``s'' (small) aliases map to the ``s'' variant.
+\end{itemize}
+
+Resolution uses \funcname{\_normalize\_alias()}, which strips all non-alphanumeric characters and lowercases, then looks up in a precomputed alias map.
+
+\begin{designdecision}
+Aggressive aliasing was a deliberate choice because the PQC naming landscape is in flux. NIST renamed Kyber to ML-KEM, Dilithium to ML-DSA, and SPHINCS+ to SLH-DSA during the standardization process. Research papers, library versions, and configuration files may use any of these names. The alias system ensures that all variants work without user confusion.
+\end{designdecision}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Runtime Probing}
+\label{sec:suites-probing}
+
+Not all algorithms are available on all platforms. The registry probes for availability at startup:
+
+\subsection{OQS Mechanism Discovery}
+
+\funcname{enabled\_kems()} and \funcname{enabled\_sigs()} query the \texttt{oqs-python} library for available mechanisms, trying multiple import styles for compatibility:
+
+\begin{lstlisting}[style=python, caption={Multi-style OQS import (simplified)}]
+try:
+    from oqs.oqs import get_enabled_KEM_mechanisms
+except ImportError:
+    from oqs import get_enabled_KEM_mechanisms
+\end{lstlisting}
+
+\subsection{AEAD Availability}
+
+\funcname{\_probe\_aead\_support()} checks:
+\begin{enumerate}
+  \item AES-GCM: always available (part of the \texttt{cryptography} library).
+  \item ChaCha20-Poly1305: available in most \texttt{cryptography} builds, but optional.
+  \item ASCON-128a: requires either the native C extension or the \texttt{pyascon} package. Can be disabled via \configkey{ENABLE\_ASCON}.
+\end{enumerate}
+
+\subsection{Suite Pruning}
+
+\funcname{\_prune\_suites\_for\_runtime()} filters the global \texttt{SUITES} registry, removing suites whose signature algorithms are not available in the current \texttt{oqs-python} build. This prevents runtime errors from attempting to use an unavailable algorithm.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Environment Overrides}
+\label{sec:suites-env}
+
+Two environment variables control suite generation:
+\begin{description}
+  \item[\texttt{SUITES\_IGNORE\_KEMS}:] Comma-separated list of KEM registry keys to exclude. Useful for skipping Classic McEliece in quick benchmark runs.
+  \item[\texttt{SUITES\_IGNORE\_AEADS}:] Comma-separated list of AEAD tokens to exclude.
+\end{description}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Query Functions}
+\label{sec:suites-query}
+
+The registry provides a rich API for querying suites:
+
+\begin{description}
+  \item[\funcname{list\_suites()}:] Returns all available suites as a dictionary.
+  \item[\funcname{get\_suite(suite\_id)}:] Returns a single suite by ID, resolving aliases.
+  \item[\funcname{list\_suites\_for\_level(level)}:] Returns suites restricted to a single NIST level.
+  \item[\funcname{filter\_suites\_by\_levels(levels)}:] Returns suite IDs matching any of the given levels.
+  \item[\funcname{valid\_nist\_levels()}:] Returns the distinct NIST levels present in the registry.
+  \item[\funcname{header\_ids\_for\_suite(suite)}:] Returns the four numeric IDs embedded in the wire header.
+  \item[\funcname{header\_ids\_from\_names(kem, sig)}:] Resolves header IDs from algorithm names.
+\end{description}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Immutability}
+\label{sec:suites-immutable}
+
+The generated registry is wrapped in \texttt{types.MappingProxyType}, a read-only dictionary view:
+
+\begin{lstlisting}[style=python, caption={Immutable registry}]
+from types import MappingProxyType
+SUITES = MappingProxyType(suites_dict)
+\end{lstlisting}
+
+This prevents accidental modification of the registry during runtime. The \funcname{get\_suite()} function returns a \textbf{copy} (\texttt{dict(suite)}) rather than the original, so callers can safely mutate the result.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Summary}
+\label{sec:suites-summary}
+
+\begin{itemize}
+  \item Three independent registries (KEM, SIG, AEAD) are crossed to produce suites.
+  \item \textbf{Level-consistent pairing} ensures that KEM and SIG share the same NIST security level.
+  \item \textbf{72 suites} are generated automatically from 9 KEMs $\times$ 3 AEADs $\times$ 8 SIGs (level-filtered).
+  \item Extensive \textbf{alias resolution} handles the naming chaos of evolving PQC standards.
+  \item \textbf{Runtime probing} discovers which algorithms are actually available and prunes unavailable suites.
+  \item The registry is \textbf{immutable} (MappingProxyType) to prevent accidental modification.
+  \item Environment variables allow KEM/AEAD exclusion for focused benchmark runs.
+\end{itemize}

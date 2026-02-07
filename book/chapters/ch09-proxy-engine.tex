@@ -1,0 +1,237 @@
+% ============================================================================
+%  CHAPTER 9 — THE PROXY ENGINE
+% ============================================================================
+\chapter{The Proxy Engine}
+\label{ch:proxy}
+
+\epigraph{The proxy is a bridge with a guard at each end: every packet must prove its identity before crossing.}{}
+
+This chapter examines the heart of the system: the selectors-based proxy engine in \filename{core/async\_proxy.py}. This single module (1,663 lines) manages the complete packet lifecycle: socket management, handshake orchestration, encryption, decryption, rate limiting, rekey, and metrics collection.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Role Duality}
+\label{sec:proxy-roles}
+
+The same code runs on both the drone and the GCS. The \texttt{role} parameter determines behavior:
+
+\begin{description}
+  \item[\texttt{role="drone"}:] The drone proxy is the TCP \textbf{client} (initiates the handshake) and bridges plaintext ports 47003/47004.
+  \item[\texttt{role="gcs"}:] The GCS proxy is the TCP \textbf{server} (listens for the handshake) and bridges plaintext ports 47001/47002.
+\end{description}
+
+The data-plane encryption/decryption logic is identical for both roles---only the direction-specific keys differ (\texttt{key\_d2g} vs. \texttt{key\_g2d}).
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Socket Architecture}
+\label{sec:proxy-sockets}
+
+The proxy manages four UDP sockets, all registered with the \texttt{selectors} event loop:
+
+\begin{table}[htbp]
+  \centering
+  \caption{The four UDP sockets managed by the proxy.}
+  \label{tab:proxy-sockets}
+  \begin{tabular}{lllp{6cm}}
+    \toprule
+    \textbf{Socket} & \textbf{Bind} & \textbf{Direction} & \textbf{Purpose} \\
+    \midrule
+    Plaintext IN  & \texttt{127.0.0.1:4700x} & App $\to$ Proxy & Receives plaintext MAVLink from local app \\
+    Plaintext OUT & (sendto)                  & Proxy $\to$ App & Delivers decrypted MAVLink to local app \\
+    Encrypted IN  & \texttt{0.0.0.0:4601x}    & Peer $\to$ Proxy & Receives encrypted packets from network \\
+    Encrypted OUT & (sendto)                  & Proxy $\to$ Peer & Sends encrypted packets to peer over network \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{keyinsight}
+The plaintext sockets bind to \texttt{127.0.0.1} (loopback only), ensuring that unencrypted traffic cannot leak onto the network. The encrypted sockets bind to \texttt{0.0.0.0} (all interfaces), allowing the peer to reach them over WiFi. This binding separation is a security invariant.
+\end{keyinsight}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The Event Loop}
+\label{sec:proxy-loop}
+
+The main event loop uses \texttt{selectors.DefaultSelector} (typically \texttt{epoll} on Linux, \texttt{select} on Windows):
+
+\begin{lstlisting}[style=python, caption={Simplified event loop (conceptual)}]
+sel = selectors.DefaultSelector()
+sel.register(ptx_in_sock, EVENT_READ, handle_plaintext_in)
+sel.register(enc_in_sock, EVENT_READ, handle_encrypted_in)
+
+while not stop_event.is_set():
+    events = sel.select(timeout=0.1)
+    for key, mask in events:
+        callback = key.data
+        callback(key.fileobj)
+    
+    # Periodic tasks: rekey checks, metrics sampling, 
+    # rate-limit pruning, control channel polling
+    periodic_tick()
+\end{lstlisting}
+
+\subsection{Plaintext Ingress Path}
+
+When the plaintext-in socket is readable:
+\begin{enumerate}
+  \item \texttt{recvfrom()} reads the datagram (up to 65535 bytes).
+  \item The proxy calls \funcname{Sender.encrypt(plaintext)}.
+  \item The resulting wire packet is sent to the peer's encrypted port via \texttt{sendto()}.
+  \item Counters are updated: \texttt{ptx\_in++}, \texttt{enc\_out++}, byte counts.
+\end{enumerate}
+
+\subsection{Encrypted Ingress Path}
+
+When the encrypted-in socket is readable:
+\begin{enumerate}
+  \item \texttt{recvfrom()} reads the datagram and source address.
+  \item \textbf{Source address check:} If \configkey{STRICT\_UDP\_PEER\_MATCH} is enabled, verify the source IP matches the expected peer. Drop silently if not.
+  \item The proxy calls \funcname{Receiver.decrypt(wire)}.
+  \item If decryption returns \texttt{None} (silent mode): increment the appropriate drop counter based on \funcname{last\_error\_reason()}.
+  \item If decryption succeeds: send the plaintext to the local app via \texttt{sendto()} on the plaintext-out socket.
+  \item Counters are updated: \texttt{enc\_in++}, \texttt{ptx\_out++}, byte counts.
+\end{enumerate}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Handshake Orchestration}
+\label{sec:proxy-handshake}
+
+The proxy performs the TCP handshake before entering the main event loop:
+
+\begin{description}
+  \item[GCS (server) mode:] Binds a TCP socket to port 46000, calls \texttt{accept()} with a configurable deadline, then executes \funcname{server\_gcs\_handshake()} from \filename{core/handshake.py}.
+  
+  \item[Drone (client) mode:] Creates a TCP socket, connects to the GCS at \texttt{<GCS\_HOST>:46000}, then executes \funcname{client\_drone\_handshake()}.
+\end{description}
+
+The handshake returns:
+\begin{itemize}
+  \item Two 32-byte symmetric keys (send and receive).
+  \item The 8-byte session ID.
+  \item The negotiated KEM and SIG algorithm names.
+  \item The authenticated peer address (from TCP \texttt{getpeername()}).
+  \item A metrics dictionary with nanosecond-precision timings.
+\end{itemize}
+
+\begin{implementationnote}
+The GCS mode includes IP-based \textbf{rate limiting} on the TCP accept path using a token bucket algorithm. This prevents handshake flood attacks, where an attacker rapidly connects and forces expensive KEM key generation (especially problematic for Classic McEliece). The default allows 3 handshake attempts per second per IP with a burst capacity of 5.
+\end{implementationnote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Rate Limiting}
+\label{sec:proxy-ratelimit}
+
+The \classname{\_TokenBucket} class implements per-IP rate limiting:
+
+\begin{description}
+  \item[Capacity:] Maximum burst size (default: 5 tokens).
+  \item[Refill rate:] Tokens per second (default: 3/second).
+  \item[Pruning:] Stale entries are removed after a configurable idle timeout to prevent memory growth during long-running deployments.
+\end{description}
+
+Each incoming TCP connection attempt consumes one token. If the bucket for that IP is empty, the connection is rejected without performing any cryptographic work.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Drop Accounting}
+\label{sec:proxy-drops}
+
+The \classname{ProxyCounters} class tracks every packet drop with granular reasons:
+
+\begin{table}[htbp]
+  \centering
+  \caption{Drop reason counters in the proxy.}
+  \label{tab:drop-reasons}
+  \begin{tabular}{lp{9cm}}
+    \toprule
+    \textbf{Counter} & \textbf{Meaning} \\
+    \midrule
+    \texttt{drop\_replay}       & Packet failed anti-replay check (duplicate or too old) \\
+    \texttt{drop\_auth}          & AEAD authentication failed (tampered or wrong key) \\
+    \texttt{drop\_header}        & Header validation failed (wrong version or algorithm IDs) \\
+    \texttt{drop\_session\_epoch} & Session ID or epoch mismatch \\
+    \texttt{drop\_src\_addr}     & Source IP did not match expected peer \\
+    \texttt{drop\_other}         & Any other failure \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The \funcname{\_parse\_header\_fields()} helper pre-classifies packets without performing AEAD work, enabling the proxy to report the most likely drop reason when decryption returns \texttt{None} in silent mode.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{DSCP Marking}
+\label{sec:proxy-dscp}
+
+The proxy supports DSCP (Differentiated Services Code Point) marking on encrypted packets:
+
+\begin{lstlisting}[style=python, caption={DSCP socket option}]
+tos = dscp_value << 2   # DSCP occupies upper 6 bits of TOS byte
+sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, tos)
+\end{lstlisting}
+
+This allows network equipment (routers, access points) to prioritize tunnel traffic over background traffic, which is important for maintaining low-latency MAVLink communication.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Rekey Integration}
+\label{sec:proxy-rekey}
+
+The proxy integrates with the policy engine for seamless rekey:
+
+\begin{enumerate}
+  \item The policy engine requests a rekey (via the two-phase commit protocol).
+  \item The proxy enters a \textbf{blackout period}: it stops encrypting new packets while the rekey handshake executes.
+  \item A new TCP handshake is performed (same as initial, but with the new suite).
+  \item If the handshake succeeds: new \classname{Sender} and \classname{Receiver} are instantiated with fresh keys.
+  \item If the handshake fails: the proxy reverts to the previous keys (abort path).
+  \item The blackout duration is recorded as a metric (\texttt{rekey\_blackout\_duration\_ms}).
+\end{enumerate}
+
+\begin{keyinsight}
+During the blackout, packets arriving on the encrypted port may be encrypted with either the old or new keys. The receiver checks the session ID and epoch in the header to determine which keys to use, ensuring a smooth transition.
+\end{keyinsight}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Metrics Collection}
+\label{sec:proxy-metrics}
+
+The \classname{ProxyCounters} collects real-time metrics:
+
+\begin{itemize}
+  \item \textbf{Packet counts:} Plaintext in/out, encrypted in/out.
+  \item \textbf{Byte counts:} Total bytes in each direction.
+  \item \textbf{Drop counts:} Per-reason drop accounting.
+  \item \textbf{Rekey statistics:} Success/failure counts, last rekey duration, blackout duration, trigger reason.
+  \item \textbf{AEAD primitive timing:} Per-operation nanosecond-precision timing for encrypt, decrypt-success, and decrypt-failure, aggregated as count, total, min, max.
+  \item \textbf{Part B metrics:} Flattened handshake metrics (KEM keygen/encap/decap, SIG sign/verify times and artifact sizes).
+\end{itemize}
+
+The \funcname{to\_dict()} method serializes all counters into a dictionary that is consumed by the metrics aggregator and ultimately written to the JSONL benchmark output.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The CLI Entry Point}
+\label{sec:proxy-cli}
+
+The \filename{core/run\_proxy.py} module provides three subcommands:
+
+\begin{description}
+  \item[\texttt{init-identity}:] Generates a fresh signature key pair for the GCS. Saves the private key and public key to files.
+  
+  \item[\texttt{gcs}:] Launches the GCS proxy. Loads the GCS signature private key, starts the handshake server, and enters the event loop.
+  
+  \item[\texttt{drone}:] Launches the drone proxy. Loads the GCS public key (pre-installed), connects to the GCS, and enters the event loop.
+\end{description}
+
+Matrix-mode key loading is supported for benchmarking: the system can load different signature key pairs for different suites, enabling automated testing of all 72 suites without manual key management.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Summary}
+\label{sec:proxy-summary}
+
+\begin{itemize}
+  \item The proxy runs on both drone and GCS, distinguished only by \texttt{role} and configuration.
+  \item Four UDP sockets handle the two directions (plaintext and encrypted) of the bidirectional tunnel.
+  \item The selectors-based event loop processes packets as they arrive, with periodic tasks for rekey, metrics, and rate-limit pruning.
+  \item IP-based rate limiting (token bucket) protects the handshake from flood attacks.
+  \item Granular drop accounting enables precise diagnosis of packet loss.
+  \item DSCP marking enables QoS prioritization on the network.
+  \item Rekey transitions are managed via a blackout period with old/new key coexistence.
+  \item AEAD primitive timing is collected at nanosecond precision for benchmarking.
+\end{itemize}

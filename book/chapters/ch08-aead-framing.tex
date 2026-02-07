@@ -1,0 +1,291 @@
+% ============================================================================
+%  CHAPTER 8 — AEAD FRAMING AND WIRE FORMAT
+% ============================================================================
+\chapter{AEAD Framing and Wire Format}
+\label{ch:aead}
+
+\epigraph{Every byte on the wire is either explicitly specified or deliberately absent. There are no ``reserved for future use'' fields in a 22-byte header.}{}
+
+This chapter describes the wire format: how plaintext MAVLink datagrams are transformed into authenticated, encrypted packets for transmission.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Wire Packet Structure}
+\label{sec:aead-wire}
+
+Every encrypted packet consists of exactly two parts:
+
+\begin{equation}
+  \text{Wire Packet} = \underbrace{\text{Header}}_{\text{22 bytes, cleartext}} \,\|\, \underbrace{\text{Ciphertext} + \text{Tag}}_{\text{payload length + 16 bytes}}
+\end{equation}
+
+The header is \textbf{not encrypted} but \textbf{is authenticated}: it is passed as Associated Data (AAD) to the AEAD algorithm. Tampering with any header byte invalidates the authentication tag.
+
+\subsection{Header Format}
+
+The header is packed using the Python \texttt{struct} format \texttt{!BBBBB8sQB} (22 bytes):
+
+\begin{table}[htbp]
+  \centering
+  \caption{AEAD packet header fields (22 bytes total).}
+  \label{tab:aead-header}
+  \begin{tabular}{cllcl}
+    \toprule
+    \textbf{Offset} & \textbf{Field} & \textbf{Type} & \textbf{Bytes} & \textbf{Description} \\
+    \midrule
+    0  & \texttt{version}    & \texttt{B} (uint8)   & 1 & Wire protocol version (currently 1) \\
+    1  & \texttt{kem\_id}    & \texttt{B} (uint8)   & 1 & KEM family identifier \\
+    2  & \texttt{kem\_param} & \texttt{B} (uint8)   & 1 & KEM parameter set within family \\
+    3  & \texttt{sig\_id}    & \texttt{B} (uint8)   & 1 & Signature family identifier \\
+    4  & \texttt{sig\_param} & \texttt{B} (uint8)   & 1 & Signature parameter set \\
+    5--12  & \texttt{session\_id} & \texttt{8s} (bytes) & 8 & Random session identifier \\
+    13--20 & \texttt{seq}         & \texttt{Q} (uint64) & 8 & Monotonic sequence number \\
+    21 & \texttt{epoch}       & \texttt{B} (uint8)   & 1 & Epoch counter (incremented on rekey) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{keyinsight}
+The header contains the algorithm identifiers (\texttt{kem\_id}, \texttt{kem\_param}, \texttt{sig\_id}, \texttt{sig\_param}) that were negotiated during the handshake. The receiver validates these before attempting decryption. This prevents an attacker from reusing a captured packet from a different session or suite.
+\end{keyinsight}
+
+\subsection{What Is NOT on the Wire}
+
+The \textbf{nonce (IV)} is \emph{not transmitted}. Both sides derive it deterministically from the epoch and sequence number that are already in the header:
+
+\begin{equation}
+  \text{nonce} = \underbrace{\text{epoch}}_{\text{1 byte}} \,\|\, \underbrace{\text{seq}}_{\text{11 bytes, big-endian}}
+\end{equation}
+
+For AEAD algorithms requiring a 12-byte nonce (AES-GCM, ChaCha20-Poly1305), this produces exactly 12 bytes. For ASCON-128a (16-byte nonce), four zero bytes are appended.
+
+\begin{designdecision}
+Omitting the nonce from the wire saves 12 bytes per packet. For a 50-byte MAVLink message, this reduces the encrypted packet from 100 bytes to 88 bytes---a 12\% reduction. Over a stream of 50 packets/second, this saves 600 bytes/second, which matters on bandwidth-constrained radio links.
+\end{designdecision}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The Sender}
+\label{sec:aead-sender}
+
+The \classname{Sender} dataclass manages the encryption side:
+
+\begin{lstlisting}[style=python, caption={Sender initialization}]
+sender = Sender(
+    version=1,
+    ids=AeadIds(kem_id=1, kem_param=2, sig_id=1, sig_param=2),
+    session_id=session_id,       # 8 bytes from handshake
+    epoch=0,
+    key_send=key_drone_to_gcs,   # 32 bytes from HKDF
+    aead_token="aesgcm"          # or "chacha20poly1305" or "ascon128a"
+)
+\end{lstlisting}
+
+\subsection{Encryption Flow}
+
+\begin{enumerate}
+  \item \textbf{Sequence overflow check:} If the current sequence number exceeds the configured threshold (\configkey{REKEY\_SEQ\_THRESHOLD}, default $2^{63}$), raise \texttt{SequenceOverflow} to force a rekey before IV exhaustion.
+  
+  \item \textbf{Pack header:} Serialize the 22-byte header using the current sequence number.
+  
+  \item \textbf{Build nonce:} Derive the 12-byte (or 16-byte) nonce from epoch + sequence.
+  
+  \item \textbf{Encrypt:} Call the AEAD primitive:
+  \begin{lstlisting}[style=python]
+ciphertext_and_tag = cipher.encrypt(nonce, plaintext, header_as_aad)
+  \end{lstlisting}
+  This produces ciphertext of the same length as the plaintext, plus a 16-byte authentication tag appended to it.
+  
+  \item \textbf{Increment sequence:} Only on successful encryption.
+  
+  \item \textbf{Return wire packet:} \texttt{header || ciphertext\_and\_tag}.
+\end{enumerate}
+
+\begin{securitynote}
+The sequence number is incremented \textbf{only on success}. If encryption fails (which should never happen with valid inputs), the sequence is not consumed, preserving the invariant that each sequence number is used exactly once.
+\end{securitynote}
+
+\subsection{Epoch Management}
+
+The \funcname{bump\_epoch()} method increments the epoch and resets the sequence to zero. This is used during rekey transitions.
+
+\begin{equation}
+  \text{After bump\_epoch():} \quad \text{epoch} = \text{epoch} + 1, \quad \text{seq} = 0
+\end{equation}
+
+A critical safety check prevents the epoch from wrapping from 255 to 0 (which would cause nonce reuse):
+
+\begin{lstlisting}[style=python, caption={Epoch wrap protection}]
+if self.epoch == 255:
+    raise AeadError("epoch wrap forbidden without rekey")
+\end{lstlisting}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The Receiver}
+\label{sec:aead-receiver}
+
+The \classname{Receiver} dataclass manages the decryption and validation side:
+
+\subsection{Decryption Flow}
+
+\begin{enumerate}
+  \item \textbf{Extract header:} Read the first 22 bytes.
+  
+  \item \textbf{Validate header:}
+  \begin{itemize}
+    \item Version must match.
+    \item Algorithm IDs (kem\_id, kem\_param, sig\_id, sig\_param) must match.
+    \item Session ID must match.
+    \item Epoch must match.
+  \end{itemize}
+  If any check fails: return \texttt{None} (silent drop) or raise an exception (strict mode).
+  
+  \item \textbf{Anti-replay check:} Verify the sequence number against the sliding window (\Cref{sec:aead-replay}).
+  
+  \item \textbf{Reconstruct nonce:} Derive the same nonce that the sender used.
+  
+  \item \textbf{Decrypt and authenticate:}
+  \begin{lstlisting}[style=python]
+plaintext = cipher.decrypt(nonce, ciphertext_and_tag, header_as_aad)
+  \end{lstlisting}
+  If the tag does not match (any tampering with header, ciphertext, or tag), the \texttt{cryptography} library raises \texttt{InvalidTag}.
+  
+  \item \textbf{Return plaintext:} The original MAVLink datagram.
+\end{enumerate}
+
+\subsection{Error Handling Modes}
+
+The Receiver supports two modes:
+
+\begin{description}
+  \item[Silent mode (\texttt{strict\_mode=False}):] Returns \texttt{None} on any validation failure. Used in the production proxy, where invalid packets should be silently dropped (per cryptographic best practices---revealing error details aids attackers).
+  
+  \item[Strict mode (\texttt{strict\_mode=True}):] Raises specific exceptions (\texttt{HeaderMismatch}, \texttt{ReplayError}, \texttt{AeadAuthError}). Used in tests and benchmarks for precise error diagnosis.
+\end{description}
+
+The Receiver tracks the reason for the last failure in \funcname{last\_error\_reason()}, returning one of: \texttt{"header"}, \texttt{"session"}, \texttt{"replay"}, \texttt{"auth"}, or \texttt{None} (success).
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The Sliding Replay Window}
+\label{sec:aead-replay}
+
+The anti-replay mechanism uses a bitmask-based sliding window:
+
+\begin{description}
+  \item[\texttt{\_high}:] The highest sequence number seen so far ($-1$ initially).
+  \item[\texttt{\_mask}:] A bitmask where bit $i$ indicates whether sequence $\text{\_high} - i$ has been received.
+  \item[\texttt{window}:] The window size (default: 1024 packets).
+\end{description}
+
+\subsection{Decision Logic}
+
+When a packet with sequence number $s$ arrives:
+
+\begin{enumerate}
+  \item \textbf{If $s > \text{\_high}$:} This is a new (future) packet.
+  \begin{itemize}
+    \item Shift the bitmask left by $s - \text{\_high}$ positions.
+    \item Set bit 0 (mark $s$ as seen).
+    \item Update $\text{\_high} = s$.
+    \item \textbf{Accept.}
+  \end{itemize}
+  
+  \item \textbf{If $s > \text{\_high} - \text{window}$:} This is a recent packet within the window.
+  \begin{itemize}
+    \item Compute offset $= \text{\_high} - s$.
+    \item If bit at position \texttt{offset} is set: \textbf{Reject} (duplicate/replay).
+    \item Otherwise: set the bit. \textbf{Accept.}
+  \end{itemize}
+  
+  \item \textbf{If $s \leq \text{\_high} - \text{window}$:} This packet is too old.
+  \begin{itemize}
+    \item \textbf{Reject.}
+  \end{itemize}
+\end{enumerate}
+
+\begin{keyinsight}
+A window of 1024 means that up to 1024 packets can arrive out of order and still be accepted. This is critical for UDP over WiFi, where packet reordering is common. However, each sequence number is accepted at most once, so replaying a captured packet is always detected.
+\end{keyinsight}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The ASCON Adapter}
+\label{sec:aead-ascon}
+
+ASCON-128a requires special handling because it is not part of the standard \texttt{cryptography} library:
+
+\begin{enumerate}
+  \item \textbf{Native C backend} (\texttt{core.\_ascon\_native}): A compiled C extension for maximum performance. Preferred when available.
+  
+  \item \textbf{Pure-Python fallback} (\texttt{pyascon}): A Python implementation. Slower but always available.
+\end{enumerate}
+
+The \classname{\_AsconAdapter} class abstracts this:
+
+\begin{itemize}
+  \item At initialization, it checks for the native backend first, then falls back to \texttt{pyascon}.
+  \item It handles the naming difference: the native backend uses NIST names (\texttt{Ascon-AEAD128a}) while \texttt{pyascon} uses legacy names (\texttt{Ascon-128a}).
+  \item The variant name is captured in a \textbf{closure} at initialization time, so \funcname{encrypt()} and \funcname{decrypt()} never need to pass the variant explicitly.
+  \item ASCON uses only the first 16 bytes of the 32-byte key (ASCON's native key size is 128 bits).
+  \item ASCON nonces are 16 bytes; the 12-byte epoch+sequence nonce is zero-padded.
+\end{itemize}
+
+\begin{implementationnote}
+The closure-based variant capture was a deliberate fix to prevent the pure-Python backend from receiving the NIST name (which it doesn't understand) or the native backend from receiving the legacy name. Each closure captures the correct name for its backend at initialization.
+\end{implementationnote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Packet Size Analysis}
+\label{sec:aead-sizes}
+
+For a typical MAVLink \texttt{HEARTBEAT} message (9 bytes of payload, 12 bytes of MAVLink framing = 21 bytes total):
+
+\begin{table}[htbp]
+  \centering
+  \caption{Wire packet sizes for a 21-byte MAVLink message.}
+  \label{tab:packet-sizes}
+  \begin{tabular}{lrr}
+    \toprule
+    \textbf{Component} & \textbf{Bytes} & \textbf{Notes} \\
+    \midrule
+    AEAD header         & 22  & Version + IDs + session + seq + epoch \\
+    Ciphertext          & 21  & Same length as plaintext \\
+    Authentication tag  & 16  & Appended by AEAD \\
+    \midrule
+    \textbf{Total wire} & \textbf{59} & 181\% overhead for this small message \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+For a larger MAVLink \texttt{GLOBAL\_POSITION\_INT} message ($\sim$28 bytes payload, $\sim$40 bytes with framing):
+
+\begin{table}[htbp]
+  \centering
+  \caption{Wire packet sizes for a 40-byte MAVLink message.}
+  \label{tab:packet-sizes-large}
+  \begin{tabular}{lrr}
+    \toprule
+    \textbf{Component} & \textbf{Bytes} & \textbf{Notes} \\
+    \midrule
+    AEAD header         & 22  & Fixed \\
+    Ciphertext          & 40  & Same as plaintext \\
+    Authentication tag  & 16  & Fixed \\
+    \midrule
+    \textbf{Total wire} & \textbf{78} & 95\% overhead \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The fixed 38-byte overhead (22 header + 16 tag) means that the relative overhead decreases as message size increases. For the maximum MAVLink payload (255 bytes + framing $\approx$ 280 bytes), the overhead is only 14\%.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Summary}
+\label{sec:aead-summary}
+
+\begin{itemize}
+  \item The wire format is: \textbf{Header (22 bytes)} $\|$ \textbf{Ciphertext + Tag}.
+  \item The header contains: version, algorithm IDs, 8-byte session ID, 8-byte sequence, 1-byte epoch.
+  \item The header is \textbf{cleartext but authenticated} (passed as AAD).
+  \item The \textbf{nonce is not transmitted}---it is reconstructed from epoch + sequence, saving 12 bytes/packet.
+  \item The \classname{Sender} manages encryption with monotonic sequence numbering and epoch management.
+  \item The \classname{Receiver} validates headers, checks the sliding replay window, and decrypts.
+  \item Three AEAD backends are supported: AES-GCM and ChaCha20-Poly1305 (via \texttt{cryptography}), ASCON-128a (via native C or \texttt{pyascon}).
+  \item The replay window (default 1024) tolerates UDP reordering while detecting duplicates and replays.
+\end{itemize}

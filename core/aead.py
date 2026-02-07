@@ -154,12 +154,14 @@ class _AsconAdapter:
     def encrypt(self, nonce: bytes, plaintext: bytes, aad: bytes) -> bytes:
         if len(nonce) < 16:
             nonce = nonce + b"\x00" * (16 - len(nonce))
-        return self._enc(self._key, nonce[:16], aad, plaintext, self._algo_str)
+        # Do NOT pass algo explicitly — closures capture the correct variant
+        # name at init time (NIST name for native, legacy name for pyascon).
+        return self._enc(self._key, nonce[:16], aad, plaintext)
 
     def decrypt(self, nonce: bytes, ciphertext: bytes, aad: bytes) -> bytes:
         if len(nonce) < 16:
             nonce = nonce + b"\x00" * (16 - len(nonce))
-        pt = self._dec(self._key, nonce[:16], aad, ciphertext, self._algo_str)
+        pt = self._dec(self._key, nonce[:16], aad, ciphertext)
         if pt is None:
             raise InvalidTag("Ascon authentication failed")
         return pt

@@ -1,0 +1,369 @@
+\chapter{Configuration Reference}
+\label{app:config}
+
+This appendix provides a comprehensive reference for every key in
+the global \texttt{CONFIG} dictionary defined in
+\filename{core/config.py}.  The dictionary is the single source of
+truth for all network addresses, ports, timing parameters, feature
+flags, and benchmark settings.
+
+% ============================================================
+\section{Environment Variable Overrides}
+
+A subset of keys can be overridden at runtime through environment
+variables.  The override mechanism applies before the validation
+step:
+
+\begin{enumerate}
+  \item Read the base \texttt{CONFIG} dictionary from source.
+  \item For each key in the \emph{env-overridable} set, check
+        whether an environment variable with the \emph{same name}
+        exists.
+  \item Parse the string value into the expected Python type
+        (\texttt{int}, \texttt{str}, \texttt{bool}, \texttt{float}).
+  \item Run \funcname{validate\_config} on the merged result.
+\end{enumerate}
+
+Boolean parsing accepts \texttt{1/true/yes/on} (case-insensitive)
+as \texttt{True} and \texttt{0/false/no/off} as \texttt{False}.
+
+Additionally, host addresses can be resolved via mDNS when the
+\texttt{ENABLE\_MDNS} environment variable is set to \texttt{1}.
+The system attempts to resolve \texttt{drone.local} and
+\texttt{gcs.local} using the \texttt{zeroconf} library, falling
+back to static IPs on failure.
+
+% ============================================================
+\section{Handshake and Data-Plane Ports}
+
+\begin{longtable}{p{5cm} c p{5.5cm} c}
+  \caption{Handshake and data-plane port configuration keys.}
+  \label{tab:config-ports} \\
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} & \textbf{Env} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} & \textbf{Env} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+
+  \configkey{TCP\_HANDSHAKE\_PORT}   & 46000 & TCP port for PQC handshake & \checkmark \\
+  \configkey{UDP\_DRONE\_RX}         & 46012 & Encrypted UDP; drone binds, GCS sends & \checkmark \\
+  \configkey{UDP\_GCS\_RX}           & 46011 & Encrypted UDP; GCS binds, drone sends & \checkmark \\
+  \configkey{DRONE\_PLAINTEXT\_TX}   & 47003 & App $\to$ drone proxy (to encrypt) & \checkmark \\
+  \configkey{DRONE\_PLAINTEXT\_RX}   & 47004 & Drone proxy $\to$ app (after decrypt) & \checkmark \\
+  \configkey{GCS\_PLAINTEXT\_TX}     & 47001 & App $\to$ GCS proxy & \checkmark \\
+  \configkey{GCS\_PLAINTEXT\_RX}     & 47002 & GCS proxy $\to$ app & \checkmark \\
+\end{longtable}
+
+% ============================================================
+\section{Host Addresses}
+
+\begin{longtable}{p{5.5cm} p{3.5cm} p{4.5cm} c}
+  \caption{Host address configuration keys.}
+  \label{tab:config-hosts} \\
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} & \textbf{Env} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} & \textbf{Env} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+
+  \configkey{DRONE\_HOST}            & 192.168.0.100 & Primary drone IP (LAN) & \checkmark \\
+  \configkey{GCS\_HOST}              & 192.168.0.101 & Primary GCS IP (LAN) & \checkmark \\
+  \configkey{DRONE\_HOST\_LAN}       & 192.168.0.100 & Drone LAN address & --- \\
+  \configkey{DRONE\_HOST\_TAILSCALE} & 100.101.93.23 & Drone Tailscale address & --- \\
+  \configkey{GCS\_HOST\_LAN}         & 192.168.0.101 & GCS LAN address & --- \\
+  \configkey{GCS\_HOST\_TAILSCALE}   & 100.106.181.122 & GCS Tailscale address & --- \\
+  \configkey{DRONE\_PLAINTEXT\_HOST} & 127.0.0.1 & Plaintext bind on drone & --- \\
+  \configkey{GCS\_PLAINTEXT\_HOST}   & 127.0.0.1 & Plaintext bind on GCS & --- \\
+\end{longtable}
+
+% ============================================================
+\section{Cryptographic and Runtime Parameters}
+
+\begin{longtable}{p{5.5cm} p{2.5cm} p{5.5cm} c}
+  \caption{Cryptographic and runtime configuration keys.}
+  \label{tab:config-crypto} \\
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} & \textbf{Env} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} & \textbf{Env} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+
+  \configkey{DRONE\_PSK}               & \texttt{""} & Pre-shared key (hex, 32~bytes decoded) & \checkmark \\
+  \configkey{REPLAY\_WINDOW}           & 1024 & Sliding-window anti-replay size (64--8192) & --- \\
+  \configkey{WIRE\_VERSION}            & 1    & AEAD header version byte (frozen) & --- \\
+  \configkey{REKEY\_HANDSHAKE\_TIMEOUT}& 45.0 & Max seconds for rekey handshake & --- \\
+  \configkey{ENABLE\_PACKET\_TYPE}     & True & Prefix plaintext with 1-byte type & \checkmark \\
+  \configkey{ENABLE\_ASCON}            & True & Enable ASCON AEAD variants & \checkmark \\
+  \configkey{ENABLE\_ASCON128A}        & True & Enable ASCON-128a specifically & \checkmark \\
+  \configkey{ASCON\_STRICT\_KEY\_SIZE} & False & Enforce exactly 16-byte ASCON keys & \checkmark \\
+  \configkey{ENCRYPTED\_DSCP}          & 46   & DSCP marking for encrypted UDP (EF) & --- \\
+\end{longtable}
+
+% ============================================================
+\section{Security and Hardening}
+
+\begin{longtable}{p{6cm} p{2cm} p{5.5cm} c}
+  \caption{Security and hardening configuration keys.}
+  \label{tab:config-security} \\
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} & \textbf{Env} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} & \textbf{Env} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+
+  \configkey{STRICT\_UDP\_PEER\_MATCH}   & True & Enforce peer IP/port consistency & \checkmark \\
+  \configkey{STRICT\_HANDSHAKE\_IP}      & True & Require handshake IP match & \checkmark \\
+  \configkey{LOG\_SESSION\_ID}           & False & Log real session IDs (privacy) & \checkmark \\
+  \configkey{HANDSHAKE\_RL\_BURST}       & 5 & Rate limit: max burst tokens & --- \\
+  \configkey{HANDSHAKE\_RL\_REFILL\_PER\_SEC} & 1 & Rate limit: tokens per second & --- \\
+  \configkey{MAV\_AUTH\_KEY}             & \texttt{""} & HMAC auth key for MAV schedulers & --- \\
+  \configkey{MAV\_ALLOWED\_SENDERS}      & \texttt{[]} & Allow list for control channel & --- \\
+  \configkey{ALLOW\_NON\_LOOPBACK\_PLAINTEXT} & True & Permit non-loopback plaintext hosts & --- \\
+\end{longtable}
+
+% ============================================================
+\section{Control Channel}
+
+\begin{longtable}{p{6cm} p{2.5cm} p{5cm} c}
+  \caption{TCP control channel configuration keys.}
+  \label{tab:config-control} \\
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} & \textbf{Env} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} & \textbf{Env} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+
+  \configkey{ENABLE\_TCP\_CONTROL}       & False & Enable in-band TCP control & \checkmark \\
+  \configkey{CONTROL\_COORDINATOR\_ROLE} & \texttt{"gcs"} & Rekey initiator: \texttt{"gcs"} or \texttt{"drone"} & \checkmark \\
+  \configkey{DRONE\_CONTROL\_HOST}       & (drone LAN) & Drone control bind address & \checkmark \\
+  \configkey{DRONE\_CONTROL\_PORT}       & 48080 & Drone control listen port & \checkmark \\
+  \configkey{GCS\_CONTROL\_HOST}         & 0.0.0.0 & GCS control bind address & \checkmark \\
+  \configkey{GCS\_CONTROL\_PORT}         & 48080 & GCS control listen port & \checkmark \\
+  \configkey{GCS\_TELEMETRY\_PORT}       & 52080 & GCS $\to$ Drone telemetry (UDP) & \checkmark \\
+  \configkey{DRONE\_TO\_GCS\_CTL\_PORT}  & 48181 & Encrypted-plane control port & \checkmark \\
+\end{longtable}
+
+% ============================================================
+\section{MAVProxy and MAVLink}
+
+\begin{longtable}{p{5.5cm} p{3cm} p{5cm}}
+  \caption{MAVProxy and MAVLink configuration keys.}
+  \label{tab:config-mavlink} \\
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+
+  \configkey{MAV\_FC\_DEVICE}       & \texttt{/dev/ttyACM0} & Pixhawk USB serial device \\
+  \configkey{MAV\_FC\_BAUD}         & 57600 & Serial baud rate \\
+  \configkey{MAV\_GCS\_IN\_PORT\_1} & 14550 & GCS MAVLink receive port 1 \\
+  \configkey{MAV\_GCS\_IN\_PORT\_2} & 14551 & GCS MAVLink receive port 2 \\
+  \configkey{MAV\_GCS\_LISTEN\_HOST}& 0.0.0.0 & GCS MAVProxy bind host \\
+  \configkey{MAV\_LOCAL\_HOST}      & 127.0.0.1 & Local loopback for GCS tools \\
+  \configkey{MAV\_LOCAL\_OUT\_PORT\_1} & 14550 & Local output port 1 \\
+  \configkey{MAV\_LOCAL\_OUT\_PORT\_2} & 14551 & Local output port 2 \\
+  \configkey{QGC\_PORT}             & 14550 & QGroundControl listen port \\
+  \configkey{MAV\_DRONE\_HOST}      & (drone LAN) & Drone host for GCS master \\
+  \configkey{MAV\_DRONE\_UDP\_PORT} & 14550 & Drone MAVLink UDP port \\
+\end{longtable}
+
+% ============================================================
+\section{Bare Scheduler Defaults}
+
+\begin{longtable}{p{5.5cm} p{2cm} p{6cm}}
+  \caption{Bare scheduler timing defaults.}
+  \label{tab:config-bare} \\
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \configkey{BARE\_SUITE\_DWELL\_S}      & 10.0  & Seconds per suite before rotation \\
+  \configkey{BARE\_CONFIRM\_TIMEOUT\_S}  & 10.0  & Timeout for proxy state change \\
+  \configkey{BARE\_POLL\_INTERVAL\_S}    & 2.0   & Status check poll interval \\
+\end{longtable}
+
+% ============================================================
+\section{Simple Automation Defaults}
+
+\begin{longtable}{p{6cm} p{2cm} p{5.5cm}}
+  \caption{Simple automation configuration keys.}
+  \label{tab:config-simple} \\
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \configkey{SIMPLE\_VERIFY\_TIMEOUT\_S}   & 5.0  & Verification timeout (seconds) \\
+  \configkey{SIMPLE\_PACKETS\_PER\_SUITE}  & 1    & Packets sent per suite \\
+  \configkey{SIMPLE\_PACKET\_DELAY\_S}     & 0.0  & Delay between packets \\
+  \configkey{SIMPLE\_SUITE\_DWELL\_S}      & 0.0  & Per-suite dwell time \\
+  \configkey{SIMPLE\_INITIAL\_SUITE}       & None & Initial suite ID override \\
+\end{longtable}
+
+% ============================================================
+\section{Simulation and Testing}
+
+\begin{longtable}{p{5cm} p{2cm} p{6.5cm}}
+  \caption{Simulation and testing configuration keys.}
+  \label{tab:config-sim} \\
+  \toprule
+  \textbf{Key} & \textbf{Default} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \configkey{ENABLE\_SIMULATION} & False & Enable synthetic traffic generators \\
+  \configkey{PRIMITIVE\_TEST\_KEMS}  & (3 KEMs) & KEM algorithms for primitive tests \\
+  \configkey{PRIMITIVE\_TEST\_SIGS}  & (3 SIGs) & SIG algorithms for primitive tests \\
+  \configkey{PRIMITIVE\_TEST\_AEADS} & (2 AEADs) & AEAD algorithms for primitive tests \\
+\end{longtable}
+
+% ============================================================
+\section{AUTO\_DRONE Sub-Dictionary}
+
+The \configkey{AUTO\_DRONE} key contains a nested dictionary
+for drone-side automation.  Key fields include:
+
+\begin{longtable}{p{5cm} p{3cm} p{5.5cm}}
+  \caption{AUTO\_DRONE sub-dictionary fields.}
+  \label{tab:config-autodrone} \\
+  \toprule
+  \textbf{Field} & \textbf{Default} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \texttt{session\_prefix}   & \texttt{"run"} & Prefix for session IDs \\
+  \texttt{initial\_suite}    & None            & Override initial suite \\
+  \texttt{monitors\_enabled} & True            & Enable perf/psutil monitors \\
+  \texttt{cpu\_optimize}     & True            & Apply CPU governor tweaks \\
+  \texttt{telemetry\_enabled}& True            & Publish telemetry to scheduler \\
+  \texttt{mavproxy\_enabled} & True            & Launch MAVProxy \\
+  \texttt{udp\_echo\_enabled}& False           & Legacy UDP echo helper \\
+  \texttt{mock\_mass\_kg}    & 6.5             & Simulated drone mass \\
+  \texttt{power\_env}        & (nested)        & Power monitor environment \\
+\end{longtable}
+
+The \texttt{power\_env} sub-dictionary defaults to INA219 at
+\SI{1}{\kilo\hertz} on I\textsuperscript{2}C bus~1 at address
+\texttt{0x40} with a \SI{0.1}{\ohm} shunt resistor.
+
+% ============================================================
+\section{AUTO\_GCS Sub-Dictionary}
+
+The \configkey{AUTO\_GCS} key configures the GCS-side scheduler.
+Selected fields:
+
+\begin{longtable}{p{5cm} p{3cm} p{5.5cm}}
+  \caption{AUTO\_GCS sub-dictionary fields (selected).}
+  \label{tab:config-autogcs} \\
+  \toprule
+  \textbf{Field} & \textbf{Default} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \texttt{traffic}         & \texttt{"constant"} & Traffic profile mode \\
+  \texttt{traffic\_engine} & \texttt{"native"}    & Generator engine \\
+  \texttt{duration\_s}     & 10.0      & Traffic window per suite (s) \\
+  \texttt{pre\_gap\_s}     & 1.0       & Delay after rekey (s) \\
+  \texttt{inter\_gap\_s}   & 5.0       & Delay between suites (s) \\
+  \texttt{payload\_bytes}  & 1200      & UDP payload size \\
+  \texttt{passes}          & 13        & Full passes across suite list \\
+  \texttt{bandwidth\_mbps} & 10.0      & Target bandwidth (Mbps) \\
+  \texttt{max\_rate\_mbps} & 200.0     & Saturation sweep upper bound \\
+  \texttt{suites}          & None      & Suite subset (None = all) \\
+  \texttt{launch\_proxy}   & True      & Launch local GCS proxy \\
+\end{longtable}
+
+% ============================================================
+\section{BENCHMARK Sub-Dictionary}
+
+The \configkey{BENCHMARK} key configures the standalone cryptographic
+primitive benchmark pipeline:
+
+\begin{longtable}{p{5.5cm} p{3cm} p{5cm}}
+  \caption{BENCHMARK sub-dictionary fields.}
+  \label{tab:config-benchmark} \\
+  \toprule
+  \textbf{Field} & \textbf{Default} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \texttt{default\_iterations} & 200   & Iterations per operation \\
+  \texttt{quick\_iterations}   & 5     & Quick-test iterations \\
+  \texttt{power.enabled}       & True  & Enable INA219 monitoring \\
+  \texttt{power.sample\_hz}    & 1000  & Sampling rate (Hz) \\
+  \texttt{power.warmup\_ms}    & 50    & Warmup before operation \\
+  \texttt{power.cooldown\_ms}  & 50    & Cooldown after operation \\
+  \texttt{perf.enabled}        & True  & Enable Linux perf counters \\
+  \texttt{perf.counters}       & (4)   & cycles, instructions, cache/branch-misses \\
+  \texttt{output.base\_dir}    & \texttt{bench\_results\_power} & Results directory \\
+  \texttt{analysis.plot\_dpi}  & 300   & Plot resolution \\
+\end{longtable}
+
+% ============================================================
+\section{Validation Rules}
+
+The \funcname{validate\_config} function enforces the following constraints:
+
+\begin{enumerate}
+  \item All required keys must be present (checked against
+        \texttt{\_REQUIRED\_KEYS}).
+  \item All required keys must have their expected Python type.
+  \item All port values (\texttt{*\_PORT}, \texttt{*\_RX}, \texttt{*\_TX})
+        must be in the range $[1, 65535]$.
+  \item \configkey{WIRE\_VERSION} must be exactly~1 (frozen protocol
+        version).
+  \item \configkey{REPLAY\_WINDOW} must be in $[64, 8192]$.
+  \item \configkey{DRONE\_HOST} and \configkey{GCS\_HOST} must be valid
+        IP addresses.
+  \item Plaintext hosts must be loopback unless
+        \configkey{ALLOW\_NON\_LOOPBACK\_PLAINTEXT} is set.
+  \item \configkey{ENCRYPTED\_DSCP}, if non-null, must be in $[0, 63]$.
+  \item \configkey{CONTROL\_COORDINATOR\_ROLE} must be
+        \texttt{"gcs"} or \texttt{"drone"}.
+  \item \configkey{DRONE\_PSK}, if non-empty, must decode to exactly
+        32~hex bytes.  In non-dev environments, it is required.
+\end{enumerate}

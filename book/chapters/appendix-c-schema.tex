@@ -1,0 +1,500 @@
+\chapter{Metrics Schema Reference}
+\label{app:schema}
+
+This appendix lists every field in the 18-category metrics schema
+defined in \filename{core/metrics\_schema.py}.  Each suite benchmark
+produces one \classname{ComprehensiveSuiteMetrics} record containing
+all categories.  Fields marked \texttt{Optional} may be \texttt{None}
+if the corresponding collector was unavailable or the measurement
+was not applicable.
+
+% ============================================================
+\section{Category A: Run Context}
+\label{sec:schema-a}
+
+\begin{longtable}{p{5cm} l p{5.5cm}}
+  \caption{Category A --- Run context and environment (20 fields).}
+  \label{tab:schema-a} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+
+  run\_id                & str         & Unique benchmark run identifier \\
+  suite\_id              & str         & Suite identifier string \\
+  suite\_index           & int         & Position in suite ordering \\
+  git\_commit\_hash      & str?        & Git commit of the codebase \\
+  git\_dirty\_flag       & bool?       & Uncommitted changes present \\
+  gcs\_hostname          & str?        & GCS machine hostname \\
+  drone\_hostname        & str?        & Drone machine hostname \\
+  gcs\_ip                & str?        & GCS IP address \\
+  drone\_ip              & str?        & Drone IP address \\
+  python\_env\_gcs       & str?        & GCS Python version/path \\
+  python\_env\_drone     & str?        & Drone Python version/path \\
+  liboqs\_version        & str?        & liboqs library version \\
+  kernel\_version\_gcs   & str?        & GCS kernel version \\
+  kernel\_version\_drone & str?        & Drone kernel version \\
+  clock\_offset\_ms      & float?      & NTP-lite clock offset (ms) \\
+  clock\_offset\_method  & str?        & Sync method used \\
+  run\_start\_time\_wall & str         & Wall-clock start (ISO~8601) \\
+  run\_end\_time\_wall   & str         & Wall-clock end (ISO~8601) \\
+  run\_start\_time\_mono & float       & Monotonic start (seconds) \\
+  run\_end\_time\_mono   & float       & Monotonic end (seconds) \\
+\end{longtable}
+
+% ============================================================
+\section{Category B: Suite Crypto Identity}
+\label{sec:schema-b}
+
+\begin{longtable}{p{5cm} l p{5.5cm}}
+  \caption{Category B --- Suite cryptographic identity (8 fields).}
+  \label{tab:schema-b} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  kem\_algorithm         & str?  & KEM algorithm name (e.g.\ ML-KEM-768) \\
+  kem\_family            & str?  & KEM family (e.g.\ lattice) \\
+  kem\_nist\_level        & str?  & NIST security level \\
+  sig\_algorithm         & str?  & Signature algorithm name \\
+  sig\_family            & str?  & Signature family \\
+  sig\_nist\_level        & str?  & Signature NIST level \\
+  aead\_algorithm        & str?  & AEAD cipher token \\
+  suite\_security\_level & str?  & Overall suite security level \\
+\end{longtable}
+
+% ============================================================
+\section{Category C: Suite Lifecycle Timeline}
+\label{sec:schema-c}
+
+\begin{longtable}{p{5.5cm} l p{5cm}}
+  \caption{Category C --- Suite lifecycle timeline (5 fields).}
+  \label{tab:schema-c} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  suite\_selected\_time     & float & When the suite was selected (mono) \\
+  suite\_activated\_time    & float & When the handshake completed \\
+  suite\_deactivated\_time  & float & When the suite was stopped \\
+  suite\_total\_duration\_ms & float & Total wall time (ms) \\
+  suite\_active\_duration\_ms & float & Active encryption time (ms) \\
+\end{longtable}
+
+% ============================================================
+\section{Category D: Handshake Metrics}
+\label{sec:schema-d}
+
+\begin{longtable}{p{6cm} l p{4.5cm}}
+  \caption{Category D --- Handshake timing and status (7 fields).}
+  \label{tab:schema-d} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  handshake\_start\_time\_drone        & float? & Handshake start (mono) \\
+  handshake\_end\_time\_drone          & float? & Handshake end (mono) \\
+  handshake\_total\_duration\_ms       & float? & End-to-end handshake time \\
+  protocol\_handshake\_duration\_ms    & float? & PQC protocol portion only \\
+  end\_to\_end\_handshake\_duration\_ms & float? & Including setup overhead \\
+  handshake\_success                   & bool?  & True if successful \\
+  handshake\_failure\_reason           & str?   & Failure reason (if any) \\
+\end{longtable}
+
+% ============================================================
+\section{Category E: Crypto Primitive Breakdown}
+\label{sec:schema-e}
+
+\begin{longtable}{p{5.5cm} l p{5cm}}
+  \caption{Category E --- Cryptographic primitive timing (16 fields).}
+  \label{tab:schema-e} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  kem\_keygen\_time\_ms      & float? & KEM key generation (ms) \\
+  kem\_encapsulation\_time\_ms & float? & KEM encapsulation (ms) \\
+  kem\_decapsulation\_time\_ms & float? & KEM decapsulation (ms) \\
+  signature\_sign\_time\_ms  & float? & Signature generation (ms) \\
+  signature\_verify\_time\_ms & float? & Signature verification (ms) \\
+  total\_crypto\_time\_ms    & float? & Sum of all primitives \\
+  kem\_keygen\_ns            & int?   & KEM keygen (nanoseconds) \\
+  kem\_encaps\_ns            & int?   & KEM encapsulation (ns) \\
+  kem\_decaps\_ns            & int?   & KEM decapsulation (ns) \\
+  sig\_sign\_ns              & int?   & Signature sign (ns) \\
+  sig\_verify\_ns            & int?   & Signature verify (ns) \\
+  pub\_key\_size\_bytes      & int?   & Public key size \\
+  ciphertext\_size\_bytes    & int?   & KEM ciphertext size \\
+  sig\_size\_bytes           & int?   & Signature size \\
+  shared\_secret\_size\_bytes & int?  & Shared secret size \\
+\end{longtable}
+
+% ============================================================
+\section{Category F: Rekey Metrics}
+\label{sec:schema-f}
+
+\begin{longtable}{p{6cm} l p{4.5cm}}
+  \caption{Category F --- Rekey operation metrics (7 fields).}
+  \label{tab:schema-f} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  rekey\_attempts             & int?   & Number of attempts \\
+  rekey\_success              & int?   & Successful rekeys \\
+  rekey\_failure              & int?   & Failed rekeys \\
+  rekey\_interval\_ms         & float? & Time between rekeys \\
+  rekey\_duration\_ms         & float? & Rekey operation time \\
+  rekey\_blackout\_duration\_ms & float? & Traffic pause during rekey \\
+  rekey\_trigger\_reason      & str?   & What triggered the rekey \\
+\end{longtable}
+
+% ============================================================
+\section{Category G: Data Plane}
+\label{sec:schema-g}
+
+\begin{longtable}{p{5cm} l p{5.5cm}}
+  \caption{Category G --- Data plane (proxy-level) metrics (21 fields).}
+  \label{tab:schema-g} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  achieved\_throughput\_mbps & float? & Measured throughput \\
+  goodput\_mbps              & float? & Application goodput \\
+  wire\_rate\_mbps           & float? & Wire-level rate \\
+  packets\_sent              & int?   & Total packets sent \\
+  packets\_received          & int?   & Total packets received \\
+  packets\_dropped           & int?   & Total packets dropped \\
+  packet\_loss\_ratio        & float? & Loss ratio (0--1) \\
+  packet\_delivery\_ratio    & float? & Delivery ratio (0--1) \\
+  replay\_drop\_count        & int?   & Replay-rejected packets \\
+  decode\_failure\_count     & int?   & Decoding failures \\
+  ptx\_in                   & int?   & Plaintext packets in \\
+  ptx\_out                  & int?   & Plaintext packets out \\
+  enc\_in                   & int?   & Encrypted packets in \\
+  enc\_out                  & int?   & Encrypted packets out \\
+  drop\_replay              & int?   & Replay drops (detailed) \\
+  drop\_auth                & int?   & Auth failure drops \\
+  drop\_header              & int?   & Header mismatch drops \\
+  bytes\_sent               & int?   & Total bytes sent \\
+  bytes\_received           & int?   & Total bytes received \\
+  aead\_encrypt\_avg\_ns    & float? & Mean encrypt time (ns) \\
+  aead\_decrypt\_avg\_ns    & float? & Mean decrypt time (ns) \\
+  aead\_encrypt\_count      & int?   & Encrypt operations \\
+  aead\_decrypt\_count      & int?   & Decrypt operations \\
+\end{longtable}
+
+% ============================================================
+\section{Category H: Latency and Jitter}
+\label{sec:schema-h}
+
+\begin{longtable}{p{5.5cm} l p{5cm}}
+  \caption{Category H --- Latency and jitter metrics (12 fields).}
+  \label{tab:schema-h} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  one\_way\_latency\_avg\_ms  & float? & Mean one-way latency \\
+  one\_way\_latency\_p95\_ms  & float? & 95th percentile one-way \\
+  jitter\_avg\_ms             & float? & Mean jitter \\
+  jitter\_p95\_ms             & float? & 95th percentile jitter \\
+  latency\_sample\_count      & int?   & Number of latency samples \\
+  latency\_invalid\_reason    & str?   & Reason if invalid \\
+  one\_way\_latency\_valid    & bool?  & Validity flag \\
+  rtt\_avg\_ms                & float? & Mean round-trip time \\
+  rtt\_p95\_ms                & float? & 95th percentile RTT \\
+  rtt\_sample\_count          & int?   & Number of RTT samples \\
+  rtt\_invalid\_reason        & str?   & Reason if invalid \\
+  rtt\_valid                  & bool?  & RTT validity flag \\
+\end{longtable}
+
+% ============================================================
+\section{Category I: MAVProxy Drone}
+\label{sec:schema-i}
+
+\begin{longtable}{p{6.5cm} l p{4cm}}
+  \caption{Category I --- MAVProxy drone-side metrics (15 fields).}
+  \label{tab:schema-i} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  mavproxy\_drone\_start\_time         & float? & MAVProxy start \\
+  mavproxy\_drone\_end\_time           & float? & MAVProxy end \\
+  mavproxy\_drone\_tx\_pps             & float? & TX packets/sec \\
+  mavproxy\_drone\_rx\_pps             & float? & RX packets/sec \\
+  mavproxy\_drone\_total\_msgs\_sent   & int?   & Total messages sent \\
+  mavproxy\_drone\_total\_msgs\_received & int? & Total messages received \\
+  mavproxy\_drone\_msg\_type\_counts   & dict?  & Per-type message counts \\
+  mavproxy\_drone\_heartbeat\_interval\_ms & float? & Mean HB interval \\
+  mavproxy\_drone\_heartbeat\_loss\_count & int? & Lost heartbeats \\
+  mavproxy\_drone\_seq\_gap\_count     & int?   & Sequence gaps detected \\
+  mavproxy\_drone\_cmd\_sent\_count    & int?   & Commands sent \\
+  mavproxy\_drone\_cmd\_ack\_received\_count & int? & ACKs received \\
+  mavproxy\_drone\_cmd\_ack\_latency\_avg\_ms & float? & Mean ACK latency \\
+  mavproxy\_drone\_cmd\_ack\_latency\_p95\_ms & float? & P95 ACK latency \\
+  mavproxy\_drone\_stream\_rate\_hz    & float? & Telemetry stream rate \\
+\end{longtable}
+
+% ============================================================
+\section{Category J: MAVProxy GCS (Pruned)}
+\label{sec:schema-j}
+
+\begin{longtable}{p{6.5cm} l p{4cm}}
+  \caption{Category J --- MAVProxy GCS-side metrics (2 fields, pruned).}
+  \label{tab:schema-j} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  mavproxy\_gcs\_total\_msgs\_received & int? & Cross-side correlation \\
+  mavproxy\_gcs\_seq\_gap\_count       & int? & MAVLink integrity \\
+\end{longtable}
+
+\begin{designdecision}{Why was GCS MAVProxy pruned?}
+  A policy realignment on 2026-01-18 reduced GCS MAVProxy metrics to
+  validation-only fields.  GCS-side deep introspection (heartbeat
+  statistics, stream rates, command latencies) was removed because the
+  GCS is a non-constrained observer---its metrics do not influence
+  suite selection policy.  Only the two fields needed for cross-side
+  integrity validation were retained.
+\end{designdecision}
+
+% ============================================================
+\section{Category K: MAVLink Integrity}
+\label{sec:schema-k}
+
+\begin{longtable}{p{6.5cm} l p{4cm}}
+  \caption{Category K --- MAVLink semantic integrity (9 fields).}
+  \label{tab:schema-k} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  mavlink\_sysid                     & int?   & System ID \\
+  mavlink\_compid                    & int?   & Component ID \\
+  mavlink\_protocol\_version         & str?   & Protocol version \\
+  mavlink\_packet\_crc\_error\_count & int?   & CRC errors \\
+  mavlink\_decode\_error\_count      & int?   & Decode errors \\
+  mavlink\_msg\_drop\_count          & int?   & Dropped messages \\
+  mavlink\_out\_of\_order\_count     & int?   & Out-of-order packets \\
+  mavlink\_duplicate\_count          & int?   & Duplicate packets \\
+  mavlink\_message\_latency\_avg\_ms & float? & Mean message latency \\
+\end{longtable}
+
+% ============================================================
+\section{Category L: Flight Controller Telemetry}
+\label{sec:schema-l}
+
+\begin{longtable}{p{6.5cm} l p{4cm}}
+  \caption{Category L --- Flight controller telemetry (10 fields).}
+  \label{tab:schema-l} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  fc\_mode                       & str?   & Flight mode \\
+  fc\_armed\_state               & bool?  & Armed/disarmed \\
+  fc\_heartbeat\_age\_ms         & float? & Last heartbeat age \\
+  fc\_attitude\_update\_rate\_hz & float? & Attitude update rate \\
+  fc\_position\_update\_rate\_hz & float? & Position update rate \\
+  fc\_battery\_voltage\_v        & float? & Battery voltage \\
+  fc\_battery\_current\_a        & float? & Battery current \\
+  fc\_battery\_remaining\_percent& float? & Battery remaining \\
+  fc\_cpu\_load\_percent         & float? & FC CPU utilisation \\
+  fc\_sensor\_health\_flags      & int?   & Sensor health bitmask \\
+\end{longtable}
+
+% ============================================================
+\section{Category M: Control Plane}
+\label{sec:schema-m}
+
+\begin{longtable}{p{5.5cm} l p{5cm}}
+  \caption{Category M --- Scheduler control plane (7 fields).}
+  \label{tab:schema-m} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  scheduler\_tick\_interval\_ms & float? & Scheduler poll interval \\
+  scheduler\_action\_type       & str?   & Action taken (HOLD/NEXT) \\
+  scheduler\_action\_reason     & str?   & Reason for action \\
+  policy\_name                  & str?   & Active policy name \\
+  policy\_state                 & str?   & Policy state \\
+  policy\_suite\_index          & int?   & Current suite index \\
+  policy\_total\_suites         & int?   & Total suites in list \\
+\end{longtable}
+
+% ============================================================
+\section{Category N: System Resources (Drone)}
+\label{sec:schema-n}
+
+\begin{longtable}{p{5cm} l p{5.5cm}}
+  \caption{Category N --- Drone system resources (12 fields).}
+  \label{tab:schema-n} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  cpu\_usage\_avg\_percent  & float? & Mean CPU usage \\
+  cpu\_usage\_peak\_percent & float? & Peak CPU usage \\
+  cpu\_freq\_mhz           & float? & CPU frequency \\
+  memory\_rss\_mb          & float? & Resident memory \\
+  memory\_vms\_mb          & float? & Virtual memory \\
+  thread\_count            & int?   & Thread count \\
+  temperature\_c           & float? & CPU temperature \\
+  uptime\_s                & float? & System uptime \\
+  load\_avg\_1m            & float? & 1-minute load average \\
+  load\_avg\_5m            & float? & 5-minute load average \\
+  load\_avg\_15m           & float? & 15-minute load average \\
+\end{longtable}
+
+% ============================================================
+\section{Category O: System Resources (GCS) --- Deprecated}
+\label{sec:schema-o}
+
+Category~O retains the same field structure as Category~N but is
+\textbf{deprecated}.  Fields remain at default \texttt{None} values.
+GCS system resource collection was removed because the GCS is a
+non-constrained system whose resource usage does not influence
+scheduling policy.
+
+% ============================================================
+\section{Category P: Power and Energy}
+\label{sec:schema-p}
+
+\begin{longtable}{p{5.5cm} l p{5cm}}
+  \caption{Category P --- Power and energy measurements (8 fields).}
+  \label{tab:schema-p} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  power\_sensor\_type       & str?   & Backend: ina219/rpi5\_hwmon/none \\
+  power\_sampling\_rate\_hz & float? & Actual sampling rate \\
+  voltage\_avg\_v           & float? & Mean voltage \\
+  current\_avg\_a           & float? & Mean current \\
+  power\_avg\_w             & float? & Mean power \\
+  power\_peak\_w            & float? & Peak power \\
+  energy\_total\_j          & float? & Total energy (joules) \\
+  energy\_per\_handshake\_j & float? & Energy per handshake \\
+\end{longtable}
+
+% ============================================================
+\section{Category Q: Observability}
+\label{sec:schema-q}
+
+\begin{longtable}{p{5.5cm} l p{5cm}}
+  \caption{Category Q --- Observability and logging (5 fields).}
+  \label{tab:schema-q} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  log\_sample\_count           & int?   & Number of log samples \\
+  metrics\_sampling\_rate\_hz  & float? & Metrics sampling rate \\
+  collection\_start\_time      & float? & Collection start (mono) \\
+  collection\_end\_time        & float? & Collection end (mono) \\
+  collection\_duration\_ms     & float? & Collection duration \\
+\end{longtable}
+
+% ============================================================
+\section{Category R: Validation}
+\label{sec:schema-r}
+
+\begin{longtable}{p{5cm} l p{5.5cm}}
+  \caption{Category R --- Validation and integrity (6 fields).}
+  \label{tab:schema-r} \\
+  \toprule
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  expected\_samples         & int?   & Expected sample count \\
+  collected\_samples        & int?   & Actually collected \\
+  lost\_samples             & int?   & Missing samples \\
+  success\_rate\_percent    & float? & Collection success rate \\
+  benchmark\_pass\_fail     & str?   & PASS/FAIL/PARTIAL verdict \\
+  metric\_status            & dict   & Per-category status map \\
+\end{longtable}
+
+The \texttt{metric\_status} dictionary maps category names to
+status objects containing a reason string if the category's data
+is incomplete.  This enables forensic analysis of partial benchmark
+runs.
+
+% ============================================================
+\section{Composite Record}
+
+The \classname{ComprehensiveSuiteMetrics} dataclass aggregates
+all 18~categories into a single Python object.  It provides:
+
+\begin{itemize}
+  \item \funcname{to\_dict()} --- recursive conversion to a plain
+        Python dictionary.
+  \item \funcname{to\_json(indent=2)} --- JSON serialisation with
+        a default handler for non-serialisable types.
+  \item \funcname{save\_json(filepath)} --- write directly to file.
+  \item \funcname{from\_dict(data)} --- reconstruct from dictionary.
+  \item \funcname{from\_json(json\_str)} --- reconstruct from JSON.
+  \item \funcname{load\_json(filepath)} --- load from file.
+\end{itemize}
+
+The helper function \funcname{count\_metrics()} returns a dictionary
+mapping category names to their field counts, useful for validating
+schema completeness.

@@ -1,0 +1,360 @@
+% ============================================================================
+%  CHAPTER 2 — NETWORKING FUNDAMENTALS
+% ============================================================================
+\chapter{Networking Fundamentals}
+\label{ch:networking}
+
+\epigraph{To understand secure communication, you must first understand communication.}{}
+
+Before we can protect drone traffic, we need to understand how computers communicate at all. This chapter builds that understanding from the ground up.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{What Is a Network?}
+\label{sec:net-what}
+
+\begin{analogy}
+A \textbf{computer network} is like a postal system for data. Just as the postal system has addresses (street addresses), delivery vehicles (trucks, planes), and rules about how to format an envelope, a computer network has addresses (IP addresses), physical media (cables, radio waves), and protocols (rules about how to format and deliver data).
+\end{analogy}
+
+\begin{definition}[Network]
+A \textbf{network} is a system of two or more computing devices connected by communication links that can exchange data according to agreed-upon rules called \textbf{protocols}.
+\end{definition}
+
+The internet is the largest network, connecting billions of devices. A \textbf{local area network (LAN)} connects devices in a small area---a home, an office, or, in our case, a field where a drone is flying. The drone and the ground control station in this system are connected by a WiFi LAN.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The Layered Model}
+\label{sec:net-layers}
+
+Network communication is complex. To manage that complexity, engineers organize networking into \textbf{layers}, where each layer handles one aspect of communication and relies on the layers below it.
+
+The most common model has four layers (the TCP/IP model):
+
+\begin{table}[H]
+\centering
+\caption{The TCP/IP layered model}
+\label{tab:tcp-ip-layers}
+\begin{tabularx}{\textwidth}{clX}
+\toprule
+\textbf{Layer} & \textbf{Name} & \textbf{Responsibility} \\
+\midrule
+4 & Application & What the data means (HTTP for web, MAVLink for drones) \\
+3 & Transport & Reliable or best-effort delivery between processes (TCP, UDP) \\
+2 & Internet & Routing packets across networks using IP addresses \\
+1 & Link & Moving bits across a single physical link (Ethernet, WiFi) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{analogy}
+Think of mailing a letter. The \textbf{application layer} is the letter's content. The \textbf{transport layer} is the decision to send it by certified mail (reliable, like TCP) or regular mail (best-effort, like UDP). The \textbf{internet layer} is the postal routing system that moves the envelope from city to city. The \textbf{link layer} is the truck that carries the envelope on a specific road segment.
+\end{analogy}
+
+Each layer adds its own header to the data (like putting a letter in an envelope, then putting that envelope in a shipping box). This process is called \textbf{encapsulation}. The receiving side strips these headers in reverse order, a process called \textbf{decapsulation}.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{IP Addresses}
+\label{sec:net-ip}
+
+Every device on a network has an \textbf{IP address}---a numerical label that uniquely identifies it.
+
+\begin{definition}[IPv4 Address]
+An \textbf{IPv4 address} is a 32-bit number, typically written as four decimal numbers separated by dots. Example: \texttt{192.168.0.100}.
+\end{definition}
+
+In this system:
+\begin{itemize}
+  \item The drone's Raspberry Pi has IP \texttt{192.168.0.100} on the LAN.
+  \item The GCS laptop has IP \texttt{192.168.0.101} on the LAN.
+  \item Both also have Tailscale VPN addresses (\texttt{100.x.x.x}), but these are used only for SSH maintenance, never for real-time data.
+\end{itemize}
+
+There is a special IP address: \texttt{127.0.0.1}, called the \textbf{loopback address} or \textbf{localhost}. Packets sent to 127.0.0.1 never leave the machine---they are delivered internally. This is important because the plaintext MAVLink traffic in this system \emph{only} travels on localhost, never across the network.
+
+\begin{securitynote}
+The separation between plaintext (localhost only) and ciphertext (network-facing) is a deliberate security boundary. If plaintext traffic were accidentally exposed on the network interface, the entire purpose of the tunnel would be defeated.
+\end{securitynote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Ports}
+\label{sec:net-ports}
+
+An IP address identifies a \emph{machine}, but a machine may be running many programs simultaneously. A \textbf{port number} identifies a specific program (or ``service'') on that machine.
+
+\begin{definition}[Port]
+A \textbf{port} is a 16-bit number (1--65535) that, combined with an IP address, identifies a specific communication endpoint on a machine. The combination of IP address and port is called a \textbf{socket address}.
+\end{definition}
+
+\begin{analogy}
+If an IP address is like a building's street address, a port number is like an apartment number within that building. The address gets the mail to the building; the apartment number gets it to the right resident.
+\end{analogy}
+
+This system uses many ports. Here are the most important ones:
+
+\begin{table}[H]
+\centering
+\caption{Key ports used by the PQC tunnel system}
+\label{tab:key-ports}
+\begin{tabularx}{\textwidth}{lllX}
+\toprule
+\textbf{Port} & \textbf{Protocol} & \textbf{Side} & \textbf{Purpose} \\
+\midrule
+46000 & TCP & GCS & Handshake server --- listens for drone connections \\
+46011 & UDP & GCS & Encrypted data reception from drone \\
+46012 & UDP & Drone & Encrypted data reception from GCS \\
+47001 & UDP & GCS & Plaintext ingress (app $\to$ tunnel) \\
+47002 & UDP & GCS & Plaintext egress (tunnel $\to$ app) \\
+47003 & UDP & Drone & Plaintext ingress (MAVProxy $\to$ tunnel) \\
+47004 & UDP & Drone & Plaintext egress (tunnel $\to$ MAVProxy) \\
+48080 & TCP & Both & Scheduler control channel \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{TCP: The Reliable Protocol}
+\label{sec:net-tcp}
+
+\begin{definition}[Transmission Control Protocol (TCP)]
+\textbf{TCP} is a transport-layer protocol that provides reliable, ordered, error-checked delivery of data between applications. It establishes a connection before data transfer (a ``three-way handshake''), retransmits lost packets, and ensures data arrives in the correct order.
+\end{definition}
+
+TCP is used in this system for the \textbf{cryptographic handshake} (establishing keys) because:
+\begin{enumerate}
+  \item The handshake is a multi-step conversation (server hello, client response) that must happen in order.
+  \item Losing a handshake message would be catastrophic---the keys would be wrong.
+  \item The handshake happens once (or occasionally during rekey), so TCP's overhead is acceptable.
+\end{enumerate}
+
+\subsection{How TCP Works}
+
+TCP guarantees delivery through a simple but powerful mechanism:
+
+\begin{enumerate}
+  \item The sender transmits a segment of data and starts a timer.
+  \item The receiver sends an \textbf{acknowledgment (ACK)} confirming receipt.
+  \item If the sender's timer expires without receiving an ACK, it retransmits the segment.
+  \item Sequence numbers ensure data is reassembled in order even if segments arrive out of order.
+\end{enumerate}
+
+\begin{keyinsight}
+TCP's reliability comes at a cost: \textbf{latency}. If a packet is lost, the sender must wait for a timeout (typically 200ms to several seconds), retransmit, and wait for the acknowledgment. For real-time drone control, this delay is unacceptable---which is why the data plane uses UDP instead.
+\end{keyinsight}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{UDP: The Fast Protocol}
+\label{sec:net-udp}
+
+\begin{definition}[User Datagram Protocol (UDP)]
+\textbf{UDP} is a transport-layer protocol that provides unreliable, unordered delivery of individual datagrams. It has no connection setup, no acknowledgments, and no retransmission. Each packet is independent.
+\end{definition}
+
+UDP is used in this system for the \textbf{encrypted data plane} (actual MAVLink traffic) because:
+\begin{enumerate}
+  \item \textbf{Low latency:} UDP adds essentially zero overhead beyond the IP layer. A packet is sent immediately.
+  \item \textbf{Tolerance for loss:} MAVLink was designed for UDP. If a telemetry packet is lost, the next one (arriving milliseconds later) carries updated data, making the lost packet irrelevant.
+  \item \textbf{No head-of-line blocking:} In TCP, if packet 5 is lost, packets 6, 7, 8 are held until packet 5 is retransmitted. In UDP, packets 6, 7, 8 are delivered immediately.
+\end{enumerate}
+
+\begin{analogy}
+TCP is like a phone call: you establish a connection, speak in order, and know the other person heard you. UDP is like shouting across a field: your message goes out immediately, but you do not know if anyone heard it, and your words might arrive jumbled if there is an echo.
+\end{analogy}
+
+\subsection{UDP Datagram Structure}
+
+A UDP datagram is simple:
+
+\begin{table}[H]
+\centering
+\caption{UDP header structure (8 bytes total)}
+\label{tab:udp-header}
+\begin{tabular}{llll}
+\toprule
+\textbf{Offset} & \textbf{Size} & \textbf{Field} & \textbf{Description} \\
+\midrule
+0 & 2 bytes & Source Port & Sender's port number \\
+2 & 2 bytes & Destination Port & Receiver's port number \\
+4 & 2 bytes & Length & Total datagram length \\
+6 & 2 bytes & Checksum & Error detection (optional in IPv4) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The entire UDP header is only 8 bytes. Compare this to TCP's 20-byte minimum header (often 32 bytes with options). For small MAVLink packets (typically 50--280 bytes), this overhead difference matters.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Sockets: The Programming Interface}
+\label{sec:net-sockets}
+
+\begin{definition}[Socket]
+A \textbf{socket} is a programming interface (API) for network communication. It represents one endpoint of a two-way communication link. A program creates a socket, binds it to an address and port, and then sends or receives data through it.
+\end{definition}
+
+In Python, the \texttt{socket} module provides this interface:
+
+\begin{lstlisting}[style=python, caption={Creating and using a UDP socket in Python}]
+import socket
+
+# Create a UDP socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+# Bind to a specific address and port
+sock.bind(("127.0.0.1", 47001))
+
+# Receive a packet (up to 65535 bytes)
+data, sender_address = sock.recvfrom(65535)
+
+# Send a packet to a specific destination
+sock.sendto(encrypted_data, ("192.168.0.100", 46012))
+\end{lstlisting}
+
+The proxy engine in this system manages four sockets simultaneously:
+\begin{enumerate}
+  \item A plaintext-receiving socket (bound to localhost, receives from the local application).
+  \item A plaintext-sending socket (sends decrypted data to the local application).
+  \item An encrypted-receiving socket (bound to the network interface, receives from the remote peer).
+  \item An encrypted-sending socket (sends encrypted data to the remote peer).
+\end{enumerate}
+
+\subsection{Selectors: Watching Multiple Sockets}
+
+When a program needs to watch multiple sockets at once (``has data arrived on socket~A or socket~B?''), it uses a \textbf{selector}---an operating system mechanism that efficiently monitors multiple I/O channels.
+
+\begin{lstlisting}[style=python, caption={Using selectors to monitor multiple sockets}]
+import selectors
+
+sel = selectors.DefaultSelector()
+sel.register(plaintext_sock, selectors.EVENT_READ, "plaintext_in")
+sel.register(encrypted_sock, selectors.EVENT_READ, "encrypted")
+
+while True:
+    events = sel.select(timeout=0.1)  # Wait up to 100ms
+    for key, mask in events:
+        if key.data == "plaintext_in":
+            handle_plaintext_packet(key.fileobj)
+        elif key.data == "encrypted":
+            handle_encrypted_packet(key.fileobj)
+\end{lstlisting}
+
+\begin{designdecision}
+The proxy engine uses Python's \texttt{selectors} module instead of \texttt{asyncio} (Python's asynchronous I/O framework). This was a deliberate choice: selectors provide more deterministic latency behavior because they avoid the overhead of coroutine scheduling, task queues, and event loop callbacks that \texttt{asyncio} introduces. For a latency-sensitive real-time proxy, predictability matters more than convenience.
+\end{designdecision}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Network Address Translation (NAT)}
+\label{sec:net-nat}
+
+In many network setups, devices do not have globally unique IP addresses. Instead, a router performs \textbf{Network Address Translation (NAT)}, mapping internal addresses (like \texttt{192.168.0.x}) to a single external address.
+
+NAT creates a complication for our system: when the drone sends a packet, the router may change the source port. If the GCS is configured to accept packets only from the drone's expected address and port (\texttt{STRICT\_UDP\_PEER\_MATCH = True}), these translated packets will be rejected.
+
+\begin{designdecision}
+The system defaults to \configkey{STRICT\_UDP\_PEER\_MATCH} \texttt{= True} for security (preventing IP spoofing attacks) but allows disabling it when operating behind NAT. This is a classic security-vs-usability trade-off.
+\end{designdecision}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Bandwidth, Latency, and Throughput}
+\label{sec:net-metrics}
+
+Three metrics characterize network performance:
+
+\begin{definition}[Bandwidth]
+\textbf{Bandwidth} is the maximum rate at which data can be transmitted over a link, measured in bits per second (bps). A typical WiFi link provides 20--100\,Mbps.
+\end{definition}
+
+\begin{definition}[Latency]
+\textbf{Latency} is the time it takes for a single packet to travel from sender to receiver, measured in milliseconds (ms). On a local WiFi LAN, latency is typically 1--5\,ms.
+\end{definition}
+
+\begin{definition}[Throughput]
+\textbf{Throughput} (or \textbf{goodput}) is the actual rate of useful data transfer, after subtracting protocol overhead, retransmissions, and errors. It is always less than or equal to bandwidth.
+\end{definition}
+
+\begin{keyinsight}
+For drone communication, \textbf{latency matters more than bandwidth}. A typical MAVLink telemetry stream requires only 10--50\,kbps---trivial for any modern network. But if a ``return to home'' command arrives 500ms late because of TCP retransmission or encryption overhead, the drone may have already flown into an obstacle.
+\end{keyinsight}
+
+\subsection{Jitter}
+
+\begin{definition}[Jitter]
+\textbf{Jitter} is the variation in latency over time. If packets normally arrive every 10ms but occasionally arrive after 15ms or 5ms, the jitter is the spread of those arrival times.
+\end{definition}
+
+High jitter is problematic for drone control because the autopilot expects telemetry at regular intervals. If heartbeat messages arrive irregularly, the autopilot may incorrectly conclude that the communication link has failed and trigger a failsafe (automatic return to home or landing).
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The Data Flow in Our System}
+\label{sec:net-dataflow}
+
+Now we can describe the complete data flow with proper networking terminology:
+
+\begin{enumerate}
+  \item The \textbf{Pixhawk flight controller} generates MAVLink messages and sends them via USB serial to the Raspberry Pi.
+  
+  \item \textbf{MAVProxy} on the Pi reads the serial data, decodes MAVLink frames, and forwards each frame as a UDP datagram to \texttt{127.0.0.1:47003} (the drone proxy's plaintext ingress port).
+  
+  \item The \textbf{drone proxy} receives the plaintext datagram on its localhost socket. It encrypts the payload using the current AEAD key, prepends the wire header, and sends the resulting ciphertext datagram from the Pi's WiFi interface to \texttt{192.168.0.101:46011} (the GCS proxy's encrypted receive port).
+  
+  \item The ciphertext traverses the \textbf{WiFi LAN} as a standard UDP/IP packet. Any eavesdropper sees only the encrypted datagram.
+  
+  \item The \textbf{GCS proxy} receives the encrypted datagram on port~46011. It validates the header, checks the replay window, decrypts the payload, and sends the recovered plaintext datagram to \texttt{127.0.0.1:47002} (the GCS application's receive port).
+  
+  \item \textbf{Mission Planner} (or QGroundControl) receives the plaintext MAVLink datagram and displays the drone's telemetry.
+\end{enumerate}
+
+The return path (GCS commands to drone) follows the exact inverse: plaintext from the GCS app enters on port~47001, is encrypted and sent to \texttt{192.168.0.100:46012}, decrypted on the drone side, and delivered to MAVProxy on port~47004.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=1.2cm and 2.5cm,
+  box/.style={draw, rounded corners, minimum width=2.5cm, minimum height=0.8cm, align=center, font=\small},
+  arrow/.style={-{Stealth[length=6pt]}, thick},
+  label/.style={font=\scriptsize\itshape, text=gray}
+]
+  % Drone side
+  \node[box, fill=blue!10] (pixhawk) {Pixhawk};
+  \node[box, fill=blue!10, below=of pixhawk] (mavproxy-d) {MAVProxy\\(Drone)};
+  \node[box, fill=red!10, below=of mavproxy-d] (proxy-d) {Drone\\Proxy};
+  
+  % GCS side
+  \node[box, fill=green!10, right=5cm of pixhawk] (mp) {Mission\\Planner};
+  \node[box, fill=green!10, below=of mp] (mavproxy-g) {MAVProxy\\(GCS)};
+  \node[box, fill=red!10, below=of mavproxy-g] (proxy-g) {GCS\\Proxy};
+  
+  % Arrows - drone side
+  \draw[arrow] (pixhawk) -- node[left, label] {Serial} (mavproxy-d);
+  \draw[arrow] (mavproxy-d) -- node[left, label] {UDP :47003\\localhost} (proxy-d);
+  
+  % Arrows - GCS side
+  \draw[arrow] (proxy-g) -- node[right, label] {UDP :47002\\localhost} (mavproxy-g);
+  \draw[arrow] (mavproxy-g) -- node[right, label] {} (mp);
+  
+  % Encrypted link
+  \draw[arrow, BrickRed, very thick] (proxy-d) -- node[below, font=\small\bfseries, text=BrickRed] {Encrypted UDP\\WiFi LAN} (proxy-g);
+  
+  % Handshake
+  \draw[arrow, dashed, ForestGreen] ([yshift=-5pt]proxy-d.east) -- node[above, font=\scriptsize, text=ForestGreen] {TCP Handshake (PQC)} ([yshift=-5pt]proxy-g.west);
+  
+\end{tikzpicture}
+\caption{Data flow through the PQC tunnel system}
+\label{fig:data-flow}
+\end{figure}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Summary}
+\label{sec:net-summary}
+
+In this chapter, we established the networking foundations needed to understand the tunnel:
+
+\begin{itemize}
+  \item Networks use \textbf{layered protocols} to manage complexity.
+  \item \textbf{IP addresses} identify machines; \textbf{ports} identify programs.
+  \item \textbf{TCP} provides reliable delivery (used for handshakes).
+  \item \textbf{UDP} provides fast, unreliable delivery (used for the data plane).
+  \item \textbf{Sockets} are the programming interface for network I/O.
+  \item \textbf{Selectors} allow monitoring multiple sockets simultaneously.
+  \item The tunnel separates \textbf{plaintext} traffic (localhost) from \textbf{encrypted} traffic (network).
+\end{itemize}
+
+With this foundation, we are ready to explore the other half of the equation: the cryptography that makes the tunnel secure.

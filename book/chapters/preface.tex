@@ -1,0 +1,75 @@
+% ============================================================================
+%  PREFACE
+% ============================================================================
+\chapter*{Preface}
+\addcontentsline{toc}{chapter}{Preface}
+
+\section*{What This Book Is}
+
+This book is a complete technical reference for a real, functioning post-quantum secure communication tunnel built for unmanned aerial vehicles (UAVs). It is not a theoretical exercise. It is not a simulation report. It is an explanation---from first principles to final implementation---of a system that encrypts live MAVLink telemetry between a Pixhawk flight controller on a Raspberry Pi--equipped drone and a Windows-based Ground Control Station, using algorithms designed to resist attacks from quantum computers.
+
+Every line of code described in this book exists. Every metric shown was collected from real hardware. Every design decision was made under real constraints: limited CPU, limited battery, real-time latency requirements, and the unforgiving physics of wireless communication.
+
+\section*{Who This Book Is For}
+
+This book is written for three audiences simultaneously:
+
+\begin{enumerate}[label=\textbf{\arabic*.}]
+  \item \textbf{The curious student.} If you are a motivated high school or early undergraduate student who wants to understand how computers talk to each other, what encryption really means, and how drones are controlled, this book will take you from zero knowledge to genuine understanding. Every term is defined before it is used. Every concept is explained with analogies before it is formalized.
+
+  \item \textbf{The engineer.} If you are a software engineer, embedded systems developer, or network architect who needs to understand or extend this system, this book provides the complete technical specification. You will find class diagrams, protocol flows, wire formats, and code walkthroughs.
+
+  \item \textbf{The researcher.} If you are evaluating post-quantum cryptography for real-world embedded systems, this book provides honest measurements, clearly stated limitations, and the complete methodology needed to reproduce or extend the results.
+\end{enumerate}
+
+\section*{How to Read This Book}
+
+The book is organized in five parts:
+
+\textbf{Part~I: Foundations} assumes nothing. It teaches networking, cryptography, and post-quantum cryptography from first principles. If you already know what TCP is, what AES-GCM does, and what a lattice problem is, you may skim these chapters. But even experienced engineers have found surprises in these pages---the section on why certain classical ciphers fail against quantum computers, for example, requires careful attention even from specialists.
+
+\textbf{Part~II: The Domain} explains the specific problem domain: how drones communicate with ground stations using the MAVLink protocol, and why securing that communication requires a custom tunnel rather than an off-the-shelf VPN.
+
+\textbf{Part~III: The Implementation} is the heart of the book. It walks through every major component of the codebase: the handshake protocol, the authenticated encryption framing, the proxy engine, and the cryptographic suite system. Each chapter includes real code listings and explains not just what the code does, but \emph{why} it was written that way.
+
+\textbf{Part~IV: Orchestration and Measurement} covers the benchmark orchestration system, the metrics collection pipeline, and the analytics dashboard. This is where the system goes from ``it works'' to ``we can prove it works and measure how well.''
+
+\textbf{Part~V: Engineering and Reflection} discusses the cross-cutting engineering decisions, trade-offs, known limitations, and future research directions.
+
+\section*{Conventions Used}
+
+Throughout this book:
+
+\begin{itemize}
+  \item \texttt{Monospaced text} indicates code, filenames, configuration keys, or terminal commands.
+  \item \textbf{Bold terms} are being defined for the first time.
+  \item \textit{Italic terms} indicate emphasis or domain-specific terminology being referenced.
+  \item Colored boxes highlight key insights, analogies, design decisions, security considerations, and implementation notes.
+  \item All code listings are from the actual codebase unless explicitly noted as simplified.
+  \item Line numbers in code listings correspond to the source files at the time of writing.
+\end{itemize}
+
+\begin{keyinsight}
+Blue boxes like this one highlight fundamental concepts that tie multiple topics together.
+\end{keyinsight}
+
+\begin{analogy}
+Green boxes provide everyday analogies to help build intuition for technical concepts.
+\end{analogy}
+
+\begin{designdecision}
+Orange boxes explain specific design choices made in the implementation, including trade-offs considered.
+\end{designdecision}
+
+\begin{securitynote}
+Red boxes flag security-critical information that demands careful attention.
+\end{securitynote}
+
+\section*{A Note on Honesty}
+
+This book does not pretend the system is perfect. Where measurements have limitations, we say so. Where design choices involve trade-offs, we explain both sides. Where the codebase has known issues or areas that need improvement, we discuss them openly.
+
+Science advances through honest reporting, not through marketing. This book follows that principle.
+
+\vspace{2em}
+\hfill\textit{February 2026}

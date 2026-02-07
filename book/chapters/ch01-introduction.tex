@@ -1,0 +1,130 @@
+% ============================================================================
+%  CHAPTER 1 — INTRODUCTION
+% ============================================================================
+\chapter{Introduction}
+\label{ch:introduction}
+
+\epigraph{The best time to worry about security was twenty years ago. The second best time is now.}{---Common saying in cryptographic engineering}
+
+\section{Why This Book Exists}
+\label{sec:intro-why}
+
+Imagine you are flying a drone over a field, monitoring crops, inspecting a bridge, or delivering a medical supply package to a remote village. Your drone is in the air, a kilometer away, and you are sitting at a laptop---the \textbf{Ground Control Station (GCS)}---watching its battery level, altitude, GPS coordinates, and camera feed. You can send it commands: ``fly to waypoint 3,'' ``return to launch,'' ``descend to 50 meters.''
+
+All of this communication---the telemetry flowing from the drone to you, and the commands flowing from you to the drone---travels through the air as radio waves. And here is the problem: \emph{anyone with a compatible radio receiver can hear those radio waves.}
+
+Worse, they might not just listen. They might record every packet you send, store it on a hard drive, and wait. Wait for ten years. Wait for twenty. Wait until quantum computers---machines that exploit the strange laws of quantum physics to perform certain calculations exponentially faster than any classical computer---become powerful enough to break the encryption that protects your communication today.
+
+This scenario is not science fiction. It has a name: the \textbf{``store now, decrypt later''} attack. Intelligence agencies, corporate espionage operations, and nation-state adversaries are already collecting encrypted communications, betting that future quantum computers will let them read those messages retroactively.
+
+For consumer drones flying over a park, this may seem like a distant concern. But for military UAVs, critical infrastructure inspection drones, or medical delivery systems, the data transmitted today may still be sensitive in twenty years. The flight patterns reveal surveillance targets. The command protocols reveal operational procedures. The telemetry reveals the capabilities and limitations of the hardware.
+
+This book describes a system built to address this problem: a \textbf{post-quantum secure tunnel} for drone communication. The system takes the standard MAVLink protocol used by most drones in the world and wraps it in a layer of encryption that is designed to resist attacks from both today's classical computers and tomorrow's quantum computers.
+
+\section{The Problem, Precisely Stated}
+\label{sec:intro-problem}
+
+Let us state the problem with engineering precision:
+
+\begin{enumerate}
+  \item \textbf{MAVLink is unencrypted by default.} The MAVLink protocol~\cite{mavlink-spec}, used by ArduPilot, PX4, and most open-source drone autopilot systems, transmits telemetry and commands as plaintext UDP packets. Anyone on the same network (or within radio range) can read, modify, or inject packets.
+  
+  \item \textbf{Classical encryption is vulnerable to quantum attack.} Standard approaches like TLS with RSA or ECDHE key exchange rely on the hardness of integer factorization or discrete logarithms. Shor's algorithm~\cite{shor1994}, when executed on a sufficiently large quantum computer, can solve both problems in polynomial time, rendering these schemes useless.
+  
+  \item \textbf{Drone links have unique constraints.} Unlike web browsers, drones require:
+  \begin{itemize}
+    \item \textbf{Low latency:} Commands must arrive within milliseconds to maintain stable flight.
+    \item \textbf{Tolerance for packet loss:} UDP is used because retransmission delays (as in TCP) are unacceptable for real-time control.
+    \item \textbf{Limited compute:} The drone's companion computer (a Raspberry Pi) has far less processing power than a server.
+    \item \textbf{Limited energy:} Every millijoule spent on encryption is a millijoule not spent on flying.
+    \item \textbf{Key rotation:} Long flights may require periodic rekeying to limit the damage of any single key compromise.
+  \end{itemize}
+  
+  \item \textbf{No off-the-shelf solution fits.} VPNs like WireGuard or IPsec are designed for general-purpose networking. They do not support post-quantum algorithms (at the time of implementation), do not provide per-packet algorithm identification needed for benchmarking, and add unnecessary protocol overhead for a point-to-point link.
+\end{enumerate}
+
+Therefore, the system described in this book was built from scratch: a custom, purpose-built, post-quantum secure tunnel for MAVLink traffic.
+
+\section{What the System Does}
+\label{sec:intro-what}
+
+At the highest level, the system works like this:
+
+\begin{analogy}
+Imagine two people who want to have a private conversation in a crowded room. First, they step into a quiet corner and agree on a secret code (the \textbf{handshake}). Then they return to the crowd and speak in code (the \textbf{encrypted data plane}). If anyone overhears, all they get is gibberish. And the code they used was chosen specifically so that even a quantum-computer-equipped eavesdropper cannot crack it.
+\end{analogy}
+
+More technically:
+
+\begin{enumerate}
+  \item The GCS starts a \textbf{proxy process} that listens for incoming connections.
+  \item The drone starts its own \textbf{proxy process} that connects to the GCS.
+  \item They perform a \textbf{TCP handshake} using post-quantum key encapsulation (to establish a shared secret) and post-quantum digital signatures (to authenticate the GCS's identity).
+  \item From the shared secret, they derive \textbf{two symmetric keys}: one for drone-to-GCS traffic, one for GCS-to-drone traffic.
+  \item All subsequent MAVLink traffic is \textbf{encrypted and authenticated} using an AEAD cipher (AES-256-GCM, ChaCha20-Poly1305, or ASCON-128a) with the derived keys.
+  \item The proxies sit transparently between the applications and the network. MAVProxy and Mission Planner do not know the tunnel exists---they send and receive plaintext MAVLink as usual.
+\end{enumerate}
+
+The system supports over 70 different \textbf{cipher suites}---combinations of key encapsulation, signature, and encryption algorithms---allowing comprehensive benchmarking of different post-quantum approaches on real hardware.
+
+\section{The Hardware}
+\label{sec:intro-hardware}
+
+This is not a simulation. The system runs on real hardware:
+
+\begin{description}
+  \item[Drone side:] A Raspberry Pi (ARM-based single-board computer) connected to a Pixhawk flight controller via USB serial. The Pixhawk runs ArduPilot firmware and controls the physical drone. The Raspberry Pi runs the secure tunnel proxy, MAVProxy, and metrics collection.
+  
+  \item[GCS side:] A Windows laptop running Mission Planner or QGroundControl for flight control visualization, plus the secure tunnel proxy and benchmark orchestration software.
+  
+  \item[Network:] Both devices are connected via a WiFi LAN (local area network). The encrypted traffic traverses the WiFi link; plaintext traffic stays on localhost (127.0.0.1).
+  
+  \item[Power measurement:] An INA219 current sensor on the I2C bus of the Raspberry Pi measures real-time voltage, current, and power consumption at 1\,kHz sampling rate.
+\end{description}
+
+\section{The Software Stack}
+\label{sec:intro-software}
+
+The codebase is written primarily in Python and is organized into three major layers:
+
+\begin{description}
+  \item[\filename{core/}] The tunnel engine. This contains the handshake protocol, AEAD encryption/decryption, the UDP proxy, the suite registry, configuration management, metrics collection, power monitoring, and all cryptographic logic. This is the most security-critical code.
+  
+  \item[\filename{sscheduler/}] The orchestration layer. This contains the benchmark scheduler that cycles through all cipher suites, manages proxy processes on both drone and GCS, collects metrics, and saves results. The drone acts as the controller; the GCS is a follower that responds to commands.
+  
+  \item[\filename{dashboard/}] The analytics layer. A FastAPI backend loads benchmark results from JSON files, computes derived metrics, and serves them via a REST API. A React/TypeScript frontend visualizes the data with interactive charts, tables, and comparison tools.
+\end{description}
+
+The cryptographic primitives are provided by \textbf{liboqs} (Open Quantum Safe)~\cite{liboqs}, a C library that implements all NIST-standardized and candidate post-quantum algorithms. The system accesses liboqs through its Python bindings (\texttt{oqs-python}).
+
+\section{The Scope of This Book}
+\label{sec:intro-scope}
+
+This book explains the \emph{entire} system. By the time you finish reading, you will understand:
+
+\begin{itemize}
+  \item How computer networks work (Chapter~\ref{ch:networking}).
+  \item What cryptography is and how it provides confidentiality, integrity, and authentication (Chapter~\ref{ch:cryptography}).
+  \item Why quantum computers threaten current cryptography and how post-quantum algorithms work (Chapter~\ref{ch:pqc}).
+  \item How drones communicate using MAVLink and MAVProxy (Chapter~\ref{ch:mavlink}).
+  \item The complete architecture of the secure tunnel system (Chapter~\ref{ch:architecture}).
+  \item How the handshake protocol establishes post-quantum keys (Chapter~\ref{ch:handshake}).
+  \item How AEAD framing protects individual packets (Chapter~\ref{ch:aead}).
+  \item How the proxy engine moves packets between plaintext and encrypted worlds (Chapter~\ref{ch:proxy}).
+  \item How 70+ cipher suites are defined, registered, and selected (Chapter~\ref{ch:suites}).
+  \item How the benchmark scheduler orchestrates test runs (Chapter~\ref{ch:scheduler}).
+  \item How metrics are collected, aggregated, and validated (Chapter~\ref{ch:metrics}).
+  \item How the dashboard visualizes results (Chapter~\ref{ch:dashboard}).
+  \item The engineering trade-offs, limitations, and lessons learned (Chapter~\ref{ch:engineering}).
+\end{itemize}
+
+\section{A Word About Reading Order}
+\label{sec:intro-reading-order}
+
+If you are a student encountering these topics for the first time, read the book sequentially. Each chapter builds on the previous one.
+
+If you are an engineer who already understands networking and cryptography, you may skip to Part~II (Chapter~\ref{ch:mavlink}) and refer back to the Glossary and foundational chapters as needed.
+
+If you are a researcher interested specifically in the post-quantum performance measurements, you may focus on Chapters~\ref{ch:metrics} and~\ref{ch:dashboard}, but we strongly recommend at least skimming Chapter~\ref{ch:engineering} for an honest assessment of limitations.
+
+Let us begin.

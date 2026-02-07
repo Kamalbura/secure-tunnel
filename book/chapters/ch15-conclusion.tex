@@ -1,0 +1,181 @@
+\chapter{Conclusion and Future Work}
+\label{ch:conclusion}
+
+% ============================================================
+\section{Summary of Contributions}
+
+This book has documented a complete, working Post-Quantum Cryptographic
+(PQC) Secure MAVLink Tunnel system---from theoretical foundations through
+implementation details to benchmark orchestration and visual analysis.
+The key contributions are:
+
+\begin{enumerate}
+  \item \textbf{A bump-in-the-wire PQC tunnel}: A transparent proxy that
+        encrypts MAVLink traffic between a drone and ground control station
+        using post-quantum algorithms, without modifying the flight controller
+        firmware or GCS application software.
+
+  \item \textbf{72 cipher suites}: A comprehensive suite registry combining
+        9~KEM algorithms, 8~signature algorithms, and 3~AEAD ciphers across
+        NIST security levels~1, 3, and~5.  This provides researchers with
+        the largest PQC suite matrix applied to drone communications to date.
+
+  \item \textbf{A telemetry-aware scheduling policy}: A safety-critical
+        state machine that adapts cryptographic strength to real-time
+        conditions (battery, temperature, link quality) with hysteresis,
+        blacklisting, and rate limiting.
+
+  \item \textbf{An 18-category metrics pipeline}: A structured data
+        collection framework with $\sim 160$~typed fields covering
+        cryptographic primitives, data-plane counters, MAVLink integrity,
+        power consumption, and system resources.
+
+  \item \textbf{High-frequency power monitoring}: Direct INA219 register
+        access at up to 1{,}100~samples/second for precise energy-per-handshake
+        measurements.
+
+  \item \textbf{A forensic analysis dashboard}: A web-based tool for
+        multi-run comparison, anomaly detection, and visual exploration of
+        benchmark results across 12~interactive pages.
+
+  \item \textbf{Cross-platform operation}: The entire system runs on a
+        Raspberry Pi~5 (drone) and a Windows laptop (GCS), demonstrating
+        practical deployment on real constrained hardware.
+\end{enumerate}
+
+% ============================================================
+\section{Key Findings}
+\label{sec:concl-findings}
+
+From the benchmark results, several findings emerge:
+
+\begin{enumerate}
+  \item \textbf{ML-KEM dominates}: ML-KEM (CRYSTALS-Kyber) consistently
+        delivers the lowest handshake latency across all NIST levels, making
+        it the clear choice for latency-sensitive drone applications.
+
+  \item \textbf{Classic McEliece is impractical for real-time rekey}:
+        While offering strong security guarantees based on a different
+        mathematical problem (coding theory), McEliece's enormous public keys
+        (up to 1.3\,MB) make handshakes take tens of seconds, far too slow
+        for operational drone rekey intervals.
+
+  \item \textbf{AEAD choice matters less than KEM choice}: The three AEAD
+        algorithms (AES-GCM, ChaCha20, ASCON) differ by microseconds per
+        packet, while KEM choice affects handshake time by milliseconds to
+        seconds.
+
+  \item \textbf{Power cost is measurable but manageable}: PQC handshakes
+        on the Pi~5 consume 5--8\,W peak, compared to 3\,W idle.  For a
+        typical 110-second suite interval, the handshake energy is a small
+        fraction of total energy.
+
+  \item \textbf{Algorithm diversity has value}: HQC and SPHINCS+ provide
+        security from fundamentally different mathematical assumptions
+        (coding theory and hash functions, respectively), hedging against
+        the possibility that lattice-based cryptography is broken.
+\end{enumerate}
+
+% ============================================================
+\section{Lessons Learned}
+\label{sec:concl-lessons}
+
+\begin{enumerate}
+  \item \textbf{Metrics must be crash-resilient}: Early versions lost
+        all data when a suite crashed.  The RobustLogger's append-mode
+        design (Section~\ref{sec:metrics-robust}) solved this.
+
+  \item \textbf{Time domains must not mix}: Using wall-clock time where
+        monotonic time is expected (or vice versa) produced subtly wrong
+        interval calculations.  Consistent use of \texttt{time.monotonic()}
+        for policy timing eliminated this class of bugs.
+
+  \item \textbf{Two-phase commit prevents metric mis-attribution}: The
+        evaluate/confirm\_advance split (Section~\ref{sec:sched-2phase})
+        was introduced after discovering that metrics were being recorded
+        against the wrong suite.
+
+  \item \textbf{Cross-platform process management is harder than expected}:
+        Orphaned proxy processes on both Linux and Windows required
+        platform-specific solutions (PDEATHSIG, Win32 Job Objects).
+
+  \item \textbf{PQC library maturity varies}: Some algorithms in
+        \texttt{liboqs} have performance regressions between versions, and
+        not all algorithms are available on all platforms.  Runtime probing
+        (Section~\ref{sec:suites-probing}) is essential.
+\end{enumerate}
+
+% ============================================================
+\section{Future Work}
+\label{sec:concl-future}
+
+\subsection{Short-Term Improvements}
+
+\begin{enumerate}
+  \item \textbf{TLS for the control channel}: Replace the plaintext TCP
+        control channel with mutual TLS or HMAC-authenticated messages.
+
+  \item \textbf{Certificate-based identity}: Replace bare signing key files
+        with X.509 certificates (or a lightweight equivalent) that include
+        expiry dates and support revocation.
+
+  \item \textbf{Session resumption}: Cache KEM shared secrets (with a TTL)
+        to enable faster rekey without a full handshake.
+
+  \item \textbf{Hybrid classical/PQC}: Combine a classical ECDH exchange
+        with a PQC KEM to provide security even if one is broken (``belt and
+        suspenders'' approach, as recommended by NIST).
+\end{enumerate}
+
+\subsection{Medium-Term Research Directions}
+
+\begin{enumerate}
+  \item \textbf{Real flight testing}: Run the benchmark during actual drone
+        flights to measure the impact of vibration, altitude, and RF
+        interference on PQC tunnel performance.
+
+  \item \textbf{Multi-hop tunnels}: Extend the architecture to support mesh
+        networks where multiple drones relay encrypted traffic.
+
+  \item \textbf{Machine-learning policy}: Replace the rule-based
+        TelemetryAwarePolicyV2 with a reinforcement-learning agent that
+        optimises suite selection based on historical performance data.
+
+  \item \textbf{Hardware acceleration}: Evaluate FPGA or GPU acceleration
+        for lattice-based operations (NTT, polynomial multiplication) on
+        the drone side.
+\end{enumerate}
+
+\subsection{Long-Term Vision}
+
+\begin{enumerate}
+  \item \textbf{Standardisation}: Contribute the handshake protocol and
+        wire format to MAVLink standardisation efforts as a PQC security
+        extension.
+
+  \item \textbf{Embedded implementation}: Port the critical path (handshake
+        + AEAD) to C/Rust for deployment on microcontroller-based flight
+        controllers (STM32, ESP32).
+
+  \item \textbf{Formal verification}: Use tools like ProVerif or Tamarin to
+        formally verify the handshake protocol's security properties.
+\end{enumerate}
+
+% ============================================================
+\section{Closing Remarks}
+
+The transition to post-quantum cryptography is not a distant future
+concern---it is an active engineering challenge that must be addressed
+\emph{now}, before quantum computers become capable of breaking classical
+encryption.  The ``harvest now, decrypt later'' threat means that drone
+telemetry recorded today could be decrypted by a future adversary.
+
+This system demonstrates that post-quantum protection for drone
+communications is \emph{practical} on commodity hardware.  A Raspberry Pi~5
+running Python can perform ML-KEM-512 handshakes in under 15~milliseconds,
+encrypt MAVLink packets with negligible overhead, and cycle through 72~cipher
+suites in a single automated benchmark run.
+
+The code, the metrics, the analysis tools, and this book are all
+contributions toward a future where unmanned systems communicate securely,
+even in a post-quantum world.

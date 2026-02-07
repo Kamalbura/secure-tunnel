@@ -1,0 +1,473 @@
+% ============================================================================
+%  CHAPTER 4 — POST-QUANTUM CRYPTOGRAPHY
+% ============================================================================
+\chapter{Post-Quantum Cryptography}
+\label{ch:pqc}
+
+\epigraph{We should be worried about quantum computers not because they are coming next year, but because encrypted data captured today can be decrypted retroactively once they arrive.}{}
+
+Chapter~\ref{ch:cryptography} established the foundations of symmetric and public-key cryptography. This chapter explains \emph{why} classical public-key algorithms are vulnerable to quantum computers and introduces the specific post-quantum algorithms that this system uses.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Quantum Computing in Two Pages}
+\label{sec:pqc-quantum}
+
+A \textbf{classical computer} stores information as bits---each bit is either 0 or 1. A \textbf{quantum computer} stores information as \textbf{qubits}, which can be in a \textbf{superposition} of both 0 and 1 simultaneously.
+
+\begin{analogy}
+A classical bit is like a coin lying on a table: it is either heads (0) or tails (1). A qubit is like a coin spinning in the air: until it lands (is \textbf{measured}), it is, in a precise mathematical sense, both heads and tails at the same time.
+\end{analogy}
+
+Two key properties make quantum computers powerful:
+
+\begin{description}
+  \item[Superposition:] A system of $n$ qubits can represent all $2^n$ possible states simultaneously. With 256 qubits, a quantum computer can (in a limited sense) process $2^{256}$ states in parallel---more than the number of atoms in the observable universe.
+  
+  \item[Entanglement:] Qubits can be correlated in ways that have no classical analogue. Measuring one entangled qubit instantly constrains the state of its partner, enabling quantum algorithms to amplify correct answers and suppress incorrect ones.
+\end{description}
+
+\begin{keyinsight}
+Quantum computers are \textbf{not} just ``faster classical computers.'' They cannot speed up every computation. They are powerful because certain mathematical problems---including the ones that underpin RSA, Diffie-Hellman, and elliptic curve cryptography---have efficient quantum algorithms.
+\end{keyinsight}
+
+\subsection{Shor's Algorithm}
+
+In 1994, Peter Shor discovered quantum algorithms for two problems:
+
+\begin{enumerate}
+  \item \textbf{Integer factorization:} Given a composite number $N = p \times q$, find $p$ and $q$.
+  \item \textbf{Discrete logarithm:} Given $g$, $p$, and $g^x \mod p$, find $x$.
+\end{enumerate}
+
+Classical computers require roughly $2^{112}$ operations to factor a 2048-bit RSA key. A sufficiently large quantum computer running Shor's algorithm requires only a polynomial number of quantum gates---roughly $O(n^3)$ where $n$ is the number of bits. This means:
+
+\begin{itemize}
+  \item \textbf{RSA:} Broken. Key exchange and signatures based on factoring are insecure.
+  \item \textbf{Diffie-Hellman / ECDH:} Broken. Key exchange based on discrete logarithms is insecure.
+  \item \textbf{ECDSA / EdDSA:} Broken. All elliptic-curve signature schemes are insecure.
+\end{itemize}
+
+\subsection{Grover's Algorithm}
+
+Lov Grover's 1996 algorithm speeds up \textbf{unstructured search}: given a black-box function, it finds the input that produces a specific output in $O(\sqrt{N})$ evaluations instead of $O(N)$.
+
+Applied to symmetric cryptography, Grover's algorithm effectively halves the security level:
+\begin{itemize}
+  \item AES-128 drops from 128-bit security to 64-bit security (unsafe).
+  \item AES-256 drops from 256-bit security to 128-bit security (still safe).
+\end{itemize}
+
+This is why the system uses \textbf{AES-256} rather than AES-128: even against quantum adversaries, it provides 128-bit security.
+
+\subsection{The ``Harvest Now, Decrypt Later'' Threat}
+\label{sec:pqc-harvest}
+
+The most immediate threat is not from a quantum computer that exists today, but from a strategy called \textbf{harvest now, decrypt later} (HNDL):
+
+\begin{enumerate}
+  \item An adversary captures encrypted drone telemetry today.
+  \item The data is stored indefinitely (storage is cheap).
+  \item Years later, when a cryptographically relevant quantum computer (CRQC) exists, the adversary decrypts everything retroactively.
+\end{enumerate}
+
+For military and critical-infrastructure drones, telemetry captured today may still be sensitive in 10--20 years. This system addresses the HNDL threat by using post-quantum key exchange \textbf{now}, ensuring that even retroactive quantum attacks cannot recover the symmetric keys.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The NIST Post-Quantum Standardisation}
+\label{sec:pqc-nist}
+
+In 2016, the U.S. National Institute of Standards and Technology (NIST) launched a competition to standardize post-quantum cryptographic algorithms. The process involved:
+
+\begin{enumerate}
+  \item \textbf{2016:} Call for proposals (82 submissions).
+  \item \textbf{2017--2019:} Rounds 1 and 2 (narrowing to 15 finalists).
+  \item \textbf{2020--2022:} Round 3 (final selections).
+  \item \textbf{2024:} Publication of final standards.
+\end{enumerate}
+
+The standards published are:
+\begin{itemize}
+  \item \textbf{FIPS 203} (ML-KEM): Key Encapsulation Mechanism based on Module-Lattice problems (formerly CRYSTALS-Kyber).
+  \item \textbf{FIPS 204} (ML-DSA): Digital Signature Algorithm based on Module-Lattice problems (formerly CRYSTALS-Dilithium).
+  \item \textbf{FIPS 205} (SLH-DSA): Stateless Hash-based Digital Signature Algorithm (formerly SPHINCS+).
+\end{itemize}
+
+Additional algorithms under consideration or standardized elsewhere include \textbf{Falcon} (now FN-DSA, NTRU-lattice based signatures), \textbf{Classic McEliece} (code-based KEM), and \textbf{HQC} (Hamming Quasi-Cyclic, code-based KEM).
+
+\subsection{NIST Security Levels}
+
+NIST defines five security levels, corresponding to the effort required to break the algorithm:
+
+\begin{table}[htbp]
+  \centering
+  \caption{NIST security levels and their classical equivalents.}
+  \label{tab:nist-levels}
+  \begin{tabular}{clll}
+    \toprule
+    \textbf{Level} & \textbf{Classical Equivalent} & \textbf{Attack Effort} & \textbf{Quantum Equivalent} \\
+    \midrule
+    1 & AES-128 & $2^{128}$ operations & $2^{64}$ Grover operations \\
+    2 & SHA-256 collision & $2^{128}$ operations & --- \\
+    3 & AES-192 & $2^{192}$ operations & $2^{96}$ Grover operations \\
+    4 & SHA-384 collision & $2^{192}$ operations & --- \\
+    5 & AES-256 & $2^{256}$ operations & $2^{128}$ Grover operations \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+This system supports three levels: \textbf{L1}, \textbf{L3}, and \textbf{L5}, with algorithms paired at consistent levels. For example, an L3 KEM (ML-KEM-768) is always paired with an L3 signature (ML-DSA-65), never with an L1 signature---this is enforced in code.
+
+\begin{implementationnote}
+ML-DSA-44 is officially classified as NIST Level 2 by liboqs (FIPS 204), but the system maps it to L1 for practical pairing with L1 KEMs like ML-KEM-512. This conservative mapping ensures consistent security across the KEM and signature components of each suite.
+\end{implementationnote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Hard Problems for Post-Quantum Cryptography}
+\label{sec:pqc-problems}
+
+Post-quantum algorithms are built on mathematical problems believed to be hard even for quantum computers. The three families used in this system are based on different problems:
+
+\subsection{Lattice Problems}
+\label{sec:pqc-lattices}
+
+A \textbf{lattice} is a regular grid of points in multi-dimensional space, generated by integer combinations of basis vectors.
+
+\begin{analogy}
+Imagine an infinite checkerboard in two dimensions: the corners of the squares form a 2D lattice. Now generalize this to hundreds of dimensions. Finding the shortest vector in such a lattice is easy when you know the ``nice'' basis vectors (the grid lines), but extremely hard when you are given a ``bad'' basis (a set of long, nearly parallel vectors that generate the same lattice).
+\end{analogy}
+
+The key problems are:
+
+\begin{description}
+  \item[Shortest Vector Problem (SVP):] Given a lattice, find the shortest non-zero vector. This is NP-hard in the worst case and believed to be hard on average.
+  
+  \item[Learning With Errors (LWE):] Given a system of approximate linear equations over a finite field (with small random errors added), recover the secret vector. Formally:
+  \begin{equation}
+    \mathbf{b} = \mathbf{A} \cdot \mathbf{s} + \mathbf{e} \pmod{q}
+  \end{equation}
+  where $\mathbf{A}$ is a public random matrix, $\mathbf{s}$ is the secret, and $\mathbf{e}$ is a small error vector. Without the errors, this is just solving a linear system (easy). With the errors, it becomes as hard as worst-case lattice problems.
+  
+  \item[Module-LWE (MLWE):] A structured variant of LWE where the matrix $\mathbf{A}$ has algebraic structure (its entries are elements of a polynomial ring). This allows smaller keys and faster operations while preserving hardness. \textbf{ML-KEM and ML-DSA are both based on MLWE.}
+\end{description}
+
+\begin{keyinsight}
+No known quantum algorithm solves lattice problems significantly faster than classical algorithms. The best-known algorithms (both classical and quantum) require exponential time for standard lattice dimensions. This is why lattice-based cryptography is considered the strongest candidate for post-quantum security.
+\end{keyinsight}
+
+\subsection{Code-Based Problems}
+\label{sec:pqc-codes}
+
+Error-correcting codes are used in communications to detect and fix errors introduced during transmission. Code-based cryptography reverses this: the secret is a code that can correct errors, and the public key is a ``scrambled'' version that hides the code's structure.
+
+\begin{description}
+  \item[Syndrome Decoding Problem:] Given a random-looking code and a codeword with errors, determine the error pattern. This is NP-hard in the general case.
+\end{description}
+
+\begin{analogy}
+Imagine a library where the books are shelved using a secret system (the error-correcting code). If you know the system, you can quickly find any book. The public key is like a deliberately rearranged library: without knowing the secret shelving system, finding a specific book requires checking every shelf.
+\end{analogy}
+
+\textbf{Classic McEliece} uses binary Goppa codes (proposed by McEliece in 1978---the oldest unbroken public-key cryptosystem). \textbf{HQC} uses quasi-cyclic codes with a different structure, resulting in smaller keys than McEliece but a different security assumption.
+
+\subsection{Hash-Based Constructions}
+\label{sec:pqc-hash}
+
+Hash-based signatures rely solely on the security of a hash function. Their security proof is simple: if the hash function is secure, the signature scheme is secure. No additional mathematical assumptions are needed.
+
+\begin{keyinsight}
+Hash-based signatures are the most conservative post-quantum option. Their security depends only on the hash function (SHA-256), which is well-studied and trusted. However, they produce much larger signatures than lattice-based schemes.
+\end{keyinsight}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Key Encapsulation Mechanisms (KEMs)}
+\label{sec:pqc-kems}
+
+A KEM is a three-algorithm tuple $(\text{KeyGen}, \text{Encapsulate}, \text{Decapsulate})$:
+
+\begin{enumerate}
+  \item $(\text{pk}, \text{sk}) \leftarrow \text{KeyGen}()$: Generate a key pair.
+  \item $(\text{ct}, \text{ss}) \leftarrow \text{Encapsulate}(\text{pk})$: Using the public key, produce a ciphertext and a shared secret.
+  \item $\text{ss} \leftarrow \text{Decapsulate}(\text{sk}, \text{ct})$: Using the secret key and the ciphertext, recover the shared secret.
+\end{enumerate}
+
+Both sides now share the same secret $\text{ss}$, which is used as input to HKDF to derive symmetric transport keys.
+
+\begin{designdecision}
+The system uses KEMs rather than post-quantum key exchange (like SIDH/SIKE) because KEMs are simpler, better studied, and all NIST-selected algorithms for key establishment are KEMs. A KEM naturally fits the client-server handshake model: the server generates a key pair, the client encapsulates, and the server decapsulates.
+\end{designdecision}
+
+\subsection{ML-KEM (FIPS 203, formerly Kyber)}
+\label{sec:pqc-mlkem}
+
+ML-KEM (Module-Lattice Key Encapsulation Mechanism) is the primary KEM standard. It is based on the \textbf{Module-LWE} problem.
+
+\textbf{How it works (simplified):}
+\begin{enumerate}
+  \item \textbf{KeyGen:} Generate a random matrix $\mathbf{A}$ and secret vector $\mathbf{s}$. The public key is $(\mathbf{A}, \mathbf{b} = \mathbf{A}\mathbf{s} + \mathbf{e})$, where $\mathbf{e}$ is small random noise.
+  \item \textbf{Encapsulate:} Choose a random message $m$, encrypt it under the public key using an MLWE-based encryption scheme, and derive the shared secret from $m$.
+  \item \textbf{Decapsulate:} Use the secret key to decrypt the message, re-encrypt it, and verify consistency (Fujisaki-Okamoto transform ensures IND-CCA2 security).
+\end{enumerate}
+
+\begin{table}[htbp]
+  \centering
+  \caption{ML-KEM parameter sets used in this system.}
+  \label{tab:mlkem-params}
+  \begin{tabular}{lccccc}
+    \toprule
+    \textbf{Variant} & \textbf{NIST Level} & \textbf{Public Key} & \textbf{Ciphertext} & \textbf{Shared Secret} & \textbf{Module Rank} \\
+    \midrule
+    ML-KEM-512  & L1 & 800 bytes  & 768 bytes  & 32 bytes & $k=2$ \\
+    ML-KEM-768  & L3 & 1,184 bytes & 1,088 bytes & 32 bytes & $k=3$ \\
+    ML-KEM-1024 & L5 & 1,568 bytes & 1,568 bytes & 32 bytes & $k=4$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+ML-KEM is the \textbf{default} KEM in this system (the default suite is \texttt{cs-mlkem768-aesgcm-mldsa65}, using ML-KEM-768 at NIST Level 3).
+
+\begin{keyinsight}
+ML-KEM's key sizes (800--1568 bytes) are dramatically larger than classical ECDH (32 bytes) but small enough for practical use over WiFi. This is one of the key trade-offs in post-quantum cryptography: increased sizes are the price of quantum resistance.
+\end{keyinsight}
+
+\subsection{Classic McEliece}
+\label{sec:pqc-mceliece}
+
+Classic McEliece is a code-based KEM with the longest track record in cryptography---the underlying McEliece cryptosystem was proposed in \textbf{1978} and has never been broken.
+
+\textbf{How it works (simplified):}
+\begin{enumerate}
+  \item \textbf{KeyGen:} Choose a random binary Goppa code. The secret key is the code description; the public key is a scrambled version of the code's generator matrix.
+  \item \textbf{Encapsulate:} Choose a random error pattern of the correct weight and ``encrypt'' it using the public matrix.
+  \item \textbf{Decapsulate:} Use the secret Goppa code to decode (correct the errors) and recover the shared secret.
+\end{enumerate}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Classic McEliece parameter sets used in this system.}
+  \label{tab:mceliece-params}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Variant} & \textbf{NIST Level} & \textbf{Public Key} & \textbf{Ciphertext} & \textbf{Shared Secret} \\
+    \midrule
+    Classic-McEliece-348864 & L1 & 261,120 bytes & 128 bytes & 32 bytes \\
+    Classic-McEliece-460896 & L3 & 524,160 bytes & 188 bytes & 32 bytes \\
+    Classic-McEliece-8192128 & L5 & 1,357,824 bytes & 240 bytes & 32 bytes \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{securitynote}
+Classic McEliece has \textbf{enormous} public keys---up to 1.3 MB for the L5 variant. This makes it impractical for many applications but provides the highest confidence in security (40+ years of cryptanalysis). The ciphertexts are tiny (128--240 bytes). In this system, the public key is transmitted only once during the handshake, so the overhead is a one-time cost.
+\end{securitynote}
+
+\subsection{HQC (Hamming Quasi-Cyclic)}
+\label{sec:pqc-hqc}
+
+HQC is a code-based KEM that uses \textbf{quasi-cyclic} codes to achieve much smaller keys than Classic McEliece while still relying on code-based hardness assumptions.
+
+\begin{table}[htbp]
+  \centering
+  \caption{HQC parameter sets used in this system.}
+  \label{tab:hqc-params}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Variant} & \textbf{NIST Level} & \textbf{Public Key} & \textbf{Ciphertext} & \textbf{Shared Secret} \\
+    \midrule
+    HQC-128 & L1 & 2,249 bytes  & 4,481 bytes  & 64 bytes \\
+    HQC-192 & L3 & 4,522 bytes  & 9,026 bytes  & 64 bytes \\
+    HQC-256 & L5 & 7,245 bytes  & 14,469 bytes & 64 bytes \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+HQC offers a middle ground: public keys are much smaller than Classic McEliece (kilobytes vs. hundreds of kilobytes) but ciphertexts are larger. It provides \textbf{cryptographic diversity}---if lattice assumptions (used by ML-KEM) turn out to be weaker than expected, HQC remains secure because it relies on a different mathematical problem.
+
+\begin{designdecision}
+The system includes three KEM families (lattice-based ML-KEM, code-based Classic McEliece, and code-based HQC) for \textbf{algorithm agility}. If a breakthrough attack is discovered against one family, the operator can switch to a different family by changing the suite configuration---no code changes required.
+\end{designdecision}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Digital Signature Algorithms}
+\label{sec:pqc-sigs}
+
+Post-quantum signatures replace ECDSA/EdDSA for handshake authentication. The system supports three families:
+
+\subsection{ML-DSA (FIPS 204, formerly Dilithium)}
+\label{sec:pqc-mldsa}
+
+ML-DSA (Module-Lattice Digital Signature Algorithm) is the primary NIST standard for post-quantum signatures, based on the \textbf{Module-LWE} and \textbf{Module-SIS} (Short Integer Solution) problems.
+
+\textbf{How it works (simplified):}
+\begin{enumerate}
+  \item \textbf{KeyGen:} Generate a random matrix $\mathbf{A}$ and secret vectors $(\mathbf{s}_1, \mathbf{s}_2)$. Public key: $(\mathbf{A}, \mathbf{t} = \mathbf{A}\mathbf{s}_1 + \mathbf{s}_2)$.
+  \item \textbf{Sign:} Hash the message, choose a random masking vector $\mathbf{y}$, compute a commitment, hash to get a challenge, and produce a response. Repeat (rejection sampling) until the response doesn't leak the secret key.
+  \item \textbf{Verify:} Recompute the commitment from the public key and the signature, check that it matches.
+\end{enumerate}
+
+\begin{table}[htbp]
+  \centering
+  \caption{ML-DSA parameter sets used in this system.}
+  \label{tab:mldsa-params}
+  \begin{tabular}{lccccc}
+    \toprule
+    \textbf{Variant} & \textbf{NIST Level} & \textbf{Public Key} & \textbf{Secret Key} & \textbf{Signature} \\
+    \midrule
+    ML-DSA-44 & L1 (mapped) & 1,312 bytes & 2,560 bytes  & 2,420 bytes \\
+    ML-DSA-65 & L3          & 1,952 bytes & 4,032 bytes  & 3,309 bytes \\
+    ML-DSA-87 & L5          & 2,592 bytes & 4,896 bytes  & 4,627 bytes \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Falcon (FN-DSA)}
+\label{sec:pqc-falcon}
+
+Falcon uses \textbf{NTRU lattices}---a different lattice structure from ML-DSA---and produces the \textbf{smallest signatures} of any post-quantum scheme at comparable security levels.
+
+\textbf{How it works (simplified):}
+\begin{enumerate}
+  \item \textbf{KeyGen:} Generate an NTRU polynomial pair $(f, g)$ and compute the public key $h = g/f$.
+  \item \textbf{Sign:} Hash the message to a polynomial $c$, then use a ``trapdoor sampler'' (fast Fourier sampling) to find a short vector $(\mathbf{s}_1, \mathbf{s}_2)$ such that $\mathbf{s}_1 + h \cdot \mathbf{s}_2 = c$.
+  \item \textbf{Verify:} Check that the signature vector is short and satisfies the equation.
+\end{enumerate}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Falcon parameter sets used in this system.}
+  \label{tab:falcon-params}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Variant} & \textbf{NIST Level} & \textbf{Public Key} & \textbf{Signature} \\
+    \midrule
+    Falcon-512  & L1 & 897 bytes & 666 bytes \\
+    Falcon-1024 & L5 & 1,793 bytes & 1,280 bytes \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{keyinsight}
+Falcon has no L3 variant. The system enforces NIST-level consistency: Falcon-512 (L1) pairs only with L1 KEMs, and Falcon-1024 (L5) pairs only with L5 KEMs. There is no Falcon option for L3 suites.
+\end{keyinsight}
+
+\subsection{SPHINCS+ (SLH-DSA, FIPS 205)}
+\label{sec:pqc-sphincs}
+
+SPHINCS+ is a \textbf{stateless hash-based} signature scheme. Its security depends \textbf{only on the security of SHA-256}---no lattice or code assumptions are needed.
+
+\textbf{How it works (simplified):}
+\begin{enumerate}
+  \item \textbf{KeyGen:} Generate a random seed. The secret key is the seed; the public key is the root of a Merkle hash tree built from many one-time signature (OTS) key pairs.
+  \item \textbf{Sign:} Select one OTS key pair (determined by the message hash), sign with it, and include the authentication path (the sequence of sibling hashes needed to reconstruct the Merkle tree root).
+  \item \textbf{Verify:} Verify the OTS signature, then reconstruct the path to the root and check that it matches the public key.
+\end{enumerate}
+
+\begin{table}[htbp]
+  \centering
+  \caption{SPHINCS+ parameter sets used in this system (``s'' = small/slow variant).}
+  \label{tab:sphincs-params}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Variant} & \textbf{NIST Level} & \textbf{Public Key} & \textbf{Signature} \\
+    \midrule
+    SPHINCS+-SHA2-128s & L1 & 32 bytes  & 7,856 bytes \\
+    SPHINCS+-SHA2-192s & L3 & 48 bytes  & 16,224 bytes \\
+    SPHINCS+-SHA2-256s & L5 & 64 bytes  & 29,792 bytes \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{securitynote}
+SPHINCS+ produces very large signatures (up to $\sim$30 KB) and is relatively slow. However, it is the most \textbf{conservative} choice: if lattice-based cryptography is broken, SPHINCS+ remains secure. The system includes it as an ``insurance policy'' for maximum diversity.
+\end{securitynote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The Suite Concept}
+\label{sec:pqc-suites}
+
+A \textbf{cryptographic suite} in this system is a triple:
+
+\begin{equation}
+  \text{Suite} = (\text{KEM}, \text{AEAD}, \text{Signature})
+\end{equation}
+
+For example, the default suite \texttt{cs-mlkem768-aesgcm-mldsa65} is:
+\begin{itemize}
+  \item \textbf{KEM:} ML-KEM-768 (lattice-based key encapsulation, NIST L3)
+  \item \textbf{AEAD:} AES-256-GCM (authenticated encryption)
+  \item \textbf{Signature:} ML-DSA-65 (lattice-based digital signature, NIST L3)
+\end{itemize}
+
+\subsection{Level-Consistent Pairing}
+
+The system enforces that the KEM and signature in every suite share the same NIST security level:
+
+\begin{equation}
+  \text{nist\_level}(\text{KEM}) = \text{nist\_level}(\text{Signature})
+\end{equation}
+
+This prevents misconfigurations where, say, an L5 KEM is paired with an L1 signature, creating a false sense of security.
+
+\subsection{Suite Enumeration}
+
+The total number of suites is determined by the Cartesian product:
+
+\begin{equation}
+  |\text{Suites}| = \sum_{\ell \in \{L1, L3, L5\}} |\text{KEM}_\ell| \times |\text{AEAD}| \times |\text{SIG}_\ell|
+\end{equation}
+
+With the current registry:
+\begin{itemize}
+  \item \textbf{L1:} 3 KEMs $\times$ 3 AEADs $\times$ 3 SIGs = 27 suites
+  \item \textbf{L3:} 3 KEMs $\times$ 3 AEADs $\times$ 2 SIGs = 18 suites (no Falcon at L3)
+  \item \textbf{L5:} 3 KEMs $\times$ 3 AEADs $\times$ 3 SIGs = 27 suites
+\end{itemize}
+
+\noindent Total: \textbf{72 suites}, all generated automatically by the registry code.
+
+\begin{implementationnote}
+The suite registry is defined in \filename{core/suites.py}. Rather than listing 72 entries manually, the code generates all level-consistent $(KEM, SIG)$ pairs automatically via \funcname{\_generate\_level\_consistent\_matrix()} and then crosses each pair with the three AEAD tokens. The registry is wrapped in a \texttt{MappingProxyType} for immutability.
+\end{implementationnote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Comparative Overview}
+\label{sec:pqc-comparison}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Comparative overview of post-quantum algorithm families in this system.}
+  \label{tab:pqc-comparison}
+  \small
+  \begin{tabular}{lllccc}
+    \toprule
+    \textbf{Algorithm} & \textbf{Family} & \textbf{Hard Problem} & \textbf{Key Size} & \textbf{Ciphertext/Sig} & \textbf{Speed} \\
+    \midrule
+    \multicolumn{6}{l}{\textit{Key Encapsulation Mechanisms}} \\
+    ML-KEM       & Lattice   & MLWE            & Small     & Small   & Fast   \\
+    Classic McE. & Code      & Syndrome dec.   & Huge      & Tiny    & Fast   \\
+    HQC          & Code      & Quasi-cyclic    & Medium    & Medium  & Medium \\
+    \midrule
+    \multicolumn{6}{l}{\textit{Digital Signatures}} \\
+    ML-DSA       & Lattice   & MLWE + MSIS     & Medium    & Medium  & Fast   \\
+    Falcon       & Lattice   & NTRU            & Small     & Small   & Fast   \\
+    SPHINCS+     & Hash      & Hash security   & Tiny      & Huge    & Slow   \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The benchmarking infrastructure in this system (covered in Chapters~\ref{ch:scheduler}--\ref{ch:metrics}) measures the actual performance of all 72 suites on real hardware, providing concrete numbers for every cell in this comparison.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Summary}
+\label{sec:pqc-summary}
+
+\begin{itemize}
+  \item \textbf{Quantum computers} threaten public-key cryptography via Shor's algorithm but leave symmetric cryptography largely intact (Grover halves the key strength).
+  \item The \textbf{harvest-now-decrypt-later} threat motivates deploying post-quantum cryptography today.
+  \item NIST standardized \textbf{ML-KEM} (FIPS 203) for key encapsulation and \textbf{ML-DSA} (FIPS 204) + \textbf{SPHINCS+} (FIPS 205) for signatures.
+  \item This system supports three KEM families (\textbf{ML-KEM}, \textbf{Classic McEliece}, \textbf{HQC}) and three signature families (\textbf{ML-DSA}, \textbf{Falcon}, \textbf{SPHINCS+}).
+  \item Algorithms are organized into \textbf{suites} of (KEM, AEAD, Signature) triples, always paired at consistent NIST security levels.
+  \item The system generates \textbf{72 suites} automatically from the registry, enabling comprehensive benchmarking and algorithm agility.
+\end{itemize}
+
+\medskip
+\noindent With the mathematical foundations established, the next chapter introduces the \textbf{MAVLink protocol}---the specific application-layer protocol that the secure tunnel protects.

@@ -1,0 +1,578 @@
+\chapter{Engineering Trade-Offs and Security Analysis}
+\label{ch:engineering}
+
+Building a system is about making choices under constraints.  Every design
+decision in the PQC Secure MAVLink Tunnel involves a trade-off---between
+security and performance, between generality and simplicity, between
+correctness and speed.  This chapter examines these trade-offs honestly,
+discusses the system's limitations, and analyses its security properties.
+
+% ============================================================
+\section{Performance Trade-Offs}
+\label{sec:eng-perf}
+
+\subsection{NIST Level vs.\ Latency}
+
+The most fundamental trade-off is between security level and handshake
+latency.  Higher NIST levels use larger keys and more complex operations:
+
+\begin{table}[htbp]
+\centering
+\caption{Representative handshake times by NIST level (Raspberry Pi~5)}
+\label{tab:eng-level-latency}
+\begin{tabular}{@{}l c c c@{}}
+\toprule
+\textbf{NIST Level} & \textbf{ML-KEM + ML-DSA} & \textbf{HQC + Falcon} &
+\textbf{McEliece + SPHINCS+} \\
+\midrule
+L1 & $\sim 15$\,ms   & $\sim 50$\,ms    & $\sim 2{,}000$\,ms \\
+L3 & $\sim 25$\,ms   & $\sim 100$\,ms   & $\sim 15{,}000$\,ms \\
+L5 & $\sim 40$\,ms   & $\sim 200$\,ms   & $\sim 45{,}000$\,ms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{keyinsight}
+For a drone that rekeys every 110~seconds, even a 45-second handshake means
+the tunnel is ``dark'' for 41\,\% of the cycle.  This is why the suite
+registry provides 72~options: researchers can find the sweet spot for their
+specific mission.
+\end{keyinsight}
+
+\subsection{KEM Family Characteristics}
+
+\begin{description}
+  \item[ML-KEM (CRYSTALS-Kyber)] Fastest overall.  Small keys
+        ($\sim 800$--$1{,}568$~bytes public key).  Lattice-based.
+        Best choice for resource-constrained devices.
+  \item[HQC] Code-based.  Slower than ML-KEM but offers algorithm diversity
+        (different mathematical hardness assumption).  Moderate key sizes
+        ($\sim 2{,}000$--$8{,}000$~bytes).
+  \item[Classic McEliece] Extremely large public keys
+        ($\sim 260{,}000$--$1{,}300{,}000$~bytes at L1--L5).
+        Very fast decapsulation but key generation and encapsulation are slow.
+        The large keys dominate handshake time due to network transfer.
+\end{description}
+
+\subsection{AEAD Algorithm Comparison}
+
+\begin{table}[htbp]
+\centering
+\caption{AEAD algorithm trade-offs}
+\label{tab:eng-aead}
+\begin{tabular}{@{}l c c l@{}}
+\toprule
+\textbf{Algorithm} & \textbf{Hardware Accel} & \textbf{Tag Size} & \textbf{Notes} \\
+\midrule
+AES-256-GCM         & AES-NI (x86), ARMv8-CE & 16\,B & Fastest with hardware support \\
+ChaCha20-Poly1305   & None needed             & 16\,B & Constant-time; good on ARM without CE \\
+ASCON-128a          & None                    & 16\,B & Lightweight; designed for constrained devices \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The Raspberry Pi~5 (Cortex-A76) has ARMv8 Crypto Extensions, making AES-GCM
+competitive.  On older ARM devices without these extensions, ChaCha20 would
+be faster.  ASCON is the NIST Lightweight standard and is designed for very
+small processors (8-bit, 32-bit microcontrollers), so it is not the fastest
+on a 64-bit ARM but provides algorithm diversity.
+
+\subsection{Power vs.\ Security}
+
+Post-quantum cryptographic operations consume measurably more power than their
+classical equivalents.  The INA219 power monitor (Section~\ref{sec:metrics-ina219})
+captures this precisely.  Key observations:
+
+\begin{itemize}
+  \item Power consumption during handshake is dominated by CPU-intensive
+        KEM and SIG operations.
+  \item ML-KEM handshakes on the Pi~5 consume $\sim 5$--$8\,$W peak (vs.\
+        $\sim 3\,$W idle).
+  \item Classic McEliece key generation can sustain peak power for tens of
+        seconds, significantly impacting battery-powered drones.
+  \item The \texttt{energy\_per\_handshake\_j} metric directly quantifies
+        the cost of security.
+\end{itemize}
+
+% ============================================================
+\section{Design Decisions and Their Rationale}
+\label{sec:eng-decisions}
+
+\subsection{Bump-in-the-Wire Architecture}
+
+\begin{designdecision}
+The proxy operates as a transparent bump-in-the-wire: it does not modify
+MAVLink payloads, does not parse MAVLink semantics, and does not require
+changes to the flight controller firmware or the GCS application.  This
+maximises compatibility but means the proxy cannot perform MAVLink-aware
+optimisations (e.g.\ prioritising heartbeat messages).
+\end{designdecision}
+
+\subsection{UDP over TCP}
+
+\begin{designdecision}
+The encrypted tunnel uses UDP, not TCP.  MAVLink is inherently a
+best-effort protocol---it expects occasional packet loss and compensates with
+redundant streams.  TCP's retransmission and head-of-line blocking would add
+latency spikes that are worse for real-time control than losing a single
+packet.  The AEAD layer provides integrity guarantees that TCP's checksums
+would otherwise provide.
+\end{designdecision}
+
+\subsection{Selectors over asyncio}
+
+\begin{designdecision}
+The proxy uses \texttt{selectors.DefaultSelector} (which maps to
+\texttt{epoll} on Linux) rather than Python's \texttt{asyncio} framework.
+Selectors provide microsecond-level event notification with minimal overhead.
+\texttt{asyncio} would add coroutine scheduling overhead and make the
+event loop harder to reason about in a security-critical context.
+\end{designdecision}
+
+\subsection{No Key Caching}
+
+\begin{designdecision}
+Every suite switch performs a fresh KEM key generation, encapsulation, and
+signature.  There is no session resumption or key caching.  This is a
+deliberate choice for the benchmark: every measurement captures the full
+cost of the PQC handshake.  A production system might cache session keys
+for faster resumption.
+\end{designdecision}
+
+\subsection{Two-Phase Commit for Policy}
+
+\begin{designdecision}
+The \texttt{evaluate()} / \texttt{confirm\_advance()} split
+(Section~\ref{sec:sched-2phase}) adds complexity but prevents a dangerous
+class of bugs: metrics being attributed to the wrong suite when the index
+advances before finalisation completes.
+\end{designdecision}
+
+% ============================================================
+\section{Security Analysis}
+\label{sec:eng-security}
+
+\subsection{Formal Threat Model}
+\label{sec:eng-threat-model}
+
+This section specifies the adversary model, trust assumptions,
+security goals, and explicit non-goals that bound the system's
+security claims.
+
+\subsubsection{Adversary Capabilities}
+
+The system is designed to resist the following adversary classes:
+
+\begin{description}
+  \item[Passive network adversary (Eavesdropper).]
+    Can observe all packets on the wireless LAN between drone and GCS.
+    Can record ciphertext, headers, timing, and packet sizes.
+    Cannot modify or inject traffic.
+
+  \item[Active network adversary (Dolev--Yao style).]
+    In addition to passive capabilities, can inject, modify, replay,
+    delay, reorder, and selectively drop packets on the link between
+    drone and GCS.  This is the standard Dolev--Yao network attacker
+    model~\cite{dolev1983security}: the adversary controls the
+    communication channel but not the endpoints.
+
+  \item[Future quantum adversary (``harvest now, decrypt later'').]
+    Records ciphertext today and stores it until a cryptographically
+    relevant quantum computer (CRQC) exists.  At that point, the
+    adversary applies Shor's algorithm~\cite{shor1997} to any
+    classical public-key material and Grover's algorithm~\cite{grover1996}
+    to symmetric keys.  The system's use of post-quantum KEMs and
+    signatures is specifically motivated by this adversary.
+\end{description}
+
+\subsubsection{Trust Assumptions}
+
+The security analysis depends on the following assumptions.  If any
+assumption is violated, the corresponding security property may not hold.
+
+\begin{enumerate}
+  \item \textbf{Pre-deployed identity keys are authentic.}
+        Signing key pairs (GCS) and pre-shared keys (drone PSK) are
+        generated offline, transported physically or via a
+        pre-authenticated channel, and stored on the local filesystem.
+        The system does not establish key authenticity---it assumes it.
+
+  \item \textbf{Endpoint hardware is not compromised.}
+        The Raspberry Pi (drone) and the GCS laptop are assumed to be
+        free of hardware implants, firmware backdoors, and rootkits.
+        Physical tamper protection is out of scope.
+
+  \item \textbf{Localhost is a trust boundary.}
+        Plaintext MAVLink traffic travels exclusively over the loopback
+        interface (\texttt{127.0.0.1}).  No unprivileged remote process
+        can read localhost traffic.  If an attacker gains local code
+        execution on either endpoint, the plaintext data plane is exposed.
+
+  \item \textbf{The operating system provides process isolation.}
+        Memory isolation between the proxy process and other processes
+        is assumed to be intact (no shared-memory side channels,
+        no \texttt{/proc/\{pid\}/mem} access by unprivileged users).
+
+  \item \textbf{Cryptographic primitives are correct.}
+        The implementations of ML-KEM, ML-DSA, Falcon, SPHINCS+, HQC,
+        Classic McEliece (via \texttt{liboqs}), AES-GCM, ChaCha20-Poly1305
+        (via the Python \texttt{cryptography} library), and ASCON-128a
+        are assumed to be functionally correct and free of catastrophic
+        implementation bugs.  No formal verification has been performed
+        on these libraries.
+
+  \item \textbf{Monotonic clocks are monotonic.}
+        \texttt{time.monotonic()} and \texttt{time.perf\_counter\_ns()} are
+        assumed to never go backwards.  Policy timing (hysteresis, intervals)
+        depends on this property.
+\end{enumerate}
+
+\subsubsection{Security Goals}
+
+Given the above adversary model and trust assumptions, the system aims
+to provide:
+
+\begin{enumerate}
+  \item \textbf{Data-plane confidentiality}: An eavesdropper learns nothing
+        about the plaintext content of MAVLink datagrams (beyond their
+        encrypted length and timing).
+  \item \textbf{Data-plane integrity}: Any modification to a ciphertext
+        packet (header or payload) is detected and the packet is dropped.
+  \item \textbf{GCS authentication}: The drone can verify that it is
+        communicating with the holder of the GCS signing key.
+  \item \textbf{Drone identity binding}: The GCS can verify that the drone
+        possesses the pre-shared key (HMAC-PSK).
+  \item \textbf{Replay protection}: Retransmission of previously captured
+        valid packets is detected and rejected.
+  \item \textbf{Session isolation}: Packets from a previous handshake session
+        are rejected (via session ID and epoch checks).
+  \item \textbf{Forward secrecy}: Compromise of long-term signing keys does
+        not reveal past session keys (KEM keypairs are ephemeral).
+  \item \textbf{Post-quantum resistance}: All of the above properties hold
+        against a future quantum adversary.
+\end{enumerate}
+
+\subsubsection{Explicit Non-Goals}
+\label{sec:eng-nongoals}
+
+The following are \textbf{not} security goals of this system.  They are
+listed explicitly to prevent misinterpretation of the system's claims.
+
+\begin{enumerate}
+  \item \textbf{Denial-of-service resilience.}
+        The system does not guarantee availability.  An active network
+        attacker can drop all packets, severing the link.  Rate limiting
+        (Section~\ref{sec:proxy-rl}) provides limited protection against
+        handshake flooding, but the data plane has no anti-DoS mechanism
+        beyond the inherent tolerance of UDP-based MAVLink.
+
+  \item \textbf{Traffic analysis resistance.}
+        Packet lengths, timing, and rates are observable by a passive
+        adversary.  The system does not pad packets, add dummy traffic,
+        or otherwise obscure traffic patterns.  An adversary can infer
+        activity levels and message types from packet sizes.
+
+  \item \textbf{Insider threat protection.}
+        An attacker with local code execution on either endpoint can
+        read plaintext MAVLink traffic from the loopback interface, extract
+        key material from process memory, or manipulate the proxy.
+
+  \item \textbf{Physical tamper resistance.}
+        No hardware security modules (HSMs), trusted platform modules (TPMs),
+        or tamper-evident enclosures are used.  Keys reside as files on disk.
+
+  \item \textbf{Key revocation and PKI.}
+        There is no certificate authority, no certificate revocation
+        mechanism, and no key expiry enforcement.  Revoking a compromised
+        key requires manual re-provisioning.
+
+  \item \textbf{Multi-party or multi-drone operation.}
+        The system secures a single point-to-point link between one drone
+        and one GCS.  Mesh networks, relay topologies, and multi-vehicle
+        swarms are out of scope.
+
+  \item \textbf{Constant-time guarantees.}
+        The Python runtime does not provide constant-time execution.
+        Timing side channels in KEM/SIG operations (via \texttt{liboqs})
+        or in branch-dependent Python code are not mitigated.
+\end{enumerate}
+
+\subsubsection{Scope of the Data-Plane Security Boundary}
+\label{sec:eng-trust-boundary}
+
+Figure~\ref{fig:trust-boundary} illustrates the trust boundaries.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    zone/.style={draw, dashed, rounded corners=6pt, inner sep=10pt,
+                 fill=#1, fill opacity=0.08, text opacity=1},
+    box/.style={draw, rounded corners, minimum width=2.5cm,
+                minimum height=0.7cm, font=\small, align=center},
+    arr/.style={->, >=stealth, thick},
+  ]
+  % Trusted zone (left)
+  \begin{scope}
+    \node[box, fill=green!20] (fc)   at (0, 0)   {Flight Controller};
+    \node[box, fill=green!20] (mav)  at (0,-1.5)  {MAVProxy};
+    \node[box, fill=blue!20]  (pxd)  at (0,-3)    {Drone Proxy};
+    \node[zone=green, fit=(fc)(mav)(pxd),
+          label={[font=\footnotesize]above:Drone (localhost)}] {};
+  \end{scope}
+
+  % Untrusted zone (center)
+  \node[box, fill=red!15, minimum width=3cm] (net) at (5.5,-1.5)
+        {WiFi LAN\\(untrusted)};
+
+  % Trusted zone (right)
+  \begin{scope}
+    \node[box, fill=blue!20]  (pxg)  at (11,-1.5)  {GCS Proxy};
+    \node[box, fill=green!20] (gcs)  at (11, 0)    {Mission Planner};
+    \node[box, fill=green!20] (sched) at (11,-3)   {Scheduler};
+    \node[zone=green, fit=(pxg)(gcs)(sched),
+          label={[font=\footnotesize]above:GCS (localhost)}] {};
+  \end{scope}
+
+  % Arrows
+  \draw[arr, green!60!black] (fc)  -- node[right,font=\scriptsize]{serial} (mav);
+  \draw[arr, green!60!black] (mav) -- node[right,font=\scriptsize]{UDP 127.0.0.1} (pxd);
+  \draw[arr, red!60!black, line width=1.5pt]
+        (pxd) -- node[above,font=\scriptsize]{encrypted UDP} (net);
+  \draw[arr, red!60!black, line width=1.5pt]
+        (net) -- node[above,font=\scriptsize]{encrypted UDP} (pxg);
+  \draw[arr, green!60!black] (pxg) -- node[right,font=\scriptsize]{UDP 127.0.0.1} (gcs);
+\end{tikzpicture}
+\caption{Trust boundary diagram.  Green regions are trusted (localhost).
+The red region (WiFi LAN) is the untrusted channel secured by the PQC
+tunnel.  The bold red arrows represent AEAD-encrypted traffic.}
+\label{fig:trust-boundary}
+\end{figure}
+
+The trust boundary has five key properties:
+
+\begin{enumerate}
+  \item \textbf{Plaintext isolation}: All plaintext traffic is bound to
+        \texttt{127.0.0.1}.  No plaintext datagram ever crosses a network
+        interface.
+
+  \item \textbf{Encrypted-plane authentication}: Every packet crossing the
+        untrusted network carries a 16-byte AEAD authentication tag over
+        both the ciphertext and the 22-byte header (as AAD).
+
+  \item \textbf{Session binding}: The 8-byte session ID in every packet
+        header cryptographically binds data-plane traffic to a specific
+        handshake instance.
+
+  \item \textbf{Rate-limited handshake}: A token-bucket rate limiter
+        (5~tokens, 1~refill/second) on the GCS handshake server prevents
+        rapid reconnection attempts.
+
+  \item \textbf{Strict peer matching}: When enabled
+        (\configkey{STRICT\_UDP\_PEER\_MATCH}), the proxy rejects encrypted
+        packets from any source IP/port other than the established peer.
+\end{enumerate}
+
+\begin{securitynote}
+The \textbf{TCP control channel} (port~48080) used by the benchmark
+scheduler is \textbf{outside} the security boundary.  It carries
+plaintext JSON commands (start proxy, stop suite, clock sync) and is
+neither encrypted nor authenticated.  This is acceptable for a lab
+benchmark on a controlled LAN but would require TLS or HMAC
+authentication in any deployment scenario.  Similarly, Operation Chronos
+(clock synchronisation) runs over this same unauthenticated channel;
+a network attacker could manipulate clock offsets to influence
+time-based scheduling policy decisions.
+\end{securitynote}
+
+\subsection{Cryptographic Security Properties}
+
+\begin{description}
+  \item[Confidentiality] Provided by AEAD encryption (AES-256-GCM,
+        ChaCha20-Poly1305, or ASCON-128a) with keys derived from a PQC KEM
+        shared secret via HKDF-SHA256.
+
+  \item[Integrity] AEAD tags (16~bytes) detect any modification to the
+        ciphertext or header (which is used as AAD).
+
+  \item[Authentication] The GCS signs its ServerHello with a PQC digital
+        signature (ML-DSA, Falcon, or SPHINCS+).  The drone verifies the
+        signature using the pre-deployed public key.  The drone authenticates
+        to the GCS via HMAC-SHA256 over the shared secret, binding the PSK
+        identity to the handshake.
+
+  \item[Replay protection] An 8-byte sequence number and a 64-entry sliding
+        bitmap window (Section~\ref{sec:aead-replay}) prevent replay attacks.
+        Epoch numbers prevent cross-session replay.
+
+  \item[Forward secrecy] Each handshake generates fresh KEM keypairs.
+        Compromise of the long-term signing key does not reveal past session
+        keys (assuming the KEM shared secret was properly destroyed).
+
+  \item[Post-quantum security] The KEM algorithms (ML-KEM, HQC, Classic
+        McEliece) are designed to resist quantum attacks.  The signature
+        algorithms (ML-DSA, Falcon, SPHINCS+) are post-quantum secure.
+        An attacker recording today's handshake cannot extract the shared
+        secret even with a future quantum computer.
+\end{description}
+
+\subsection{Known Limitations and Residual Risks}
+
+\begin{securitynote}
+The following are \textbf{known limitations}, not bugs.  They represent
+conscious design choices for a research benchmark system.
+
+\begin{enumerate}
+  \item \textbf{No mutual authentication in KEM}: Only the GCS is
+        authenticated via digital signature.  The drone authenticates via
+        HMAC-SHA256 over the PSK, which provides weaker identity binding than
+        a full mutual signature exchange.
+
+  \item \textbf{Plaintext control channel}: The TCP control channel
+        (port~48080) is unencrypted.  An attacker could inject fake commands
+        (e.g.\ force a suite switch, cause a shutdown).  Acceptable in a lab
+        LAN; would need TLS or HMAC in production.
+
+  \item \textbf{Clock sync is unauthenticated}: An attacker could manipulate
+        Chronos timestamps to skew the clock offset, affecting time-based
+        policy decisions.
+
+  \item \textbf{No certificate infrastructure}: Signing keys are bare files
+        on disk, not wrapped in certificates with expiry dates or revocation
+        lists.
+
+  \item \textbf{No Perfect Forward Secrecy for the PSK}: The drone PSK
+        (pre-shared key) is static.  If compromised, an attacker could
+        impersonate the drone in future handshakes (though not decrypt past
+        sessions, since KEM keypairs are ephemeral).
+
+  \item \textbf{Sequence number overflow}: The 8-byte sequence number
+        supports $2^{64}$ packets.  At 1000~packets/second, overflow would
+        take $\sim 585$~million years.  The system raises an exception
+        before overflow as a defence-in-depth measure.
+
+  \item \textbf{Side-channel attacks}: The PQC implementations from
+        \texttt{liboqs} are not guaranteed to be constant-time on all
+        platforms.  A co-located attacker with cache-timing access could
+        potentially extract key material.
+\end{enumerate}
+\end{securitynote}
+
+% ============================================================
+\section{Cross-Platform Considerations}
+\label{sec:eng-xplat}
+
+The system runs on two very different platforms:
+
+\begin{table}[htbp]
+\centering
+\caption{Platform comparison}
+\label{tab:eng-platforms}
+\begin{tabular}{@{}l l l@{}}
+\toprule
+\textbf{Aspect} & \textbf{Drone (Pi~5)} & \textbf{GCS (Windows)} \\
+\midrule
+OS         & Raspberry Pi OS (Debian) & Windows 10/11 \\
+CPU        & ARM Cortex-A76, 4 cores  & x86-64, 8+ cores \\
+RAM        & 4--8\,GB                 & 16--32\,GB \\
+Python     & 3.11+                    & 3.11+ \\
+Power mon  & INA219 / RPi5 hwmon      & Not available \\
+Process mgmt & PDEATHSIG via libc     & Win32 Job Objects \\
+MAVProxy   & Serial to flight controller & UDP from tunnel \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Key cross-platform challenges:
+
+\begin{itemize}
+  \item \textbf{liboqs availability}: The OQS library must be compiled
+        natively on each platform.  ARM and x86 may support different
+        algorithm subsets.
+  \item \textbf{Path separators}: All paths use \texttt{pathlib.Path} to
+        handle \texttt{/} vs.\ \texttt{\textbackslash} transparently.
+  \item \textbf{Signal handling}: \texttt{SIGTERM} is not available on
+        Windows in the same way.  \texttt{ManagedProcess} uses
+        \texttt{TerminateProcess} as the Windows equivalent.
+  \item \textbf{Console allocation}: MAVProxy's \texttt{prompt\_toolkit}
+        requires a real Windows console.  The GCS server launches MAVProxy
+        with \texttt{new\_console=True} when GUI is enabled.
+\end{itemize}
+
+% ============================================================
+\section{Scalability and Resource Usage}
+\label{sec:eng-scale}
+
+\subsection{Memory}
+
+The proxy's memory footprint is dominated by:
+\begin{itemize}
+  \item Socket buffers (4~UDP sockets, kernel-managed).
+  \item AEAD key material (two 32-byte keys + nonce state).
+  \item The replay window bitmap (64~bits = 8~bytes).
+  \item Configuration dictionary ($\sim 100$~keys, $\sim 10$\,KB).
+\end{itemize}
+
+Total proxy memory is typically under 50\,MB.
+
+\subsection{CPU}
+
+During steady-state encrypted forwarding, the main costs are:
+\begin{itemize}
+  \item AEAD encryption (one per outbound packet).
+  \item AEAD decryption (one per inbound packet).
+  \item \texttt{select()} system call overhead.
+\end{itemize}
+
+At 20~MAVLink packets/second (typical for HEARTBEAT + telemetry), CPU usage
+is negligible ($< 5$\,\%).  During handshake, CPU can spike to 100\,\% on one
+core for KEM/SIG operations.
+
+\subsection{Network Bandwidth}
+
+The AEAD framing adds 22~bytes of header + 16~bytes of tag = 38~bytes
+overhead per packet.  For a typical 263-byte MAVLink v2 packet, this is
+$38 / 263 \approx 14.4\,$\% overhead.
+
+% ============================================================
+\section{Testing Strategy}
+\label{sec:eng-testing}
+
+The codebase includes multiple test layers:
+
+\begin{enumerate}
+  \item \textbf{Unit tests} (\texttt{tests/}): Test individual functions
+        (suite registry, AEAD operations, config parsing).
+  \item \textbf{Integration tests} (\texttt{test\_*.py} at repo root):
+        Test the complete proxy loop (start proxy, perform handshake, send
+        data, verify receipt).
+  \item \textbf{Benchmark tests} (\texttt{test\_comprehensive\_benchmark.py}):
+        Test the full benchmark scheduler with multiple suites.
+  \item \textbf{Validation scripts} (\texttt{verify\_*.py}): Verify
+        collector output, metrics consistency, and drone/GCS alignment.
+  \item \textbf{The benchmark itself}: A 72-suite benchmark run is the
+        ultimate integration test---if all suites pass, the entire pipeline
+        (handshake, AEAD, proxy, scheduler, metrics, persistence) works
+        end-to-end.
+\end{enumerate}
+
+% ============================================================
+\section{Chapter Summary}
+
+\begin{itemize}
+  \item The fundamental trade-off is \textbf{security level vs.\ latency}:
+        higher NIST levels and more conservative KEM families (McEliece)
+        incur dramatically higher handshake times.
+  \item Key design decisions (bump-in-wire, UDP, selectors, no key caching,
+        two-phase commit) are justified by the system's requirements.
+  \item The system provides \textbf{confidentiality, integrity,
+        authentication, replay protection, forward secrecy, and post-quantum
+        security}.
+  \item Known limitations (unauthenticated control channel, no PKI,
+        static PSK) are acceptable for a lab benchmark and are documented for
+        future hardening.
+  \item Cross-platform operation between Linux/ARM and Windows/x86 introduces
+        challenges in process management, library availability, and console
+        handling.
+  \item Resource usage is modest: under 50\,MB RAM, $< 5$\,\% CPU at
+        steady state, and $\sim 14$\,\% bandwidth overhead.
+\end{itemize}

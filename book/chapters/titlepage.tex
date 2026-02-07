@@ -1,0 +1,61 @@
+% ============================================================================
+%  TITLE PAGE
+% ============================================================================
+\begin{titlepage}
+\begin{center}
+
+\vspace*{2cm}
+
+{\Huge\bfseries Post-Quantum Secure\\[0.3em] MAVLink Tunnel}
+
+\vspace{1.5cm}
+
+{\Large\itshape A Comprehensive Technical Reference}
+
+\vspace{0.5cm}
+
+{\large From First Principles to Verified Implementation}
+
+\vspace{3cm}
+
+\begin{tikzpicture}
+  % Drone icon (simplified quadcopter)
+  \draw[thick,NavyBlue] (0,0) -- (1.5,1.5);
+  \draw[thick,NavyBlue] (0,0) -- (-1.5,1.5);
+  \draw[thick,NavyBlue] (0,0) -- (1.5,-1.5);
+  \draw[thick,NavyBlue] (0,0) -- (-1.5,-1.5);
+  \foreach \x/\y in {1.5/1.5, -1.5/1.5, 1.5/-1.5, -1.5/-1.5} {
+    \draw[thick,NavyBlue] (\x,\y) circle (0.6);
+  }
+  \filldraw[NavyBlue] (0,0) circle (0.15);
+  
+  % Lock icon
+  \draw[thick,BrickRed] (4,0) +(-0.4,-0.6) rectangle +(0.4,0.3);
+  \draw[thick,BrickRed] (4,0.3) arc (0:180:0.3) -- ++(0,-0.3);
+  
+  % Arrow
+  \draw[-{Stealth[length=8pt]},thick,ForestGreen,decorate,
+        decoration={snake,amplitude=1.5pt,segment length=8pt}]
+        (1.2,0) -- (3.2,0);
+  
+  % GCS icon (monitor)
+  \draw[thick,NavyBlue] (6.5,-0.8) rectangle (8.5,0.8);
+  \draw[thick,NavyBlue] (7.1,-0.5) rectangle (7.9,0.5);
+  \draw[thick,NavyBlue] (7.5,-0.8) -- (7.5,-1.2);
+  \draw[thick,NavyBlue] (6.8,-1.2) -- (8.2,-1.2);
+\end{tikzpicture}
+
+\vspace{3cm}
+
+{\large Based on the \texttt{secure-tunnel} Research Codebase}
+
+\vspace{0.5cm}
+
+{\normalsize Post-Quantum Cryptography~$\times$~Unmanned Aerial Vehicles}
+
+\vspace{2cm}
+
+{\large February 2026}
+
+\end{center}
+\end{titlepage}

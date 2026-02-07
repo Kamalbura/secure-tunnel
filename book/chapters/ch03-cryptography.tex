@@ -1,0 +1,337 @@
+% ============================================================================
+%  CHAPTER 3 — CRYPTOGRAPHY FUNDAMENTALS
+% ============================================================================
+\chapter{Cryptography Fundamentals}
+\label{ch:cryptography}
+
+\epigraph{Cryptography is the art of writing or solving codes. In practice, it is the science of keeping secrets from people who are very, very good at finding them.}{}
+
+This chapter introduces the essential ideas of cryptography that underpin the secure tunnel. We start with the simplest possible concepts and build toward the specific constructions used in the system.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Why Cryptography?}
+\label{sec:crypto-why}
+
+When the drone sends its GPS coordinates to the ground station over WiFi, those coordinates travel as radio waves through the air. Anyone with a compatible receiver can capture those radio waves and read the data inside them. This is not a theoretical concern---it is trivially easy with commodity hardware.
+
+Cryptography provides three fundamental protections:
+
+\begin{description}
+  \item[Confidentiality:] Ensuring that only the intended recipient can read the message. Even if an attacker captures the radio waves, they see only meaningless noise.
+  
+  \item[Integrity:] Ensuring that the message has not been modified in transit. If an attacker changes a ``fly north'' command to ``fly south,'' the recipient detects the tampering.
+  
+  \item[Authentication:] Ensuring that the message came from who it claims to come from. An attacker cannot forge messages that appear to come from the legitimate ground station.
+\end{description}
+
+\begin{analogy}
+Imagine sending a letter through the postal system. \textbf{Confidentiality} is sealing the letter in an envelope so the mail carrier cannot read it. \textbf{Integrity} is applying a tamper-evident seal so the recipient knows if someone opened the envelope. \textbf{Authentication} is signing the letter with your unique signature so the recipient knows it is really from you.
+\end{analogy}
+
+The secure tunnel in this system provides all three properties simultaneously.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Symmetric Encryption}
+\label{sec:crypto-symmetric}
+
+The simplest form of encryption uses a single shared secret, called a \textbf{key}.
+
+\begin{definition}[Symmetric Encryption]
+\textbf{Symmetric encryption} (also called secret-key encryption) uses the same key for both encryption and decryption:
+\begin{align}
+  \text{ciphertext} &= \text{Encrypt}(\text{key}, \text{plaintext}) \\
+  \text{plaintext}  &= \text{Decrypt}(\text{key}, \text{ciphertext})
+\end{align}
+\end{definition}
+
+\begin{analogy}
+Symmetric encryption is like a lockbox with a single key. You put your message in the box, lock it, and send it. The recipient uses an identical copy of the key to unlock the box and read the message. The crucial assumption is that both parties already have the same key.
+\end{analogy}
+
+\subsection{The Key Problem}
+
+The fundamental challenge of symmetric encryption is: \emph{how do both parties get the same key?} You cannot send the key over the insecure channel (the attacker would capture it). You cannot agree on it in advance for every possible pair of communicants (the number of keys grows quadratically). 
+
+This is called the \textbf{key distribution problem}, and it is one of the central motivations for public-key cryptography, which we will discuss shortly.
+
+In our system, the symmetric keys used for the data plane are established during the handshake using public-key (asymmetric) techniques. Once established, all data-plane encryption uses fast symmetric algorithms.
+
+\subsection{AES: The Advanced Encryption Standard}
+
+\begin{definition}[AES]
+The \textbf{Advanced Encryption Standard (AES)} is a symmetric block cipher that encrypts data in 128-bit (16-byte) blocks. It supports key sizes of 128, 192, or 256 bits. This system uses \textbf{AES-256}---the strongest variant, with a 256-bit (32-byte) key.
+\end{definition}
+
+AES was selected by NIST in 2001 through an open competition and has been the global standard for symmetric encryption ever since. It is implemented in hardware on virtually all modern CPUs through the \textbf{AES-NI} instruction set, making it extremely fast.
+
+\begin{keyinsight}
+AES (and all symmetric ciphers) is \textbf{not threatened by quantum computers}---at least not fatally. Grover's algorithm~\cite{grover1996} can speed up brute-force search of symmetric keys, but it only halves the effective security. AES-256 drops to 128-bit security against quantum attack, which is still considered safe. This is why we use AES-256 rather than AES-128.
+\end{keyinsight}
+
+\subsection{Stream Ciphers vs. Block Ciphers}
+
+AES is a \textbf{block cipher}: it encrypts fixed-size blocks. To encrypt messages longer than one block, we need a \textbf{mode of operation} (discussed in \Cref{sec:crypto-aead}).
+
+An alternative is a \textbf{stream cipher}, which generates a continuous stream of pseudorandom bytes (a ``keystream'') and XORs it with the plaintext:
+
+\begin{equation}
+  \text{ciphertext}[i] = \text{plaintext}[i] \oplus \text{keystream}[i]
+\end{equation}
+
+\textbf{ChaCha20} is a stream cipher used in this system (as part of ChaCha20-Poly1305). It was designed by Daniel Bernstein as a faster, more secure alternative to earlier stream ciphers, and it performs particularly well on hardware without AES instructions (like the Raspberry Pi's ARM CPU).
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Public-Key Cryptography}
+\label{sec:crypto-asymmetric}
+
+\begin{definition}[Public-Key (Asymmetric) Cryptography]
+In \textbf{public-key cryptography}, each party has two mathematically related keys: a \textbf{public key} (which can be freely shared) and a \textbf{private key} (which must be kept secret). Data encrypted with the public key can only be decrypted with the corresponding private key.
+\end{definition}
+
+\begin{analogy}
+Public-key cryptography is like a mailbox with a slot. Anyone can drop a letter into the slot (encrypt with the public key), but only the person with the mailbox key can open it and read the letters inside (decrypt with the private key).
+\end{analogy}
+
+Public-key cryptography solves the key distribution problem: you can publish your public key to the world, and anyone can use it to send you encrypted messages. Only you, with your private key, can read them.
+
+\subsection{Key Exchange}
+
+The most common use of public-key cryptography is \textbf{key exchange}: establishing a shared symmetric key between two parties who have never communicated before.
+
+Classically, this is done with algorithms like Diffie-Hellman or RSA. In our post-quantum system, it is done with a \textbf{Key Encapsulation Mechanism (KEM)}, which we will explore in detail in Chapter~\ref{ch:pqc}.
+
+\subsection{Digital Signatures}
+
+\begin{definition}[Digital Signature]
+A \textbf{digital signature} is a mathematical scheme for verifying the authenticity and integrity of a message. The signer uses their private key to produce a signature; anyone can verify it using the signer's public key.
+\end{definition}
+
+\begin{equation}
+  \sigma = \text{Sign}(\text{private\_key}, \text{message})
+\end{equation}
+\begin{equation}
+  \text{valid} = \text{Verify}(\text{public\_key}, \text{message}, \sigma)
+\end{equation}
+
+In this system, digital signatures are used during the handshake to \textbf{authenticate the GCS}. The GCS signs the handshake transcript with its private key, and the drone verifies the signature using the GCS's public key (which was pre-installed on the drone). This prevents man-in-the-middle attacks.
+
+\begin{securitynote}
+Authentication is critical. Without it, an attacker could impersonate the GCS, complete a handshake with the drone, and gain full command-and-control access. The drone would be flying under the attacker's orders, believing it was communicating with the legitimate operator.
+\end{securitynote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Hash Functions}
+\label{sec:crypto-hash}
+
+\begin{definition}[Cryptographic Hash Function]
+A \textbf{cryptographic hash function} takes an input of arbitrary length and produces a fixed-size output (the ``hash'' or ``digest''). It has three key properties:
+\begin{enumerate}
+  \item \textbf{Preimage resistance:} Given a hash output, it is infeasible to find the input.
+  \item \textbf{Second preimage resistance:} Given an input and its hash, it is infeasible to find a different input with the same hash.
+  \item \textbf{Collision resistance:} It is infeasible to find any two different inputs with the same hash.
+\end{enumerate}
+\end{definition}
+
+This system uses \textbf{SHA-256} (producing 256-bit / 32-byte hashes) for:
+\begin{itemize}
+  \item HKDF-based key derivation (deriving transport keys from the shared secret).
+  \item HMAC-based authentication (verifying the drone's identity with a pre-shared key).
+\end{itemize}
+
+\begin{analogy}
+A hash function is like a fingerprint machine for data. You feed in a document of any length, and it produces a unique, fixed-size ``fingerprint.'' Even a tiny change to the document---flipping a single bit---completely changes the fingerprint. And you cannot reconstruct the original document from just the fingerprint.
+\end{analogy}
+
+\subsection{HMAC: Hash-Based Authentication}
+
+\begin{definition}[HMAC]
+\textbf{HMAC} (Hash-based Message Authentication Code) combines a hash function with a secret key to produce an authentication tag. Only someone who knows the key can produce a valid tag, and any tampering with the message invalidates the tag.
+\end{definition}
+
+\begin{equation}
+  \text{tag} = \text{HMAC}(\text{key}, \text{message}) = H\bigl((\text{key} \oplus \text{opad}) \,\|\, H((\text{key} \oplus \text{ipad}) \,\|\, \text{message})\bigr)
+\end{equation}
+
+In this system, HMAC-SHA256 is used during the handshake for drone authentication: the drone proves it knows the pre-shared key (PSK) by computing an HMAC over the server hello message.
+
+\subsection{HKDF: Deriving Keys from Secrets}
+
+\begin{definition}[HKDF]
+\textbf{HKDF} (HMAC-based Key Derivation Function) takes a shared secret and derives one or more cryptographic keys from it. It works in two phases: ``extract'' (compress the secret into a fixed-size pseudorandom key) and ``expand'' (derive the desired number of output bytes).
+\end{definition}
+
+After the KEM handshake produces a shared secret, the system uses HKDF-SHA256 to derive two 32-byte transport keys:
+
+\begin{lstlisting}[style=python, caption={Key derivation from shared secret}]
+info = b"pq-drone-gcs:kdf:v1|" + session_id + b"|" + kem_name + b"|" + sig_name
+hkdf = HKDF(algorithm=SHA256(), length=64, 
+             salt=b"pq-drone-gcs|hkdf|v1", info=info)
+okm = hkdf.derive(shared_secret)
+key_drone_to_gcs = okm[:32]    # First 32 bytes
+key_gcs_to_drone = okm[32:64]  # Second 32 bytes
+\end{lstlisting}
+
+\begin{securitynote}
+The \texttt{info} parameter includes the session ID, KEM name, and signature name. This ensures that even if two sessions happen to produce the same shared secret (astronomically unlikely but theoretically possible), the derived keys will be different because the session context differs. This is called \textbf{domain separation}.
+\end{securitynote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Authenticated Encryption with Associated Data (AEAD)}
+\label{sec:crypto-aead}
+
+The data plane needs both encryption (confidentiality) and authentication (integrity) for every packet. \textbf{AEAD} provides both in a single operation.
+
+\begin{definition}[AEAD]
+\textbf{Authenticated Encryption with Associated Data (AEAD)} is a class of encryption algorithms that simultaneously:
+\begin{enumerate}
+  \item \textbf{Encrypts} the plaintext into ciphertext (confidentiality).
+  \item \textbf{Authenticates} both the ciphertext and any ``associated data'' (integrity and authenticity).
+\end{enumerate}
+The associated data (AAD) is data that must be integrity-protected but not encrypted---in this system, the packet header.
+\end{definition}
+
+\begin{equation}
+  (\text{ciphertext}, \text{tag}) = \text{AEAD-Encrypt}(\text{key}, \text{nonce}, \text{plaintext}, \text{AAD})
+\end{equation}
+\begin{equation}
+  \text{plaintext} = \text{AEAD-Decrypt}(\text{key}, \text{nonce}, \text{ciphertext}, \text{tag}, \text{AAD})
+\end{equation}
+
+If any of the inputs are wrong---wrong key, wrong nonce, tampered ciphertext, or tampered AAD---decryption fails with an authentication error.
+
+\subsection{The Three AEAD Algorithms in This System}
+
+\begin{description}
+  \item[AES-256-GCM] \hfill \\
+  The combination of AES-256 in Galois/Counter Mode. GCM provides both encryption and authentication through polynomial arithmetic over a Galois field. It is hardware-accelerated on most CPUs. Nonce: 12 bytes. Tag: 16 bytes.
+  
+  \item[ChaCha20-Poly1305] \hfill \\
+  A combination of the ChaCha20 stream cipher (for encryption) and the Poly1305 MAC (for authentication). Designed by Daniel Bernstein, it is the primary alternative to AES-GCM and performs well on CPUs without AES hardware support. Nonce: 12 bytes. Tag: 16 bytes.
+  
+  \item[ASCON-128a] \hfill \\
+  A lightweight AEAD designed for constrained environments. Winner of the NIST Lightweight Cryptography competition. Uses a sponge-based construction with smaller state (320 bits). Nonce: 16 bytes. Tag: 16 bytes. Included in this system for benchmarking on resource-constrained hardware.
+\end{description}
+
+\begin{designdecision}
+The system supports three AEAD algorithms to enable fair comparison. AES-GCM benefits from hardware acceleration (AES-NI), ChaCha20-Poly1305 benefits from pure software efficiency on ARM, and ASCON-128a targets the lightweight embedded niche. Benchmarking all three on the same hardware reveals which is truly optimal for the specific platform.
+\end{designdecision}
+
+\subsection{Nonces and Why They Matter}
+
+\begin{definition}[Nonce]
+A \textbf{nonce} (``number used once'') is a value that must be unique for every encryption operation with the same key. Reusing a nonce with the same key is a catastrophic security failure for most AEAD algorithms.
+\end{definition}
+
+For AES-GCM, nonce reuse allows an attacker to recover the authentication key and forge packets. This is not a theoretical concern---it has been exploited in real-world attacks.
+
+In this system, nonces are \textbf{deterministic}---derived from the epoch byte and a monotonic sequence number:
+
+\begin{equation}
+  \text{nonce}(12\text{ bytes}) = \underbrace{\text{epoch}}_{\text{1 byte}} \,\|\, \underbrace{\text{sequence}}_{\text{11 bytes}}
+\end{equation}
+
+This design guarantees uniqueness as long as:
+\begin{enumerate}
+  \item The sequence counter never wraps (with 11 bytes $= 2^{88}$ possible values, this is effectively impossible).
+  \item The epoch is incremented on each rekey.
+  \item A new handshake generates new keys before the epoch reaches 255.
+\end{enumerate}
+
+\begin{keyinsight}
+The nonce is \textbf{not transmitted on the wire}. Both sides can reconstruct it from the sequence number and epoch, which are part of the packet header. This saves 12 bytes per packet---a meaningful optimization when MAVLink packets are only 50--280 bytes.
+\end{keyinsight}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Replay Protection}
+\label{sec:crypto-replay}
+
+\begin{definition}[Replay Attack]
+A \textbf{replay attack} is when an attacker captures a legitimate encrypted packet and retransmits it later. The packet decrypts successfully (it is a valid ciphertext with a valid tag), so the receiver processes it as if it were new.
+\end{definition}
+
+\begin{analogy}
+Imagine someone recording you saying ``Transfer \$100 to account X'' and playing the recording again and again. Each time, the bank hears a valid, authenticated request and transfers another \$100.
+\end{analogy}
+
+The solution is a \textbf{sliding window}:
+
+\begin{enumerate}
+  \item The receiver tracks the highest sequence number it has seen so far ($\text{high}$).
+  \item It maintains a bitmask of which recent sequence numbers (within a configurable \textbf{window}) have been received.
+  \item When a new packet arrives:
+  \begin{itemize}
+    \item If its sequence number is \emph{above} $\text{high}$: accept and update the window.
+    \item If it is \emph{within the window} but not yet seen: accept and mark as seen.
+    \item If it is \emph{within the window} and already seen: reject (duplicate/replay).
+    \item If it is \emph{below the window}: reject (too old).
+  \end{itemize}
+\end{enumerate}
+
+This system uses a window of 1024 packets by default (\configkey{REPLAY\_WINDOW} \texttt{= 1024}). This is large enough to tolerate significant packet reordering (common on WiFi) while still detecting replays.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Putting It All Together}
+\label{sec:crypto-together}
+
+Let us trace what happens cryptographically when the drone sends a single MAVLink packet:
+
+\begin{enumerate}
+  \item The drone proxy receives a plaintext MAVLink datagram (e.g., a GPS position update, 50 bytes).
+  
+  \item It constructs a \textbf{header} (22 bytes) containing: wire version, KEM/SIG algorithm IDs, 8-byte session ID, 8-byte sequence number, and epoch byte.
+  
+  \item It constructs a \textbf{nonce} (12 bytes) from the epoch and sequence number.
+  
+  \item It calls \texttt{AEAD-Encrypt(key\_d2g, nonce, plaintext, header)}, which:
+  \begin{itemize}
+    \item Encrypts the 50-byte plaintext into 50 bytes of ciphertext.
+    \item Produces a 16-byte authentication tag over the ciphertext \emph{and} the header.
+  \end{itemize}
+  
+  \item It sends the wire packet: $\text{header}(22) \,\|\, \text{ciphertext+tag}(66) = 88$ bytes total.
+  
+  \item The GCS proxy receives the 88-byte packet, validates the header, checks the replay window, reconstructs the nonce, and calls \texttt{AEAD-Decrypt}.
+  
+  \item If decryption succeeds: the 50-byte plaintext MAVLink message is delivered to Mission Planner. If it fails: the packet is silently dropped.
+\end{enumerate}
+
+\begin{keyinsight}
+The header is sent in cleartext (it is not encrypted), but it \textbf{is} authenticated as AAD. This means an attacker can read the header (learning the algorithm IDs and sequence number) but cannot modify it without invalidating the authentication tag. The trade-off is deliberate: the header must be readable for the receiver to know which key and nonce to use for decryption.
+\end{keyinsight}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{The Quantum Threat}
+\label{sec:crypto-quantum-threat}
+
+Everything described so far---AES, HKDF, HMAC, AEAD---uses \textbf{symmetric} cryptography, which is largely safe from quantum computers (at double the key length).
+
+The vulnerability lies in the \textbf{public-key} operations: key exchange and digital signatures. The classical algorithms used for these---RSA, Diffie-Hellman, ECDSA, ECDHE---are based on mathematical problems that quantum computers can solve efficiently:
+
+\begin{itemize}
+  \item \textbf{Integer factorization} (RSA): Shor's algorithm factors large integers in polynomial time on a quantum computer. A 2048-bit RSA key, requiring $\sim 2^{112}$ classical operations to break, requires only $\sim 2^{20}$ quantum gates.
+  
+  \item \textbf{Discrete logarithm} (Diffie-Hellman, ECDH, ECDSA): Shor's algorithm also computes discrete logarithms efficiently, breaking all elliptic-curve cryptography.
+\end{itemize}
+
+\begin{securitynote}
+This is why the system uses \textbf{post-quantum} algorithms for key exchange (KEM) and digital signatures. The symmetric-key operations (AES-GCM, ChaCha20-Poly1305) are already quantum-resistant at the key sizes used.
+\end{securitynote}
+
+The next chapter explores these post-quantum algorithms in detail: what mathematical problems they are based on, why those problems are believed to be hard for quantum computers, and how the specific algorithms in this system (ML-KEM, ML-DSA, Falcon, SPHINCS+, Classic McEliece, HQC) work.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Summary}
+\label{sec:crypto-summary}
+
+\begin{itemize}
+  \item Cryptography provides \textbf{confidentiality}, \textbf{integrity}, and \textbf{authentication}.
+  \item \textbf{Symmetric encryption} (AES, ChaCha20) uses a single shared key---fast but requires key distribution.
+  \item \textbf{Public-key cryptography} solves key distribution using key pairs (public/private).
+  \item \textbf{Digital signatures} authenticate messages using public-key techniques.
+  \item \textbf{Hash functions} (SHA-256) produce fixed-size fingerprints of data.
+  \item \textbf{HMAC} provides keyed authentication; \textbf{HKDF} derives keys from shared secrets.
+  \item \textbf{AEAD} (AES-GCM, ChaCha20-Poly1305, ASCON) provides encryption + authentication in one operation.
+  \item \textbf{Nonces} must be unique per key; this system derives them deterministically from epoch + sequence.
+  \item \textbf{Replay protection} uses a sliding window to detect duplicate or retransmitted packets.
+  \item \textbf{Quantum computers} threaten public-key algorithms but not symmetric ones (at sufficient key length).
+\end{itemize}

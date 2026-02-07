@@ -1,0 +1,95 @@
+% ============================================================================
+%  GLOSSARY
+% ============================================================================
+\chapter*{Glossary}
+\addcontentsline{toc}{chapter}{Glossary}
+
+\begin{description}[style=nextline,leftmargin=4cm,labelwidth=3.8cm]
+
+\item[AAD] \textbf{Additional Authenticated Data.} Data that is integrity-protected but not encrypted. In this system, the packet header is bound as AAD so that tampering with the header causes decryption to fail.
+
+\item[AEAD] \textbf{Authenticated Encryption with Associated Data.} A cryptographic construction that simultaneously provides confidentiality (encryption) and integrity (authentication). Examples used in this system: AES-256-GCM, ChaCha20-Poly1305, ASCON-128a.
+
+\item[AES] \textbf{Advanced Encryption Standard.} A symmetric block cipher standardized by NIST in 2001. This system uses AES-256-GCM (256-bit key, Galois/Counter Mode).
+
+\item[ASCON] A lightweight authenticated cipher designed for constrained environments. Winner of the NIST Lightweight Cryptography competition. This system supports the ASCON-128a variant.
+
+\item[C2] \textbf{Command and Control.} The communication link between a ground station and a drone that carries commands (arm, takeoff, navigate) and telemetry (position, battery, attitude).
+
+\item[ChaCha20-Poly1305] An AEAD cipher combining the ChaCha20 stream cipher with the Poly1305 authenticator. An alternative to AES-GCM that performs well without hardware AES support.
+
+\item[Classic McEliece] A code-based post-quantum KEM with very large public keys but very small ciphertexts and fast operations. Based on Niederreiter's code-based cryptosystem from 1986.
+
+\item[DVFS] \textbf{Dynamic Voltage and Frequency Scaling.} A power management technique where the CPU clock speed and voltage are adjusted dynamically. Relevant to energy measurements on the Raspberry Pi.
+
+\item[Epoch] In this system, a one-byte counter (0--255) that is incremented on each rekey event. Combined with the sequence number to form a unique nonce for each packet.
+
+\item[Falcon] A lattice-based digital signature algorithm based on NTRU lattices and fast Fourier sampling. Produces compact signatures but requires careful floating-point implementation.
+
+\item[FC] \textbf{Flight Controller.} The embedded computer (typically a Pixhawk) that directly controls the drone's motors, reads sensors, and executes flight plans.
+
+\item[FrodoKEM] A lattice-based KEM based on the Learning With Errors (LWE) problem. More conservative than ML-KEM but with larger key sizes.
+
+\item[GCM] \textbf{Galois/Counter Mode.} An authenticated encryption mode for block ciphers. Provides both confidentiality and integrity with hardware acceleration on modern CPUs (via AES-NI).
+
+\item[GCS] \textbf{Ground Control Station.} The operator's computer that displays telemetry, sends commands, and monitors the drone's status. In this system, a Windows PC running Mission Planner or QGroundControl.
+
+\item[HKDF] \textbf{HMAC-based Key Derivation Function.} Used in this system to derive two directional transport keys from a single shared secret established during the handshake.
+
+\item[HMAC] \textbf{Hash-based Message Authentication Code.} A construction for computing a keyed hash for authentication. Used in this system for drone PSK authentication during handshake.
+
+\item[HQC] \textbf{Hamming Quasi-Cyclic.} A code-based post-quantum KEM. An alternative to lattice-based schemes.
+
+\item[INA219] A Texas Instruments current/voltage monitor IC used via I2C to measure power consumption of the Raspberry Pi in real time.
+
+\item[IV] \textbf{Initialization Vector.} A value used to ensure that encrypting the same plaintext twice produces different ciphertext. In this system, the IV is deterministic (derived from epoch and sequence number) and not transmitted on the wire.
+
+\item[KDF] \textbf{Key Derivation Function.} A function that derives one or more cryptographic keys from a shared secret. This system uses HKDF-SHA256.
+
+\item[KEM] \textbf{Key Encapsulation Mechanism.} A public-key primitive where one party generates a public key, the other party ``encapsulates'' a random shared secret using that public key, and the first party ``decapsulates'' using their secret key. Replaces traditional key exchange (like Diffie-Hellman).
+
+\item[Lattice] A regular grid of points in multi-dimensional space. The mathematical structure underlying ML-KEM and ML-DSA. The hardness of finding short vectors in lattices (the Shortest Vector Problem) provides security.
+
+\item[liboqs] \textbf{Open Quantum Safe library.} A C library implementing post-quantum cryptographic algorithms. This system uses its Python bindings (\texttt{oqs-python}).
+
+\item[MAVLink] \textbf{Micro Air Vehicle Link.} A lightweight binary protocol for communication between drones and ground stations. Supports messages for telemetry, commands, parameters, and mission plans.
+
+\item[MAVProxy] An open-source MAVLink proxy and ground station written in Python. Used in this system to bridge serial Pixhawk data to UDP and to provide GCS-side MAVLink routing.
+
+\item[mDNS] \textbf{Multicast DNS.} A protocol for resolving hostnames on local networks without a central DNS server. Used optionally in this system for zero-configuration drone/GCS discovery.
+
+\item[ML-DSA] \textbf{Module Lattice Digital Signature Algorithm.} The NIST-standardized post-quantum signature scheme (FIPS~204), formerly known as CRYSTALS-Dilithium. Available at security levels 2 (ML-DSA-44), 3 (ML-DSA-65), and 5 (ML-DSA-87).
+
+\item[ML-KEM] \textbf{Module Lattice Key Encapsulation Mechanism.} The NIST-standardized post-quantum KEM (FIPS~203), formerly known as CRYSTALS-Kyber. Available at security levels 1 (ML-KEM-512), 3 (ML-KEM-768), and 5 (ML-KEM-1024).
+
+\item[NIST] \textbf{National Institute of Standards and Technology.} The U.S.\ federal agency responsible for cryptographic standards. Their post-quantum cryptography standardization process (2017--2024) produced the algorithms used in this system.
+
+\item[NIST Security Level] A classification of post-quantum algorithm strength: Level~1 ($\approx$AES-128), Level~3 ($\approx$AES-192), Level~5 ($\approx$AES-256).
+
+\item[Nonce] \textbf{Number used once.} A value that must never be reused with the same key. In this system, constructed deterministically from the epoch byte and a monotonic sequence number.
+
+\item[Pixhawk] An open-source flight controller hardware platform running ArduPilot or PX4 firmware. The drone in this system uses a Pixhawk connected via USB serial to a Raspberry Pi.
+
+\item[PQC] \textbf{Post-Quantum Cryptography.} Cryptographic algorithms designed to be secure against both classical and quantum computers.
+
+\item[PSK] \textbf{Pre-Shared Key.} A secret known to both drone and GCS before any communication begins. Used in this system for HMAC-based drone authentication during the handshake.
+
+\item[Rekey] The process of performing a new handshake to establish fresh encryption keys, replacing the current session keys. Prevents long-lived key compromise and provides forward secrecy.
+
+\item[Replay Attack] An attack where a previously captured legitimate packet is retransmitted. Prevented in this system by a sliding window that tracks which sequence numbers have been seen.
+
+\item[Selector] A system call mechanism (Python \texttt{selectors} module) for monitoring multiple I/O channels simultaneously. The proxy engine uses selectors instead of \texttt{asyncio} for deterministic latency behavior.
+
+\item[Session ID] An 8-byte random value generated during each handshake. Included in every packet header to ensure packets from old sessions are rejected.
+
+\item[SPHINCS+] A stateless hash-based digital signature scheme. Conservative post-quantum security based solely on hash function properties. Larger signatures than lattice-based schemes but fewer assumptions.
+
+\item[Suite] In this system, a specific combination of (KEM, Signature, AEAD) algorithms. Example: \suiteid{cs-mlkem768-aesgcm-mldsa65} uses ML-KEM-768 for key exchange, AES-256-GCM for data encryption, and ML-DSA-65 for authentication.
+
+\item[UAV] \textbf{Unmanned Aerial Vehicle.} A drone. In this system, a quadcopter equipped with a Pixhawk flight controller and a Raspberry Pi companion computer.
+
+\item[UDP] \textbf{User Datagram Protocol.} A connectionless transport protocol. MAVLink and the encrypted data plane in this system use UDP because it provides low latency without the overhead of TCP's reliability mechanisms.
+
+\item[Wire Format] The exact byte layout of data as it appears ``on the wire'' (transmitted over the network). This system's wire format is: Header (22 bytes) $\|$ Ciphertext $\|$ Authentication Tag.
+
+\end{description}

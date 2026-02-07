@@ -536,8 +536,6 @@ class BenchmarkScheduler:
                         log("Metrics not ready; extending suite before completion")
                         time.sleep(1.0)
                         continue
-                    # Commit the state change now that we've accepted the proposal
-                    self.policy.confirm_advance(now)
                     log("Benchmark complete!")
                     if self.metrics_aggregator:
                         self.metrics_aggregator.record_control_plane_metrics(
@@ -553,8 +551,12 @@ class BenchmarkScheduler:
                     # 1. Collect GCS metrics FIRST (so we can include them in final report)
                     gcs_metrics = self._collect_gcs_metrics(current_suite)
 
-                    # 2. Finalize metrics (passing GCS data for consolidation)
+                    # 2. Finalize current suite metrics BEFORE advancing
+                    #    (appends last suite to collected_metrics before _save_results)
                     self._finalize_metrics(success=True, gcs_metrics=gcs_metrics)
+
+                    # 3. Commit state change — triggers _save_results() with complete data
+                    self.policy.confirm_advance(now)
                     self._shutdown_reason = "normal: benchmark_complete"
                     self._shutdown_error = False
                     return
@@ -564,8 +566,6 @@ class BenchmarkScheduler:
                         log("Metrics not ready; extending suite before advancing")
                         time.sleep(1.0)
                         continue
-                    # Commit the state change now that we've accepted the proposal
-                    self.policy.confirm_advance(now)
                     progress = output.progress_pct
                     log(f"[{progress:.1f}%] Switching to {output.target_suite}")
 
@@ -584,8 +584,12 @@ class BenchmarkScheduler:
                     gcs_metrics = self._collect_gcs_metrics(current_suite)
                     gcs_ok = bool(gcs_metrics)
                     
-                    # 2. Finalize metrics (passing GCS data for consolidation)
+                    # 2. Finalize current suite metrics BEFORE advancing
+                    #    (appends current suite to collected_metrics before new suite starts)
                     self._finalize_metrics(success=True, gcs_metrics=gcs_metrics)
+
+                    # 3. Commit state change — starts metrics for next suite
+                    self.policy.confirm_advance(now)
                     
                     # Stop current proxy
                     self.proxy.stop()

@@ -1,0 +1,942 @@
+\chapter{Codebase Walkthrough}
+\label{ch:codebase}
+
+This chapter provides a module-by-module tour of the entire codebase.
+Where previous chapters explained \emph{concepts} (what AEAD framing is,
+how the handshake works), this chapter explains \emph{code}: the exact
+files, classes, functions, data structures, and design patterns that
+implement those concepts.
+
+% ============================================================
+\section{Repository Layout}
+
+The repository is organized into six top-level packages and several
+supporting directories:
+
+\begin{center}
+\begin{tikzpicture}[
+  dir/.style={draw, rounded corners=2pt, minimum width=3.5cm, minimum height=0.7cm, font=\small\ttfamily, fill=blue!8},
+  file/.style={font=\small\ttfamily},
+  arr/.style={-{Stealth[length=2mm]}, thick},
+  level 1/.style={sibling distance=3.5cm},
+]
+  \node[dir, fill=red!10, minimum width=5cm] (root) {secure-tunnel/};
+  
+  \node[dir, fill=blue!15] (core) at (-5, -1.5) {core/ (22 files)};
+  \node[dir, fill=green!15] (sched) at (-1.5, -1.5) {sscheduler/ (14 files)};
+  \node[dir, fill=orange!15] (dash) at (2, -1.5) {dashboard/};
+  \node[dir, fill=purple!10] (dev) at (5.5, -1.5) {devtools/ (13 files)};
+  
+  \node[dir, fill=cyan!10] (scripts) at (-3, -3) {scripts/ (13 files)};
+  \node[dir, fill=cyan!10] (tools) at (0.5, -3) {tools/ (15 files)};
+  \node[dir, fill=cyan!10] (bench) at (4, -3) {bench/ (12 files)};
+  
+  \draw[arr] (root) -- (core);
+  \draw[arr] (root) -- (sched);
+  \draw[arr] (root) -- (dash);
+  \draw[arr] (root) -- (dev);
+  \draw[arr] (root) -- (scripts);
+  \draw[arr] (root) -- (tools);
+  \draw[arr] (root) -- (bench);
+\end{tikzpicture}
+\end{center}
+
+\begin{longtable}{p{3cm} p{2cm} p{8.5cm}}
+  \caption{Top-level directory purposes.}
+  \label{tab:repo-dirs} \\
+  \toprule
+  \textbf{Directory} & \textbf{Files} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \texttt{core/}       & 22 & Cryptographic primitives, AEAD framing, handshake protocol, proxy transport,
+                                suite registry, metrics schema, power monitoring, process management.
+                                This is the \emph{heart} of the system. \\
+  \texttt{sscheduler/} & 14 & Drone-controlled scheduling---drone decides suite order and timing, GCS
+                                follows.  Benchmark and MAVProxy-aware variants. \\
+  \texttt{dashboard/}  & 40+ & FastAPI backend + Vite/React/TypeScript frontend for forensic
+                                 benchmark visualisation (12~interactive pages). \\
+  \texttt{devtools/}   & 13 & Developer-time observability: battery simulator, Tkinter dashboard,
+                                internal data bus, event emitter/receiver. \\
+  \texttt{scripts/}    & 13 & Operational launch scripts (PowerShell/Bash), sensor tests, data transfer. \\
+  \texttt{tools/}      & 15 & Runtime utilities: MAVProxy manager, network diagnostics, power
+                                measurement, config dumps, orchestration helpers. \\
+  \texttt{bench/}      & 12 & Benchmark analysis pipeline: statistical analysis, plotting, IEEE report
+                                generation, benchmark book production. \\
+\end{longtable}
+
+% ============================================================
+\section{The \texttt{core/} Package: Module Census}
+\label{sec:codebase-core}
+
+The \texttt{core/} package contains 22~Python files totalling approximately
+11{,}000~lines of code.  Table~\ref{tab:core-modules-full} lists every module
+with its line count, primary responsibility, and key classes or functions.
+
+\begin{longtable}{p{4.2cm} r p{8cm}}
+  \caption{Complete \texttt{core/} module inventory.}
+  \label{tab:core-modules-full} \\
+  \toprule
+  \textbf{Module} & \textbf{Lines} & \textbf{Responsibility} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Module} & \textbf{Lines} & \textbf{Responsibility} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+
+  \filename{\_\_init\_\_.py}       &    6 & Package marker; declares the PQC Drone-GCS Secure Proxy Core Package. \\
+  \filename{aead.py}               &  470 & AEAD framing: \classname{Sender}, \classname{Receiver}, \classname{\_AsconAdapter},
+                                           replay window, epoch management, wire header packing. \\
+  \filename{bridge.py}             & 1665 & Selectors-based bidirectional proxy: handshake $\to$ encrypted bridge $\to$ in-band control.
+                                           This is the \textbf{largest single file} in the codebase. \\
+  \filename{chronos.py}            &  151 & NTP-lite 3-way clock sync (``Operation Chronos''). \\
+  \filename{config.py}             &  623 & Global \texttt{CONFIG} dictionary, mDNS resolution, env overrides, validation. \\
+  \filename{control\_tcp.py}       &  359 & Minimal TCP JSON control server for in-band rekey negotiation with IP-based ACLs. \\
+  \filename{env\_loader.py}        &   83 & Reads \texttt{.denv}/\texttt{.genv} key=value files into \texttt{os.environ}. \\
+  \filename{exceptions.py}         &   25 & Custom exception hierarchy: \classname{ConfigError}, \classname{HandshakeError},
+                                           \classname{AeadError}, \classname{SequenceOverflow}. \\
+  \filename{handshake.py}          &  658 & PQC authenticated handshake: KEM keygen, encapsulation, signature sign/verify,
+                                           HKDF key derivation, \classname{ServerHello} construction. \\
+  \filename{logging\_utils.py}     &   83 & Structured JSON logging, file handler, lightweight metrics counters. \\
+  \filename{mavlink\_metrics.py}   &  879 & Bidirectional MAVLink metrics: message tracking, heartbeat monitoring, sequence gaps,
+                                           command ACK latency. \\
+  \filename{mdns.py}               &  203 & mDNS/Zeroconf discovery: resolve \texttt{drone.local}/\texttt{gcs.local},
+                                           advertise \texttt{\_pqc-tunnel.\_udp}. \\
+  \filename{metrics\_aggregator.py}& 1365 & Aggregates all 18~metric categories into \classname{ComprehensiveSuiteMetrics};
+                                           lifecycle APIs, cross-side merging, validation verdicts. \\
+  \filename{metrics\_collectors.py}&  753 & Base and system collectors: CPU, memory, temperature, INA219 power, environment info,
+                                           network stats. \\
+  \filename{metrics\_schema.py}    &  625 & 18~dataclasses (A--R) defining the complete typed metrics schema. \\
+  \filename{policy\_engine.py}     &  265 & In-band two-phase commit rekey negotiation: prepare $\to$ confirm via packet type 0x02. \\
+  \filename{power\_monitor.py}     &  998 & High-frequency power monitoring: INA219 direct register access, RPi5 PMIC hwmon,
+                                           synthetic fallback, CSV export. \\
+  \filename{power\_monitor\_compat.py} & 19 & Compatibility shim re-exporting all symbols from \filename{power\_monitor.py}. \\
+  \filename{process.py}            &  302 & Cross-platform \classname{ManagedProcess}: Win32 Job Objects / Linux PDEATHSIG,
+                                           SIGTERM$\to$SIGKILL escalation, orphan prevention. \\
+  \filename{robust\_logger.py}     &  588 & Append-mode persistent JSONL logger with file locking, incremental updates,
+                                           \classname{SyncTracker}. \\
+  \filename{run.py}                &  917 & CLI entrypoint: \texttt{init-identity}, \texttt{gcs}, \texttt{drone} subcommands,
+                                           key file management. \\
+  \filename{suites.py}             &  850 & Suite registry: KEM$\times$SIG$\times$AEAD composition, alias resolution, OQS probing,
+                                           \texttt{MappingProxyType} immutability. \\
+\end{longtable}
+
+% ============================================================
+\section{\texttt{core/exceptions.py}: The Exception Hierarchy}
+\label{sec:codebase-exceptions}
+
+Every non-trivial system needs a clear exception hierarchy so that callers
+can distinguish between different failure modes.  The PQC tunnel defines
+five custom exception classes:
+
+\begin{lstlisting}[style=python, caption={The complete exception hierarchy (\filename{core/exceptions.py}).}]
+class ConfigError(NotImplementedError, ValueError):
+    """Configuration validation errors."""
+    pass
+
+class SequenceOverflow(Exception):
+    """Sequence space exhausted or nearing exhaustion."""
+    pass
+
+class HandshakeError(Exception):
+    """Handshake protocol level errors."""
+    pass
+
+class AeadError(Exception):
+    """AEAD-related errors."""
+    pass
+
+class HandshakeFormatError(HandshakeError):
+    pass
+
+class HandshakeVerifyError(HandshakeError):
+    pass
+\end{lstlisting}
+
+\begin{keyinsight}{Inheritance for Error Handling}
+  \classname{HandshakeFormatError} and \classname{HandshakeVerifyError}
+  both inherit from \classname{HandshakeError}.  This allows callers
+  to catch either specific errors (``the signature was invalid'' vs.\
+  ``the message was malformed'') or all handshake errors generically.
+  \classname{ConfigError} inherits from \emph{both} \texttt{NotImplementedError}
+  and \texttt{ValueError} for backward compatibility with legacy callers
+  that catch either base type.
+\end{keyinsight}
+
+% ============================================================
+\section{\texttt{core/env\_loader.py}: Environment File Loading}
+\label{sec:codebase-envloader}
+
+The system supports \texttt{.denv} (drone-side) and \texttt{.genv}
+(GCS-side) environment files, plus \texttt{.local} overrides for
+site-specific configuration:
+
+\begin{lstlisting}[style=python, caption={Environment file loading (\filename{core/env\_loader.py}).}]
+def load_env_files(
+    repo_root: Optional[Path] = None,
+    *,
+    drone: bool = True,
+    gcs: bool = True,
+) -> dict[str, str]:
+    if repo_root is None:
+        repo_root = Path(__file__).resolve().parent.parent
+
+    loaded: dict[str, str] = {}
+    files = []
+    if drone:
+        files.append(repo_root / ".denv")
+        files.append(repo_root / ".denv.local")
+    if gcs:
+        files.append(repo_root / ".genv")
+        files.append(repo_root / ".genv.local")
+
+    for env_file in files:
+        pairs = _parse_env_file(env_file)
+        loaded.update(pairs)
+
+    # Inject into os.environ (existing values NOT overwritten)
+    for key, value in loaded.items():
+        if key not in os.environ:
+            os.environ[key] = value
+
+    return loaded
+\end{lstlisting}
+
+\begin{designdecision}{Why not \texttt{python-dotenv}?}
+  The widely-used \texttt{python-dotenv} package provides similar
+  functionality, but the system uses a custom loader to avoid an
+  external dependency for what is fundamentally 30~lines of parsing
+  code.  The custom loader also supports the \texttt{.denv}/\texttt{.genv}
+  naming convention (separating drone and GCS config) and the
+  \texttt{.local} override pattern.
+\end{designdecision}
+
+% ============================================================
+\section{\texttt{core/logging\_utils.py}: Structured JSON Logging}
+\label{sec:codebase-logging}
+
+All log messages in the system are emitted as structured JSON, enabling
+machine parsing of logs during benchmark analysis.
+
+\begin{lstlisting}[style=python, caption={JSON log formatter (\filename{core/logging\_utils.py}).}]
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(record.created)
+            ),
+            "level": record.levelname,
+            "name": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        # Include extra fields (filtered for JSON-serialisability)
+        for k, v in record.__dict__.items():
+            if k not in _STANDARD_RECORD_ATTRS:
+                try:
+                    json.dumps({k: v})
+                    payload[k] = v
+                except Exception:
+                    payload[k] = str(v)
+        return json.dumps(payload)
+\end{lstlisting}
+
+The module also provides a lightweight metrics system
+(\classname{Counter}, \classname{Gauge}, \classname{Metrics}) that
+avoids pulling in heavy observability libraries like Prometheus:
+
+\begin{lstlisting}[style=python, caption={Lightweight metrics counters.}]
+class Counter:
+    def __init__(self): self.value = 0
+    def inc(self, n: int = 1): self.value += n
+
+class Gauge:
+    def __init__(self): self.value = 0
+    def set(self, v: float): self.value = v
+
+METRICS = Metrics()  # global singleton
+\end{lstlisting}
+
+% ============================================================
+\section{\texttt{core/config.py}: The Global Configuration}
+\label{sec:codebase-config}
+
+The \texttt{CONFIG} dictionary is the single source of truth for every
+tunable parameter.  Here is how it initialises:
+
+\begin{enumerate}
+  \item \textbf{Load env files}: \funcname{load\_env\_files()} reads
+        \texttt{.denv}/\texttt{.genv} into \texttt{os.environ}.
+  \item \textbf{Resolve mDNS} (if enabled): Attempts
+        \texttt{drone.local}/\texttt{gcs.local} resolution.
+  \item \textbf{Build defaults}: A large literal dictionary with all
+        keys and their default values.
+  \item \textbf{Apply env overrides}: Selected keys can be overridden
+        from environment variables.
+  \item \textbf{Validate}: \funcname{validate\_config()} checks types,
+        ranges, and constraints.
+\end{enumerate}
+
+\begin{lstlisting}[style=python, caption={CONFIG dictionary structure (abbreviated, from \filename{core/config.py}).}]
+CONFIG = {
+    # Handshake (TCP)
+    "TCP_HANDSHAKE_PORT": 46000,
+
+    # Encrypted UDP data-plane (network)
+    "UDP_DRONE_RX": 46012,   # drone binds; GCS sends here
+    "UDP_GCS_RX": 46011,     # GCS binds; drone sends here
+
+    # Plaintext UDP (local loopback)
+    "DRONE_PLAINTEXT_TX": 47003,
+    "DRONE_PLAINTEXT_RX": 47004,
+    "GCS_PLAINTEXT_TX": 47001,
+    "GCS_PLAINTEXT_RX": 47002,
+
+    # Hosts
+    "DRONE_HOST": _DEFAULT_DRONE_HOST,
+    "GCS_HOST": _DEFAULT_GCS_HOST,
+
+    # Security
+    "DRONE_PSK": "",
+    "REPLAY_WINDOW": 1024,
+    "WIRE_VERSION": 1,        # frozen protocol version
+
+    # ... 50+ more keys (see Appendix A) ...
+}
+\end{lstlisting}
+
+% ============================================================
+\section{\texttt{core/aead.py}: The AEAD Framing Layer}
+\label{sec:codebase-aead}
+
+This module implements the entire data-plane encryption/decryption
+path.  The key design pattern is \textbf{algorithm abstraction}: all
+three AEAD algorithms (AES-GCM, ChaCha20-Poly1305, ASCON-128a) are
+wrapped behind a uniform interface.
+
+\subsection{The Import Fallback Chain}
+
+\begin{lstlisting}[style=python, caption={AEAD backend selection with graceful fallback.}]
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+except ImportError:
+    ChaCha20Poly1305 = None  # very old cryptography builds
+
+try:
+    from core import _ascon_native as _ascon_native_module
+except Exception:
+    _ascon_native_module = None
+
+try:
+    import pyascon as _pyascon_module
+except Exception:
+    _pyascon_module = None
+\end{lstlisting}
+
+This triple-fallback pattern ensures that:
+\begin{itemize}
+  \item If the native C extension is available, ASCON runs at maximum speed.
+  \item If only \texttt{pyascon} is available, ASCON runs in pure Python
+        (slower but functional).
+  \item If neither is available, ASCON suites are excluded from the
+        registry at runtime.
+\end{itemize}
+
+\subsection{The ASCON Adapter}
+
+The \classname{\_AsconAdapter} class wraps the ASCON implementations
+(native C and Python fallback) behind the same \texttt{encrypt()}/\texttt{decrypt()}
+interface used by \classname{AESGCM} and \classname{ChaCha20Poly1305}:
+
+\begin{lstlisting}[style=python, caption={Closure-based variant capture in the ASCON adapter.}]
+class _AsconAdapter:
+    def __init__(self, key: bytes, variant: str):
+        self._key = key[:16]  # ASCON uses 128-bit keys
+        variant_name = "Ascon-AEAD128a"
+
+        if _ascon_native_module is not None:
+            # Capture variant in closure
+            def _native_encrypt(key, nonce, aad, pt, algo=variant_name):
+                return _ascon_native_module.encrypt(
+                    key, nonce, aad, pt, algo
+                )
+            self._encrypt_fn = _native_encrypt
+        elif _pyascon_module is not None:
+            self._encrypt_fn = _pyascon_fallback
+        else:
+            raise ValueError("No ASCON backend available")
+\end{lstlisting}
+
+\begin{implementationnote}
+  The closure captures \texttt{variant\_name} as a default argument
+  (\texttt{algo=variant\_name}) to avoid late-binding issues.  Without
+  this, all ASCON instances would use the last variant assigned to the
+  outer variable.  This is a classic Python closure gotcha.
+\end{implementationnote}
+
+\subsection{The Sender and Receiver Classes}
+
+The \classname{Sender} class maintains:
+\begin{itemize}
+  \item A monotonic 64-bit sequence counter (\texttt{seq})
+  \item An 8-bit epoch counter (\texttt{epoch})
+  \item The AEAD cipher object (algorithm-agnostic)
+  \item Suite header IDs (KEM, SIG) for wire header construction
+  \item The 8-byte session ID
+\end{itemize}
+
+The \classname{Receiver} class additionally maintains:
+\begin{itemize}
+  \item A sliding bitmap replay window of configurable size (default 1024)
+  \item A high-water-mark sequence number
+  \item Expected header values for validation
+\end{itemize}
+
+% ============================================================
+\section{\texttt{core/handshake.py}: The PQC Handshake}
+\label{sec:codebase-handshake}
+
+This module implements the 2-message authenticated handshake protocol
+(Chapter~\ref{ch:handshake}).  It is 658~lines and contains:
+
+\begin{itemize}
+  \item The \classname{ServerHello} frozen dataclass
+  \item The \funcname{server\_gcs\_handshake()} function (GCS side)
+  \item The \funcname{client\_drone\_handshake()} function (drone side)
+  \item HKDF key derivation with domain separation
+  \item Handshake metrics collection (nanosecond-precision timing)
+  \item OQS compatibility layer (three import styles)
+\end{itemize}
+
+\subsection{OQS Import Compatibility}
+
+Different versions of \texttt{oqs-python} expose the API differently.
+The codebase handles all three:
+
+\begin{lstlisting}[style=python, caption={Triple-style OQS import for version compatibility.}]
+KeyEncapsulation = None
+Signature = None
+try:
+    from oqs.oqs import KeyEncapsulation, Signature  # Style 1
+except (ImportError, ModuleNotFoundError):
+    try:
+        from oqs import KeyEncapsulation, Signature   # Style 2
+    except (ImportError, ModuleNotFoundError):
+        try:
+            import oqs                                 # Style 3
+            KeyEncapsulation = oqs.KeyEncapsulation
+            Signature = oqs.Signature
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            pass
+\end{lstlisting}
+
+\subsection{Handshake Metrics Instrumentation}
+
+Every cryptographic operation during the handshake is timed at
+nanosecond precision using \texttt{time.perf\_counter\_ns()}:
+
+\begin{lstlisting}[style=python, caption={Nanosecond-precision primitive timing.}]
+t0 = time.perf_counter_ns()
+kem = KeyEncapsulation(kem_name)
+public_key = kem.generate_keypair()
+t1 = time.perf_counter_ns()
+metrics["primitives"]["kem"]["keygen_ns"] = t1 - t0
+\end{lstlisting}
+
+These timings populate Category~E (Crypto Primitive Breakdown) in the
+metrics schema with individual measurements for KEM keygen,
+encapsulation, decapsulation, signature signing, and verification.
+
+% ============================================================
+\section{\texttt{core/bridge.py}: The Proxy Engine}
+\label{sec:codebase-bridge}
+
+At 1{,}665~lines, \filename{bridge.py} is the largest file in the
+codebase and the operational core of the entire system.  It
+orchestrates the full proxy lifecycle:
+
+\begin{enumerate}
+  \item Parse configuration and validate
+  \item Perform TCP handshake (calling into \filename{handshake.py})
+  \item Derive directional keys via HKDF
+  \item Create \classname{Sender} and \classname{Receiver} objects
+  \item Register four UDP sockets with the selector
+  \item Enter the event loop
+  \item Handle in-band control messages (rekey negotiation)
+  \item Write status files for the scheduler to read
+  \item Return counters on clean exit
+\end{enumerate}
+
+\subsection{The \classname{ProxyCounters} Class}
+
+\begin{lstlisting}[style=python, caption={Proxy statistics tracking.}]
+class ProxyCounters:
+    def __init__(self) -> None:
+        self.ptx_out = 0       # plaintext packets sent to app
+        self.ptx_in = 0        # plaintext packets from app
+        self.enc_out = 0       # encrypted packets to peer
+        self.enc_in = 0        # encrypted packets from peer
+        self.ptx_bytes_out = 0
+        self.ptx_bytes_in = 0
+        self.enc_bytes_out = 0
+        self.enc_bytes_in = 0
+        # Drop counters by reason
+        self.drop_replay = 0
+        self.drop_auth = 0
+        self.drop_header = 0
+        self.drop_ratelimit = 0
+        self.drop_unknown = 0
+\end{lstlisting}
+
+\subsection{The Main Proxy Function Signature}
+
+\begin{lstlisting}[style=python, caption={The proxy entry point (simplified signature).}]
+def run_proxy(
+    role: str,              # "drone" or "gcs"
+    suite: dict,            # suite registry entry
+    cfg: dict,              # CONFIG dictionary
+    *,
+    gcs_sig_secret=None,    # GCS signing secret key
+    gcs_sig_public=None,    # GCS signing public key
+    stop_after_seconds=None, # auto-stop (for benchmarks)
+    status_file=None,       # path for scheduler status
+    ready_event=None,       # threading.Event for readiness
+) -> Dict[str, object]:
+    """Start a blocking proxy for the given role."""
+\end{lstlisting}
+
+\subsection{Status File Communication}
+
+The proxy communicates its state to the scheduler via a JSON status
+file.  This is a \emph{file-based IPC} pattern chosen for simplicity
+and crash-resilience:
+
+\begin{lstlisting}[style=python, caption={Atomic status file writing with Windows retry.}]
+def write_status(payload: Dict[str, object]) -> None:
+    tmp_path = status_path.with_suffix(".tmp")
+    data = json.dumps(payload)
+    for attempt in range(2):
+        try:
+            tmp_path.write_text(data, encoding="utf-8")
+            tmp_path.replace(status_path)  # atomic rename
+            return
+        except PermissionError:
+            # Windows antivirus may briefly hold the file
+            time.sleep(0.05)
+\end{lstlisting}
+
+\begin{designdecision}{Why file-based IPC instead of pipes or sockets?}
+  File-based IPC was chosen because: (1)~the status file persists
+  across process crashes, allowing the scheduler to detect stale
+  proxies; (2)~it works identically on Linux and Windows; (3)~the
+  file can be inspected manually during debugging (\texttt{cat status.json}).
+  The trade-off is slightly higher latency compared to pipes, but
+  status checks occur at 2-second intervals, so this is irrelevant.
+\end{designdecision}
+
+% ============================================================
+\section{\texttt{core/suites.py}: The Suite Registry}
+\label{sec:codebase-suites}
+
+At 850~lines, the suite registry is responsible for generating all
+72~cipher suite combinations and providing query/alias resolution.
+The core data structures are:
+
+\begin{lstlisting}[style=python, caption={KEM registry entry structure.}]
+_KEM_REGISTRY = {
+    "mlkem512": {
+        "oqs_name": "ML-KEM-512",
+        "token": "mlkem512",
+        "nist_level": "L1",
+        "kem_id": 1,
+        "kem_param_id": 1,
+        "aliases": (
+            "ML-KEM-512", "ml-kem-512", "mlkem512",
+            "kyber512", "kyber-512", "Kyber512",
+        ),
+    },
+    # ... 8 more KEM entries ...
+}
+\end{lstlisting}
+
+The registry is frozen at module load time using \texttt{MappingProxyType}
+to prevent accidental mutation during benchmark runs.
+
+% ============================================================
+\section{\texttt{core/process.py}: Cross-Platform Process Management}
+\label{sec:codebase-process}
+
+This 302-line module solves one of the hardest cross-platform problems:
+ensuring that child processes \emph{always} die when the parent exits.
+
+\subsection{Windows: Win32 Job Objects}
+
+\begin{lstlisting}[style=python, caption={Creating a Win32 Job Object that kills children on close.}]
+if sys.platform.startswith("win"):
+    _kernel32 = ctypes.windll.kernel32
+    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    _JobObjectExtendedLimitInformation = 9
+
+    class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("LimitFlags", wintypes.DWORD),
+            # ... 6 more fields ...
+        ]
+
+    def _create_job_object():
+        job = _kernel32.CreateJobObjectW(None, None)
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = (
+            _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        )
+        _kernel32.SetInformationJobObject(
+            job, _JobObjectExtendedLimitInformation,
+            ctypes.byref(info), ctypes.sizeof(info)
+        )
+        return job
+\end{lstlisting}
+
+\subsection{Linux: PDEATHSIG}
+
+\begin{lstlisting}[style=python, caption={Linux parent-death signal via prctl.}]
+else:  # Linux / POSIX
+    _libc = ctypes.CDLL("libc.so.6")
+    _PR_SET_PDEATHSIG = 1
+
+    def _set_pdeathsig():
+        """Called in subprocess preexec_fn."""
+        _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM)
+\end{lstlisting}
+
+\begin{securitynote}
+  On Windows, the Job Object approach has a subtle failure mode: if the
+  parent process is killed with \texttt{TerminateProcess} (SIGKILL
+  equivalent), the Job Object handle is closed by the OS, which
+  \emph{does} trigger child termination.  However, on older Windows
+  versions, there is a race condition where the child can briefly
+  survive if it creates its own child process before being assigned
+  to the job.  The system mitigates this by assigning the job
+  \emph{immediately} after process creation, before the child has
+  time to spawn sub-processes.
+\end{securitynote}
+
+% ============================================================
+\section{\texttt{core/power\_monitor.py}: High-Frequency Power Measurement}
+\label{sec:codebase-power}
+
+At 998~lines, this is the third-largest file in \texttt{core/}.
+It implements three power monitoring backends:
+
+\begin{enumerate}
+  \item \classname{Ina219PowerMonitor} --- Direct I\textsuperscript{2}C register access
+        to the INA219 sensor at up to 1{,}100~samples/second.
+  \item \classname{Rpi5PmicMonitor} --- Reads the RPi~5's built-in PMIC
+        via Linux \texttt{hwmon} sysfs files.
+  \item \classname{SyntheticPowerMonitor} --- Generates simulated power
+        data for development on machines without hardware sensors.
+\end{enumerate}
+
+\begin{lstlisting}[style=python, caption={INA219 ADC profile configuration.}]
+_ADC_PROFILES = {
+    "highspeed": {
+        "badc": 0x0080,
+        "sadc": 0x0000,
+        "settle": 0.0004,
+        "hz": 1100,
+    },
+    "balanced": {
+        "badc": 0x0400,
+        "sadc": 0x0018,
+        "settle": 0.0010,
+        "hz": 900,
+    },
+    "precision": {
+        "badc": 0x0400,
+        "sadc": 0x0048,
+        "settle": 0.0020,
+        "hz": 450,
+    },
+}
+\end{lstlisting}
+
+% ============================================================
+\section{\texttt{core/run.py}: The CLI Entrypoint}
+\label{sec:codebase-run}
+
+The system is launched via \texttt{python -m core.run} (or
+\texttt{python core/run.py}) with three subcommands:
+
+\begin{enumerate}
+  \item \textbf{\texttt{init-identity}} --- Generates a persistent GCS
+        signing keypair and saves it to files (\texttt{gcs\_sig.secret},
+        \texttt{gcs\_sig.pub}).
+  \item \textbf{\texttt{gcs}} --- Starts the GCS-side proxy, loading the
+        signing secret key from file.
+  \item \textbf{\texttt{drone}} --- Starts the drone-side proxy, loading
+        the GCS public key from file.
+\end{enumerate}
+
+The 917-line file handles argument parsing, key file management,
+signal handling (graceful shutdown on Ctrl+C), and the metric
+flattening pipeline that converts raw handshake metrics into the
+structured schema format.
+
+% ============================================================
+\section{The \texttt{sscheduler/} Package: Module Census}
+\label{sec:codebase-sscheduler}
+
+The scheduler package contains 14~files totalling approximately
+6{,}000~lines.  Table~\ref{tab:sched-modules} provides the complete
+inventory.
+
+\begin{longtable}{p{5cm} r p{7.5cm}}
+  \caption{Complete \texttt{sscheduler/} module inventory.}
+  \label{tab:sched-modules} \\
+  \toprule
+  \textbf{Module} & \textbf{Lines} & \textbf{Responsibility} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Module} & \textbf{Lines} & \textbf{Responsibility} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+
+  \filename{\_\_init\_\_.py}           &    3 & Package marker. \\
+  \filename{benchmark\_policy.py}      &  585 & Systematic suite cycling policy for benchmarks
+                                                (BenchmarkAction, SuiteMetrics, BenchmarkOutput). \\
+  \filename{control\_auth.py}          &   42 & PSK-based HMAC-SHA256 challenge-response for
+                                                the control plane. \\
+  \filename{gcs\_telemetry\_collector.py} & 386 & GCS-side real-time telemetry receiver for
+                                                  Category~I/J/K metrics. \\
+  \filename{local\_monitor.py}         &  184 & Drone-side system monitor: Pi temperature,
+                                                CPU, Pixhawk battery. \\
+  \filename{policy.py}                 &  414 & TelemetryAwarePolicyV2: tier-based upgrade/
+                                                downgrade with hysteresis and blacklisting. \\
+  \filename{drone\_scheduler.py}       &  588 & Simplified drone controller loop. \\
+  \filename{drone\_scheduler\_bench.py}& 1181 & Benchmark-specialized drone controller with
+                                                full BenchmarkPolicy integration. \\
+  \filename{drone\_scheduler\_mav.py}  &  822 & MAVProxy-aware drone controller for live
+                                                flight testing. \\
+  \filename{gcs\_scheduler.py}         &  610 & Simplified GCS follower loop. \\
+  \filename{gcs\_scheduler\_bench.py}  & 1086 & GCS benchmark server (``Operation Chronos v2''):
+                                                proxy management, traffic generation, metrics. \\
+  \filename{gcs\_scheduler\_mav.py}    &  652 & MAVProxy-aware GCS follower for live testing. \\
+  \filename{telemetry\_window.py}      &  194 & Thread-safe bounded sliding window for
+                                                telemetry analysis with O(1) add. \\
+\end{longtable}
+
+\subsection{Control Channel Authentication}
+
+\begin{lstlisting}[style=python, caption={HMAC-SHA256 challenge-response (\filename{sscheduler/control\_auth.py}).}]
+def create_challenge() -> bytes:
+    """Generate a random 32-byte challenge."""
+    return os.urandom(32)
+
+def compute_response(challenge: bytes, psk: bytes) -> str:
+    """Compute HMAC-SHA256 response."""
+    return hmac.new(psk, challenge, hashlib.sha256).hexdigest()
+
+def verify_response(
+    challenge: bytes, response: str, psk: bytes
+) -> bool:
+    """Verify response with constant-time comparison."""
+    expected = compute_response(challenge, psk)
+    return hmac.compare_digest(response, expected)
+\end{lstlisting}
+
+% ============================================================
+\section{The \texttt{devtools/} Package}
+\label{sec:codebase-devtools}
+
+The \texttt{devtools/} package provides developer-time observability
+tools that are \emph{not} part of the production system.
+Table~\ref{tab:devtools-modules} lists its 13~files.
+
+\begin{longtable}{p{4cm} p{9.5cm}}
+  \caption{Devtools module inventory.}
+  \label{tab:devtools-modules} \\
+  \toprule
+  \textbf{Module} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \filename{battery\_bridge.py}  & Bridges real/simulated battery data to the policy engine. \\
+  \filename{battery\_sim.py}     & Generates synthetic battery discharge curves for testing
+                                   TelemetryAwarePolicyV2 without real hardware. \\
+  \filename{config.py}           & Devtools-specific configuration overrides. \\
+  \filename{dashboard.py}        & A Tkinter-based real-time observability GUI showing proxy
+                                   state, metrics, and system health. \\
+  \filename{data\_bus.py}        & Internal publish-subscribe data bus for decoupling
+                                   devtools components. \\
+  \filename{integration.py}      & Helpers for integrating devtools with the main system. \\
+  \filename{launcher.py}         & Launches devtools components as sub-processes. \\
+  \filename{observable\_events.py} & Defines the observability event schema (event types,
+                                    payloads, timestamps). \\
+  \filename{observer.py}         & Observability event receiver that displays events in
+                                   the Tkinter dashboard or logs them. \\
+  \filename{observer\_schema.py} & Type definitions for observability events. \\
+  \filename{test\_obs\_plane.py} & Test harness for the observability plane. \\
+  \filename{README.md}           & Developer documentation for the devtools package. \\
+\end{longtable}
+
+% ============================================================
+\section{The \texttt{scripts/} and \texttt{tools/} Directories}
+\label{sec:codebase-scripts-tools}
+
+\subsection{Operational Scripts (\texttt{scripts/})}
+
+These are launch scripts and operational utilities:
+
+\begin{longtable}{p{5cm} p{8.5cm}}
+  \caption{Scripts directory inventory.}
+  \label{tab:scripts} \\
+  \toprule
+  \textbf{File} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \filename{analyze\_results.py}    & Post-hoc statistical analysis of benchmark results. \\
+  \filename{clean\_start\_benchmark.ps1} & PowerShell script for clean-state benchmark launch. \\
+  \filename{generate\_keys.py}      & Regenerates the full PQC key matrix for all suites. \\
+  \filename{run\_gcs\_metrics.py}   & Launches GCS-side metrics collection standalone. \\
+  \filename{run\_gcs\_telemetry.py} & GCS telemetry receiver (v1 protocol). \\
+  \filename{run\_drone.sh}          & Bash script to launch drone scheduler on Pi. \\
+  \filename{run\_gcs.ps1}           & PowerShell script to launch GCS scheduler. \\
+  \filename{test\_telemetry\_rx.py} & Telemetry receiver test harness. \\
+  \filename{test\_telemetry\_tx.py} & Telemetry sender test harness. \\
+  \filename{test\_ina219.py}        & INA219 power sensor hardware test. \\
+  \filename{transfer\_data.py}      & SCP-based data transfer between drone and GCS. \\
+  \filename{validate\_policy.py}    & Validates scheduling policy state transitions. \\
+  \filename{verify\_rpc.py}         & Verifies control channel RPC connectivity. \\
+\end{longtable}
+
+\subsection{Runtime Tools (\texttt{tools/})}
+
+These are diagnostic and utility tools that can be run independently:
+
+\begin{longtable}{p{5cm} p{8.5cm}}
+  \caption{Tools directory inventory.}
+  \label{tab:tools} \\
+  \toprule
+  \textbf{File} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \filename{blackout\_metrics.py}   & Measures metrics quality during rekey blackout periods. \\
+  \filename{dump\_config.py}        & Dumps the current CONFIG dictionary to stdout. \\
+  \filename{dump\_suites.py}        & Lists all registered suites with their properties. \\
+  \filename{gcs\_ping.py}           & Pings the GCS control endpoint for connectivity checks. \\
+  \filename{ina219\_read.py}        & Reads current INA219 sensor values. \\
+  \filename{mavproxy\_manager.py}   & Manages MAVProxy process lifecycle. \\
+  \filename{mavsniff.py}            & MAVLink UDP packet sniffer for debugging. \\
+  \filename{merge\_power.py}        & Merges power measurement data from multiple captures. \\
+  \filename{network\_diag.py}       & Network diagnostics (ping, port scan, route trace). \\
+  \filename{orchestrate.py}         & Full benchmark run orchestration helper. \\
+  \filename{power\_utils.py}        & Power measurement utilities and unit conversions. \\
+  \filename{verify\_dashboard.py}   & Verifies dashboard data integrity against raw metrics. \\
+  \filename{verify\_metrics.py}     & Cross-validates metrics for internal consistency. \\
+  \filename{wait\_for\_metrics.py}  & Polls for metrics completion (used in CI/scripts). \\
+\end{longtable}
+
+% ============================================================
+\section{The \texttt{bench/} Package: Benchmark Analysis}
+\label{sec:codebase-bench}
+
+The \texttt{bench/} directory contains the post-hoc analysis pipeline:
+
+\begin{longtable}{p{5.5cm} p{8cm}}
+  \caption{Benchmark analysis module inventory.}
+  \label{tab:bench} \\
+  \toprule
+  \textbf{Module} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \filename{analyze\_power\_benchmark.py} & Power consumption analysis: voltage, current, power
+                                            time series from INA219 data. \\
+  \filename{analyze\_stress\_test.py}     & Performance comparison heatmaps across all suites. \\
+  \filename{benchmark\_power\_perf.py}    & Combined power + performance benchmarking. \\
+  \filename{benchmark\_pqc.py}            & Standalone PQC primitive benchmark (keygen, encaps,
+                                            sign, verify timing). \\
+  \filename{consolidate\_metrics.py}      & Merges partial metrics files into consolidated datasets. \\
+  \filename{deploy\_and\_run.py}          & SSH-based deployment to drone and remote execution. \\
+  \filename{generate\_benchmark\_book.py} & Generates all figures for the benchmark analysis book. \\
+  \filename{generate\_ieee\_book.py}      & Produces publication-ready figures for IEEE papers. \\
+  \filename{generate\_ieee\_report.py}    & Creates the full IEEE benchmark report with tables
+                                            and charts. \\
+  \filename{run\_full\_benchmark.py}      & End-to-end benchmark orchestration (all 72~suites). \\
+\end{longtable}
+
+% ============================================================
+\section{Line Count Summary}
+
+\begin{longtable}{l r r}
+  \caption{Codebase size by directory.}
+  \label{tab:codebase-size} \\
+  \toprule
+  \textbf{Directory} & \textbf{Python Files} & \textbf{Total Lines} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \texttt{core/}        & 22 & $\sim$11{,}000 \\
+  \texttt{sscheduler/}  & 14 & $\sim$6{,}000 \\
+  \texttt{dashboard/backend/} & 8 & $\sim$2{,}500 \\
+  \texttt{devtools/}    & 13 & $\sim$1{,}500 \\
+  \texttt{scripts/}     & 13 & $\sim$1{,}200 \\
+  \texttt{tools/}       & 15 & $\sim$1{,}800 \\
+  \texttt{bench/}       & 12 & $\sim$3{,}000 \\
+  \midrule
+  \textbf{Total Python} & \textbf{97} & $\sim$\textbf{27{,}000} \\
+  \bottomrule
+  \texttt{dashboard/frontend/} & (TypeScript) & $\sim$3{,}500 \\
+  \texttt{core/\_ascon\_native.c} & (C) & $\sim$500 \\
+  \midrule
+  \textbf{Grand Total}  & & $\sim$\textbf{31{,}000} \\
+\end{longtable}
+
+% ============================================================
+\section{Chapter Summary}
+
+This chapter walked through every directory and every significant
+module in the codebase:
+
+\begin{itemize}
+  \item \textbf{22~modules in \texttt{core/}} --- the cryptographic
+        engine, proxy transport, metrics collection, power monitoring,
+        and process management.
+  \item \textbf{14~modules in \texttt{sscheduler/}} --- the
+        controller-follower scheduling architecture with three
+        operational variants (simple, benchmark, MAVProxy).
+  \item \textbf{13~modules in \texttt{devtools/}} --- developer
+        observability tools including a Tkinter GUI, battery simulator,
+        and data bus.
+  \item \textbf{13~scripts + 15~tools} --- operational launch scripts,
+        diagnostic utilities, and verification helpers.
+  \item \textbf{12~modules in \texttt{bench/}} --- the post-hoc
+        analysis pipeline for generating statistical reports and
+        publication figures.
+\end{itemize}
+
+The total codebase is approximately 31{,}000~lines across 97~Python files,
+3{,}500~lines of TypeScript, and 500~lines of C.

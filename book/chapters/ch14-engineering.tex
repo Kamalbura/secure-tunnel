@@ -179,7 +179,7 @@ The system is designed to resist the following adversary classes:
   \item[Future quantum adversary (``harvest now, decrypt later'').]
     Records ciphertext today and stores it until a cryptographically
     relevant quantum computer (CRQC) exists.  At that point, the
-    adversary applies Shor's algorithm~\cite{shor1997} to any
+the adversary applies Shor's algorithm~\cite{shor1994} to any
     classical public-key material and Grover's algorithm~\cite{grover1996}
     to symmetric keys.  The system's use of post-quantum KEMs and
     signatures is specifically motivated by this adversary.
@@ -262,7 +262,7 @@ listed explicitly to prevent misinterpretation of the system's claims.
   \item \textbf{Denial-of-service resilience.}
         The system does not guarantee availability.  An active network
         attacker can drop all packets, severing the link.  Rate limiting
-        (Section~\ref{sec:proxy-rl}) provides limited protection against
+        (Section~\ref{sec:proxy-ratelimit}) provides limited protection against
         handshake flooding, but the data plane has no anti-DoS mechanism
         beyond the inherent tolerance of UDP-based MAVLink.
 
@@ -553,6 +553,144 @@ The codebase includes multiple test layers:
         ultimate integration test---if all suites pass, the entire pipeline
         (handshake, AEAD, proxy, scheduler, metrics, persistence) works
         end-to-end.
+\end{enumerate}
+
+% ============================================================
+\section{Reproducibility and Experimental Constraints}
+\label{sec:eng-reproducibility}
+
+Benchmark results presented in this book were collected on specific
+hardware, software, and environmental conditions.  This section
+documents the factors that affect reproducibility so that readers
+attempting to replicate or extend the results can set appropriate
+expectations.
+
+\subsection{Hardware Dependencies}
+
+\begin{description}
+  \item[Raspberry Pi 5 (drone).]
+    The benchmark assumes a Pi~5 with a Broadcom BCM2712 (Cortex-A76)
+    SoC.  Earlier models (Pi~4, Pi~3) will produce different results
+    because they have different CPU architectures, cache sizes, and
+    memory bandwidth.  The Pi~5's AES instruction support
+    (\texttt{FEAT\_AES}) significantly benefits AES-GCM throughput.
+
+  \item[INA219 current sensor.]
+    Power metrics require an INA219 breakout board wired to the Pi's
+    I\textsuperscript{2}C bus and measuring the 5\,V supply rail.
+    Without this sensor, all power and energy fields are \texttt{null}.
+    The alternative RPi5 hwmon backend reads the on-board PMIC and
+    provides voltage and current but at lower accuracy.
+
+  \item[Pixhawk flight controller.]
+    In MAVPROXY mode, a Pixhawk (or compatible) connected via USB
+    serial generates real MAVLink traffic.  Without it, only SYNTHETIC
+    mode is available, and all MAVLink-specific metrics (heartbeat
+    interval, sequence gaps, command-ACK latency) are structurally
+    unavailable (Section~\ref{sec:metrics-failures}).
+
+  \item[WiFi link characteristics.]
+    The LAN between drone and GCS uses consumer WiFi (2.4\,GHz or
+    5\,GHz).  Latency, jitter, and packet loss are sensitive to:
+    distance, obstacles, channel congestion from neighbouring networks,
+    and the specific WiFi adapter and driver.
+\end{description}
+
+\subsection{Software Dependencies}
+
+\begin{description}
+  \item[liboqs version.]
+    The set of available KEM and signature algorithms depends on the
+    \texttt{liboqs} build.  Version upgrades may add or remove
+    algorithms, change default parameters, or introduce performance
+    regressions.  The exact version is recorded in Category~A
+    (\texttt{liboqs\_version}).
+
+  \item[Python version.]
+    The system requires Python 3.11+.  Performance of
+    \texttt{selectors.select()}, \texttt{socket.sendto()}, and
+    \texttt{struct.pack()} varies across Python minor versions and
+    builds (e.g.\ CPython vs.\ PyPy).
+
+  \item[cryptography library version.]
+    AES-GCM and ChaCha20-Poly1305 performance depends on whether the
+    underlying OpenSSL build uses hardware acceleration (AES-NI on x86,
+    NEON on ARM).
+
+  \item[Operating system kernel.]
+    Kernel version affects UDP buffer sizes, scheduler latency, I2C
+    driver behaviour, and hwmon sensor availability.  Both the GCS
+    kernel (\texttt{kernel\_version\_gcs}) and drone kernel
+    (\texttt{kernel\_version\_drone}) are recorded in Category~A.
+\end{description}
+
+\subsection{Environmental Factors}
+
+\begin{description}
+  \item[Thermal throttling.]
+    The Pi~5 throttles CPU frequency when the SoC temperature exceeds
+    80\textdegree{}C.  Extended benchmark runs (72 suites $\approx$
+    2~hours) may experience throttling, especially without active
+    cooling.  The system records CPU temperature in Category~O but does
+    not adjust for throttling.
+
+  \item[CPU frequency governor.]
+    The Linux \texttt{performance} governor locks the CPU at maximum
+    frequency, reducing variance.  The default \texttt{ondemand}
+    governor allows dynamic scaling, which introduces measurement
+    noise.  The governor setting is \textbf{not} recorded automatically
+    and should be documented by the experimenter.
+
+  \item[Background processes.]
+    Other processes on the Pi (system daemons, SSH sessions, log
+    rotation) consume CPU and memory, affecting benchmark results.
+    Category~O records system-level resource usage, but individual
+    process interference is not isolated.
+
+  \item[Network interference.]
+    WiFi interference from co-channel access points, microwave ovens,
+    and Bluetooth devices affects latency and packet loss.  For
+    controlled experiments, a dedicated 5\,GHz channel with no
+    neighbouring networks is recommended.
+\end{description}
+
+\subsection{What Can and Cannot Be Replicated}
+
+\begin{table}[htbp]
+\centering
+\caption{Reproducibility assessment for key result categories.}
+\label{tab:reproducibility}
+\begin{tabular}{@{}p{4cm} c p{6cm}@{}}
+\toprule
+\textbf{Result Category} & \textbf{Reproducible?} & \textbf{Constraint} \\
+\midrule
+Handshake latency ranking (KEM order) & High & Algorithm rankings are stable across platforms \\
+Absolute handshake times & Medium & Depend on CPU, liboqs version, and thermal state \\
+Power measurements & Low & Require identical INA219 wiring and calibration \\
+MAVLink integrity metrics & Medium & Require same FC firmware, baud rate, and message rates \\
+Data-plane packet loss & Low & Dominated by WiFi conditions, highly variable \\
+Suite pass/fail & High & Algorithmic correctness is deterministic \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Reproducibility Checklist}
+
+Researchers attempting to replicate results should document:
+
+\begin{enumerate}
+  \item Exact hardware model (Pi revision, INA219 breakout, WiFi adapter).
+  \item Software versions: Python, liboqs, oqs-python, cryptography
+        library, OS kernel.
+  \item Git commit hash of the codebase (recorded automatically in
+        Category~A).
+  \item CPU frequency governor setting and cooling configuration.
+  \item WiFi channel, bandwidth (20/40/80\,MHz), and distance between
+        devices.
+  \item Ambient temperature and whether active cooling is used.
+  \item Any environment variable overrides (\texttt{SUITES\_IGNORE\_KEMS},
+        \texttt{ENABLE\_ASCON}, etc.).
+  \item The benchmark mode (MAVPROXY or SYNTHETIC) and interval setting.
 \end{enumerate}
 
 % ============================================================

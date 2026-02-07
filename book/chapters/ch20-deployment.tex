@@ -1,0 +1,680 @@
+\chapter{Deployment and Operations Guide}
+\label{ch:deployment}
+
+This chapter provides step-by-step instructions for deploying the
+PQC drone tunnel on both the drone (Raspberry~Pi) and the ground
+control station (Windows workstation).  It covers hardware setup,
+software installation, key generation, network configuration,
+operational launch procedures, and troubleshooting.
+
+% ============================================================
+\section{Deployment Architecture}
+
+\begin{center}
+\begin{tikzpicture}[
+  box/.style={draw, rounded corners=3pt, minimum width=3.8cm, minimum height=1.2cm, font=\small, align=center, fill=#1},
+  netbox/.style={draw, dashed, rounded corners=3pt, minimum width=2.5cm, minimum height=0.7cm, font=\small, fill=yellow!10},
+  arr/.style={-{Stealth[length=2mm]}, thick},
+]
+  % Drone side
+  \node[box=blue!10] (drone) at (0, 0) {\textbf{Drone (RPi 4/5)}\\ARM Cortex-A72\\Raspbian 64-bit};
+  \node[box=green!10] (fc) at (0, -2) {Pixhawk FC\\ArduPilot\\USB serial};
+  \node[box=orange!10] (ina) at (0, -4) {INA219 Sensor\\I\textsuperscript{2}C Bus 1\\0x40 @ 0.1\,$\Omega$};
+
+  % GCS side
+  \node[box=red!10] (gcs) at (10, 0) {\textbf{GCS (Windows)}\\x86-64\\Python 3.11+};
+  \node[box=green!10] (mav) at (10, -2) {MAVProxy\\Mission Planner\\GCS Apps};
+  \node[box=purple!10] (dash) at (10, -4) {Dashboard\\FastAPI + React\\localhost:5173};
+
+  % Network
+  \node[netbox] (lan) at (5, 0.5) {LAN: 192.168.0.x};
+  \node[netbox] (ts) at (5, -0.5) {Tailscale: 100.x.x.x};
+
+  \draw[arr] (drone) -- node[above, font=\tiny] {UDP 46011/46012} (gcs);
+  \draw[arr, dashed, gray] (fc) -- (drone);
+  \draw[arr, dashed, gray] (ina) -- (drone);
+  \draw[arr, dashed, gray] (mav) -- (gcs);
+  \draw[arr, dashed, gray] (dash) -- (gcs);
+\end{tikzpicture}
+\end{center}
+
+% ============================================================
+\section{Hardware Requirements}
+
+\subsection{Drone Platform}
+
+\begin{longtable}{p{4cm} p{9.5cm}}
+  \caption{Drone hardware requirements.}
+  \label{tab:hw-drone} \\
+  \toprule
+  \textbf{Component} & \textbf{Specification} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  Single-board computer & Raspberry Pi 4 Model B (4\,GB) or Pi 5 (8\,GB recommended) \\
+  Operating system       & Raspberry Pi OS (64-bit, Bookworm or later) \\
+  Network interface      & Ethernet (192.168.0.x) or Wi-Fi \\
+  Flight controller      & Pixhawk-compatible running ArduPilot (USB serial \texttt{/dev/ttyACM0}) \\
+  Power sensor           & INA219 on I\textsuperscript{2}C bus 1 at address 0x40
+                           with 0.1\,$\Omega$ shunt resistor \\
+  Storage                & 32\,GB+ microSD (Class 10 or better) \\
+  Connectivity           & Tailscale for remote management (optional) \\
+\end{longtable}
+
+\subsection{Ground Control Station}
+
+\begin{longtable}{p{4cm} p{9.5cm}}
+  \caption{GCS hardware requirements.}
+  \label{tab:hw-gcs} \\
+  \toprule
+  \textbf{Component} & \textbf{Specification} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  Operating system  & Windows 10/11 (64-bit) or Linux \\
+  CPU               & x86-64 with AES-NI (Intel Haswell+ / AMD Zen+) \\
+  RAM               & 8\,GB minimum (16\,GB for dashboard) \\
+  Python            & 3.11 or later (Miniconda/Anaconda recommended) \\
+  Network           & Same LAN as drone (192.168.0.x) \\
+  Node.js           & 20+ (for dashboard frontend) \\
+\end{longtable}
+
+% ============================================================
+\section{Software Installation}
+
+\subsection{Step 1: Clone the Repository}
+
+\begin{lstlisting}[style=terminal]
+# On both drone and GCS
+git clone https://github.com/<user>/secure-tunnel.git
+cd secure-tunnel
+\end{lstlisting}
+
+\subsection{Step 2: Create Python Virtual Environment}
+
+\paragraph{On the Drone (Raspberry Pi):}
+
+\begin{lstlisting}[style=terminal]
+# Create virtualenv
+python3 -m venv ~/cenv
+source ~/cenv/bin/activate
+
+# Install core dependencies
+pip install --upgrade pip
+pip install cryptography psutil pymavlink pydantic
+pip install smbus2 pi-ina219  # hardware-specific
+
+# Install liboqs (must be compiled from source on ARM)
+cd /tmp
+git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git
+cd liboqs && mkdir build && cd build
+cmake -GNinja -DCMAKE_INSTALL_PREFIX=/usr/local ..
+ninja && sudo ninja install
+
+# Install oqs-python
+pip install oqs-python
+
+# Install ASCON
+pip install pyascon
+\end{lstlisting}
+
+\paragraph{On the GCS (Windows):}
+
+\begin{lstlisting}[style=terminal]
+# Using Miniconda
+conda create -n oqs-dev python=3.11
+conda activate oqs-dev
+
+# Install core dependencies
+pip install cryptography psutil pymavlink pydantic
+pip install zeroconf fastapi uvicorn rich
+
+# Install liboqs (pre-built wheels on x86-64)
+pip install oqs-python
+
+# Install optional dependencies
+pip install pyascon numpy pandas matplotlib
+\end{lstlisting}
+
+\subsection{Step 3: Install Dashboard Dependencies}
+
+\begin{lstlisting}[style=terminal]
+# On GCS only
+cd dashboard/frontend
+npm install
+
+cd ../backend
+pip install fastapi uvicorn
+\end{lstlisting}
+
+\subsection{Step 4: Verify Installation}
+
+\begin{lstlisting}[style=terminal]
+# Verify oqs-python
+python -c "import oqs; print(oqs.get_enabled_kem_mechanisms())"
+
+# Verify suite registry
+python -c "from core.suites import get_all_suite_ids; print(len(get_all_suite_ids()))"
+# Expected: 72
+
+# Verify collectors
+python verify_collectors.py
+\end{lstlisting}
+
+% ============================================================
+\section{Network Configuration}
+
+\subsection{IP Address Assignment}
+
+The system uses two network paths:
+
+\begin{longtable}{l l l}
+  \caption{Network address assignment.}
+  \label{tab:network-addrs} \\
+  \toprule
+  \textbf{Host} & \textbf{LAN Address} & \textbf{Tailscale Address} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  Drone (RPi)    & 192.168.0.105 & 100.101.93.23 \\
+  GCS (Windows)  & 192.168.0.101 & 100.106.181.122 \\
+\end{longtable}
+
+LAN is used for benchmark traffic (low latency, high bandwidth).
+Tailscale is used for SSH management (accessible from anywhere).
+
+\subsection{Port Allocation}
+
+\begin{longtable}{l l l}
+  \caption{Complete port allocation map.}
+  \label{tab:ports} \\
+  \toprule
+  \textbf{Port} & \textbf{Protocol} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  46000 & TCP & PQC handshake \\
+  46011 & UDP & Encrypted data (GCS receives) \\
+  46012 & UDP & Encrypted data (drone receives) \\
+  47001 & UDP & GCS plaintext TX (localhost) \\
+  47002 & UDP & GCS plaintext RX (localhost) \\
+  47003 & UDP & Drone plaintext TX (localhost) \\
+  47004 & UDP & Drone plaintext RX (localhost) \\
+  48080 & TCP & Scheduler control channel \\
+  48081 & TCP & Scheduler control (alternate) \\
+  14550 & UDP & MAVLink GCS downstream \\
+  14551 & UDP & MAVLink GCS alternate \\
+  8000  & TCP & Dashboard backend (FastAPI) \\
+  5173  & TCP & Dashboard frontend (Vite dev) \\
+\end{longtable}
+
+\subsection{Firewall Configuration}
+
+\paragraph{Windows:}
+
+\begin{lstlisting}[style=terminal]
+# PowerShell (elevated)
+New-NetFirewallRule -DisplayName "PQC Tunnel Handshake" `
+  -Direction Inbound -Protocol TCP -LocalPort 46000 -Action Allow
+
+New-NetFirewallRule -DisplayName "PQC Tunnel Data" `
+  -Direction Inbound -Protocol UDP -LocalPort 46011 -Action Allow
+
+New-NetFirewallRule -DisplayName "PQC Control Channel" `
+  -Direction Inbound -Protocol TCP -LocalPort 48080,48081 -Action Allow
+\end{lstlisting}
+
+\paragraph{Linux (drone):}
+
+\begin{lstlisting}[style=terminal]
+sudo ufw allow 46000/tcp    # Handshake
+sudo ufw allow 46012/udp    # Encrypted data
+sudo ufw allow 48080/tcp    # Control channel
+\end{lstlisting}
+
+% ============================================================
+\section{Environment Configuration}
+
+\subsection{Drone Environment (\texttt{.denv})}
+
+\begin{lstlisting}[style=terminal, caption={Drone environment file (\filename{.denv}).}]
+DRONE_HOST_LAN=192.168.0.100
+DRONE_HOST_TAILSCALE=100.101.93.23
+DRONE_SSH_USER=dev
+DRONE_SSH_PORT=22
+DRONE_PROJECT_PATH=~/secure-tunnel
+DRONE_VENV_PATH=~/cenv
+MAVPROXY_BINARY=/home/dev/cenv/bin/mavproxy.py
+DRONE_MONITOR_OUTPUT_BASE=/home/dev/research/output/drone
+DRONE_LOGS_REMOTE=~/research/logs/auto/drone
+DRONE_PSK=                      # 32-byte hex (empty = dev mode)
+MAV_FC_DEVICE=/dev/ttyACM0
+MAV_FC_BAUD=57600
+DRONE_POWER_BACKEND=ina219
+DRONE_POWER_SAMPLE_HZ=1000
+INA219_I2C_BUS=1
+INA219_ADDR=0x40
+INA219_SHUNT_OHM=0.1
+\end{lstlisting}
+
+\subsection{GCS Environment (\texttt{.genv})}
+
+\begin{lstlisting}[style=terminal, caption={GCS environment file (\filename{.genv}).}]
+GCS_HOST_LAN=192.168.0.101
+GCS_HOST_TAILSCALE=100.106.181.122
+PQC_LAB_PASSWORD=               # required in production
+AUTO_GCS_POST_FETCH_PASSWORD=
+AUTO_GCS_POWER_FETCH_PASSWORD=
+DASHBOARD_BACKEND_PORT=8000
+DASHBOARD_FRONTEND_PORT=5173
+MAV_AUTH_KEY=
+\end{lstlisting}
+
+\subsection{Runtime Policy Configuration (\texttt{settings.json})}
+
+\begin{lstlisting}[style=json, caption={Policy configuration structure.}]
+{
+  "mission_criticality": "medium",
+  "max_nist_level": "L5",
+  "allowed_aead": "aesgcm",
+  "battery": {
+    "critical_mv": 3200,
+    "low_mv": 3400,
+    "warn_mv": 3600,
+    "rate_warn_mv_per_min": -200
+  },
+  "thermal": {
+    "critical_c": 80,
+    "warn_c": 70,
+    "rate_warn_c_per_min": 5
+  },
+  "rekey": {
+    "min_stable_s": 5.0,
+    "max_per_window": 10,
+    "window_s": 120.0,
+    "blacklist_ttl_s": 300.0
+  },
+  "hysteresis": {
+    "downgrade_s": 3.0,
+    "upgrade_s": 8.0
+  }
+}
+\end{lstlisting}
+
+% ============================================================
+\section{Key Generation}
+
+Before the system can operate, the GCS must generate its persistent
+signing keypair:
+
+\begin{lstlisting}[style=terminal, caption={Identity key generation.}]
+# Generate GCS signing keypair
+python -m core.run init-identity
+
+# This creates:
+#   secrets/gcs_sig.secret  (signing secret key)
+#   secrets/gcs_sig.pub     (signing public key)
+\end{lstlisting}
+
+The public key must be distributed to the drone.  The system also
+generates per-suite KEM keypairs on first use:
+
+\begin{lstlisting}[style=terminal, caption={Per-suite key generation.}]
+# Generate keys for all suites
+python scripts/generate_keys.py
+
+# This iterates all 72 registered suites and creates
+# KEM keypairs in the secrets/ directory
+\end{lstlisting}
+
+\begin{securitynote}
+  The \texttt{secrets/} directory must be protected:
+  \begin{itemize}
+    \item On the drone: \texttt{chmod 700 secrets/}
+    \item On the GCS: restrict NTFS permissions to the current user
+    \item Never commit \texttt{secrets/} to version control
+          (it should be in \texttt{.gitignore})
+  \end{itemize}
+\end{securitynote}
+
+% ============================================================
+\section{Hardware Setup}
+
+\subsection{INA219 Power Sensor Wiring}
+
+\begin{center}
+\begin{tikzpicture}[
+  chip/.style={draw, minimum width=2.5cm, minimum height=2cm, font=\small},
+  pin/.style={draw, circle, minimum size=0.4cm, font=\tiny},
+]
+  \node[chip, fill=blue!10] (pi) at (0, 0) {RPi GPIO};
+  \node[chip, fill=green!10] (ina) at (6, 0) {INA219};
+
+  \node[pin] (sda) at (1.5, 0.5) {SDA};
+  \node[pin] (scl) at (1.5, -0.5) {SCL};
+  \node[pin] (isda) at (4.5, 0.5) {SDA};
+  \node[pin] (iscl) at (4.5, -0.5) {SCL};
+
+  \draw[thick, blue] (sda) -- (isda) node[midway, above, font=\tiny] {GPIO 2 (Pin 3)};
+  \draw[thick, red] (scl) -- (iscl) node[midway, below, font=\tiny] {GPIO 3 (Pin 5)};
+
+  \node[font=\tiny, below=0.3cm of pi] {3.3V, GND};
+  \node[font=\tiny, below=0.3cm of ina] {V+, V-, A0=GND (0x40)};
+\end{tikzpicture}
+\end{center}
+
+\begin{lstlisting}[style=terminal, caption={Verify INA219 connection.}]
+# Enable I2C
+sudo raspi-config  # Interface Options > I2C > Enable
+
+# Verify sensor presence
+sudo i2cdetect -y 1
+# Should show "40" at address 0x40
+
+# Test reading
+python scripts/test_ina219.py
+\end{lstlisting}
+
+\subsection{Pixhawk Flight Controller}
+
+\begin{lstlisting}[style=terminal, caption={Verify Pixhawk connection.}]
+# Check serial device
+ls -la /dev/ttyACM0
+
+# Test MAVLink connection
+mavproxy.py --master=/dev/ttyACM0 --baudrate=57600
+
+# Load parameter file
+# (in MAVProxy shell)
+param load mav.parm
+\end{lstlisting}
+
+% ============================================================
+\section{Launching the System}
+
+\subsection{Manual Launch (Single Suite)}
+
+\paragraph{Step 1: Start GCS proxy.}
+
+\begin{lstlisting}[style=terminal]
+# On GCS (Windows)
+conda activate oqs-dev
+python -m core.run gcs --suite cs-mlkem768-aesgcm-mldsa65
+\end{lstlisting}
+
+\paragraph{Step 2: Start drone proxy.}
+
+\begin{lstlisting}[style=terminal]
+# On drone (SSH)
+source ~/cenv/bin/activate
+python -m core.run drone --suite cs-mlkem768-aesgcm-mldsa65
+\end{lstlisting}
+
+\paragraph{Step 3: Verify connection.}
+
+\begin{lstlisting}[style=terminal]
+# On GCS
+python tools/gcs_ping.py
+# Expected: {"status": "ok", "latency_ms": ...}
+\end{lstlisting}
+
+\subsection{Scheduler Launch (Multi-Suite Cycling)}
+
+The scheduler automates suite cycling and metrics collection:
+
+\paragraph{Step 1: Start GCS scheduler.}
+
+\begin{lstlisting}[style=terminal]
+# On GCS
+python -m sscheduler.sgcs \
+  --max-suites 10 \
+  --suite-seconds 30 \
+  --mbps 110
+\end{lstlisting}
+
+\paragraph{Step 2: Start drone scheduler.}
+
+\begin{lstlisting}[style=terminal]
+# On drone
+python -m sscheduler.sdrone \
+  --max-suites 10 \
+  --nist-level L3
+\end{lstlisting}
+
+\subsection{Automated Benchmark Launch}
+
+The \filename{clean\_start\_benchmark.ps1} script automates the
+entire benchmark process:
+
+\begin{lstlisting}[style=terminal, caption={Automated benchmark launch (PowerShell).}]
+# From GCS
+.\scripts\clean_start_benchmark.ps1 `
+  -DroneSshTarget "dev@100.101.93.23"
+
+# This script:
+# 1. Rotates old logs
+# 2. Kills stale processes
+# 3. Starts GCS scheduler (via conda)
+# 4. Starts drone scheduler (via SSH)
+# 5. Waits for metrics completion
+\end{lstlisting}
+
+\subsection{Dashboard Launch}
+
+\begin{lstlisting}[style=terminal, caption={Dashboard launch (PowerShell).}]
+.\scripts\start_dashboard.ps1
+
+# This starts:
+#   Backend:  uvicorn main:app on port 8000
+#   Frontend: npm run dev on port 5173
+# Opens browser to http://localhost:5173
+\end{lstlisting}
+
+% ============================================================
+\section{Pre-Benchmark Preparation}
+
+For accurate benchmarks, the drone must be prepared to minimise
+measurement noise:
+
+\begin{lstlisting}[style=terminal, caption={Benchmark preparation script (\filename{bench/prepare\_bench\_env.sh}).}]
+# Must run as root on the drone
+sudo bash bench/prepare_bench_env.sh
+
+# This script:
+# 1. Sets CPU governor to "performance"
+# 2. Disables frequency scaling and turbo boost
+# 3. Locks ARM frequency to maximum
+# 4. Verifies INA219 presence on I2C bus
+# 5. Sets kernel.perf_event_paranoid = -1
+# 6. Checks for stale processes
+# 7. Reads CPU temperature baseline
+\end{lstlisting}
+
+\begin{designdecision}{CPU Governor: \texttt{performance} vs.\ \texttt{ondemand}}
+  Benchmarks use \texttt{performance} governor (fixed maximum frequency)
+  to eliminate frequency scaling noise.  Production deployments use
+  \texttt{ondemand} (dynamic scaling) to save power during idle periods.
+  The benchmark chapter (Chapter~\ref{ch:benchmarks}) notes which
+  governor was used for each measurement set.
+\end{designdecision}
+
+% ============================================================
+\section{Remote Deployment via SSH}
+
+The \filename{bench/deploy\_and\_run.py} script automates the
+complete deployment cycle over SSH:
+
+\begin{lstlisting}[style=python, caption={Deployment workflow in \filename{bench/deploy\_and\_run.py}.}]
+# Connectivity check
+ssh_check(DRONE_TAILSCALE_IP)
+
+# Sync code to drone
+git_push_local()
+ssh_exec(drone, "cd ~/secure-tunnel && git pull")
+
+# Start GCS server locally
+gcs_proc = start_gcs_benchmark(
+    iterations=200,
+    output_dir="bench_results"
+)
+
+# Start drone benchmark via SSH
+ssh_exec(drone,
+    f"cd ~/secure-tunnel && "
+    f"source ~/cenv/bin/activate && "
+    f"python bench/lan_benchmark_drone.py "
+    f"  --iterations {iterations}"
+)
+
+# Fetch results
+scp_fetch(drone,
+    remote="~/secure-tunnel/bench_results/",
+    local="./bench_results_remote/"
+)
+\end{lstlisting}
+
+% ============================================================
+\section{System Information Collection}
+
+The \filename{collect\_sysinfo.sh} script captures the complete
+hardware and software environment for reproducibility:
+
+\begin{lstlisting}[style=terminal, caption={System information collection.}]
+bash collect_sysinfo.sh > system_info.txt
+
+# Captures:
+# - Hostname, kernel, OS release
+# - CPU model, frequency, core count
+# - RAM total/available
+# - CPU temperature, voltage, throttle status
+# - I2C devices (INA219 at 0x40)
+# - Python version, git commit/branch
+# - liboqs version
+# - Installed pip packages
+\end{lstlisting}
+
+% ============================================================
+\section{Troubleshooting}
+
+\subsection{Common Issues}
+
+\begin{longtable}{p{4cm} p{9.5cm}}
+  \caption{Common deployment issues and solutions.}
+  \label{tab:troubleshooting} \\
+  \toprule
+  \textbf{Symptom} & \textbf{Solution} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \texttt{ImportError: oqs}
+    & Install liboqs from source (ARM) or via pip (x86-64).
+      Verify: \texttt{python -c "import oqs"} \\
+
+  Handshake timeout
+    & Check firewall rules for TCP~46000.  Verify both sides use
+      the same suite ID.  Check clock sync (NTP). \\
+
+  ``Address already in use''
+    & Kill stale proxy processes:
+      \texttt{pkill -f "core.run"} (Linux) or
+      \texttt{taskkill /F /IM python.exe} (Windows) \\
+
+  INA219 not found
+    & Run \texttt{sudo i2cdetect -y 1}.  Check wiring (SDA=Pin~3,
+      SCL=Pin~5).  Enable I\textsuperscript{2}C in \texttt{raspi-config}. \\
+
+  Zero packets received
+    & Verify port configuration matches between \texttt{CONFIG},
+      \texttt{.denv}, and actual process arguments.  Run
+      \texttt{test\_simple\_loop.py} on localhost first. \\
+
+  Dashboard won't start
+    & Check ports 8000/5173 are free.  Run \texttt{npm install} in
+      \texttt{dashboard/frontend/}.  Verify Node.js 20+. \\
+
+  Permission denied (secrets)
+    & Run \texttt{python -m core.run init-identity} to generate keys.
+      Ensure \texttt{secrets/} directory exists and is writable. \\
+
+  McEliece keygen fails
+    & McEliece requires significant memory.  On 2\,GB Pi models,
+      keygen for L5 may OOM.  Use 4\,GB+ models. \\
+\end{longtable}
+
+\subsection{Diagnostic Commands}
+
+\begin{lstlisting}[style=terminal, caption={Useful diagnostic commands.}]
+# Check registered suites
+python tools/dump_suites.py
+
+# Dump current configuration
+python tools/dump_config.py
+
+# Network diagnostics
+python tools/network_diag.py
+
+# Verify metrics output
+python verify_metrics_output.py <json_file>
+
+# MAVLink packet sniffer
+python tools/mavsniff.py --port 14550
+\end{lstlisting}
+
+% ============================================================
+\section{Production Hardening Checklist}
+
+Before deploying to a real drone in the field:
+
+\begin{enumerate}
+  \item[\ding{51}] Set a strong \texttt{DRONE\_PSK} in \texttt{.denv}
+        (32~bytes hex-encoded).
+  \item[\ding{51}] Restrict \texttt{secrets/} permissions
+        (\texttt{chmod 700}).
+  \item[\ding{51}] Enable firewall on both drone and GCS.
+  \item[\ding{51}] Use \texttt{.local} overrides for site-specific
+        IP addresses (never commit real IPs).
+  \item[\ding{51}] Set \texttt{mission\_criticality} to \texttt{"high"}
+        in \texttt{settings.json}.
+  \item[\ding{51}] Verify clock synchronisation (NTP or Chronos).
+  \item[\ding{51}] Run \texttt{test\_simple\_loop.py} end-to-end
+        before flight.
+  \item[\ding{51}] Verify power sensor readings with
+        \texttt{tools/ina219\_read.py}.
+  \item[\ding{51}] Check CPU temperature:
+        \texttt{vcgencmd measure\_temp} (should be $<$70\textdegree C).
+  \item[\ding{51}] Disable debug logging
+        (\texttt{LOG\_LEVEL=WARNING}).
+\end{enumerate}
+
+% ============================================================
+\section{Chapter Summary}
+
+This chapter provided a complete operational guide covering:
+
+\begin{itemize}
+  \item \textbf{Hardware requirements} for both drone (RPi~4/5 with
+        INA219 and Pixhawk) and GCS (Windows/Linux workstation).
+  \item \textbf{Software installation} including Python virtual
+        environments, liboqs compilation from source on ARM, and
+        dashboard dependencies.
+  \item \textbf{Network configuration} with LAN and Tailscale dual-path
+        architecture, port allocation, and firewall rules.
+  \item \textbf{Environment files} (\texttt{.denv}, \texttt{.genv},
+        \texttt{settings.json}) for site-specific configuration.
+  \item \textbf{Key generation} for GCS identity and per-suite KEM keys.
+  \item \textbf{Launch procedures} for manual single-suite, automated
+        multi-suite scheduling, and full benchmark runs.
+  \item \textbf{Troubleshooting} for the most common deployment issues.
+  \item \textbf{Production hardening} checklist for real-world
+        deployment.
+\end{itemize}

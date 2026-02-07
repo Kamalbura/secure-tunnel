@@ -551,6 +551,8 @@ def _perform_handshake(
                             conn.close()
                         except OSError:
                             pass
+            finally:
+                pass
         finally:
             server_sock.close()
 

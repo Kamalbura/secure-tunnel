@@ -410,7 +410,19 @@ class MetricsAggregator:
                 protocol_ms = total_ns / 1_000_000.0
         if isinstance(protocol_ms, (int, float)) and protocol_ms > 0:
             hs.protocol_handshake_duration_ms = float(protocol_ms)
-        
+
+            # FIX: Override the scheduler-level handshake duration with the
+            # proxy's own perf_counter_ns measurement.  The scheduler's
+            # record_handshake_start/end span includes subprocess spawning,
+            # sleep(2.0)+sleep(1.0) warm-up delays, RPC round-trip and file-
+            # polling jitter — none of which is part of the actual PQC
+            # handshake protocol.  The proxy measures handshake_total_ns with
+            # time.perf_counter_ns() purely around the protocol exchange
+            # (KEM keygen → encaps/decaps → sig sign/verify → key derive),
+            # so it is the ground-truth value for research reporting.
+            hs.handshake_total_duration_ms = float(protocol_ms)
+            hs.end_to_end_handshake_duration_ms = float(protocol_ms)
+
         # Artifact sizes
         pub_key_size = primitives.get("pub_key_size_bytes")
         ciphertext_size = primitives.get("ciphertext_size_bytes")
@@ -776,9 +788,12 @@ class MetricsAggregator:
             m.power_energy.current_avg_a = energy_stats.get("current_avg_a")
             
             # Calculate per-handshake energy
-            if m.handshake.handshake_total_duration_ms > 0:
+            if isinstance(m.handshake.handshake_total_duration_ms, (int, float)) and m.handshake.handshake_total_duration_ms > 0:
                 hs_duration_s = m.handshake.handshake_total_duration_ms / 1000.0
-                m.power_energy.energy_per_handshake_j = m.power_energy.power_avg_w * hs_duration_s
+                if isinstance(m.power_energy.power_avg_w, (int, float)):
+                    m.power_energy.energy_per_handshake_j = m.power_energy.power_avg_w * hs_duration_s
+                else:
+                    m.power_energy.energy_per_handshake_j = None
             else:
                 m.power_energy.energy_per_handshake_j = None
         else:

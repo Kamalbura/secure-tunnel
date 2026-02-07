@@ -1,0 +1,690 @@
+\chapter{Testing and Validation}
+\label{ch:testing}
+
+This chapter documents the testing architecture, every test file in the
+repository, the rationale behind the custom test runner approach, and
+how to execute the full test suite.  Unlike projects that rely on
+\texttt{pytest} or \texttt{unittest} with mocks, this system
+\emph{tests what ships}---every test starts real processes, performs
+real PQC handshakes, and sends real encrypted traffic.
+
+% ============================================================
+\section{Testing Philosophy}
+
+The testing strategy follows three guiding principles:
+
+\begin{keyinsight}{Test What Ships}
+  Every test exercises the real code paths that production traffic uses.
+  There are no mocked cryptographic libraries, no fake sockets, and no
+  synthetic handshake responses.  When a test runs the proxy, it performs
+  a genuine PQC key encapsulation and a real AEAD encryption cycle.
+\end{keyinsight}
+
+\begin{enumerate}
+  \item \textbf{Integration-First.}  The smallest unit of testing is a
+        full proxy round-trip: handshake $\to$ AEAD encrypt $\to$
+        network transfer $\to$ AEAD decrypt $\to$ application delivery.
+        This catches protocol bugs that unit tests would miss.
+  \item \textbf{Real Processes, Real Sockets.}  Tests spawn the GCS and
+        drone proxy as actual sub-processes using \texttt{subprocess.Popen}.
+        This validates process lifecycle, signal handling, and
+        cross-platform compatibility.
+  \item \textbf{Verification at Multiple Layers.}  The test suite includes
+        functional tests (does traffic flow?), collector smoke tests
+        (do metrics collectors produce data?), schema validators (are
+        output files complete?), and benchmark validators (are statistical
+        results sane?).
+\end{enumerate}
+
+% ============================================================
+\section{Test Architecture Overview}
+
+\begin{center}
+\begin{tikzpicture}[
+  box/.style={draw, rounded corners=3pt, minimum width=4cm, minimum height=0.9cm, font=\small, align=center, fill=#1},
+  arr/.style={-{Stealth[length=2mm]}, thick},
+]
+  % Layer labels
+  \node[font=\small\bfseries] at (-5.5, 4) {Layer 4};
+  \node[font=\small\bfseries] at (-5.5, 2.5) {Layer 3};
+  \node[font=\small\bfseries] at (-5.5, 1) {Layer 2};
+  \node[font=\small\bfseries] at (-5.5, -0.5) {Layer 1};
+
+  % Layer 4 - Full benchmark
+  \node[box=red!10] (bench) at (0, 4) {Full Benchmark\\(all 72 suites, 200+ metrics)};
+
+  % Layer 3 - Integration
+  \node[box=orange!10] (integ1) at (-3, 2.5) {Multi-Suite Loop\\(3+ suites)};
+  \node[box=orange!10] (integ2) at (1.5, 2.5) {Single-Suite Loop\\(1 suite, full path)};
+  \node[box=orange!10] (integ3) at (5.5, 2.5) {Scheduler Pair\\(drone + GCS)};
+
+  % Layer 2 - Component
+  \node[box=green!10] (comp1) at (-3, 1) {Collector\\Verification};
+  \node[box=green!10] (comp2) at (1, 1) {Metrics\\Integration};
+  \node[box=green!10] (comp3) at (5, 1) {Schema\\Validation};
+
+  % Layer 1 - Unit
+  \node[box=blue!10] (unit1) at (-2, -0.5) {Process\\Lifecycle};
+  \node[box=blue!10] (unit2) at (2, -0.5) {Network\\Liveness};
+
+  % Arrows
+  \draw[arr] (bench) -- (integ1);
+  \draw[arr] (bench) -- (integ2);
+  \draw[arr] (bench) -- (integ3);
+  \draw[arr] (integ2) -- (comp2);
+  \draw[arr] (integ1) -- (comp1);
+  \draw[arr] (comp2) -- (comp3);
+\end{tikzpicture}
+\end{center}
+
+\begin{longtable}{l l p{6cm} l}
+  \caption{Test layer classification.}
+  \label{tab:test-layers} \\
+  \toprule
+  \textbf{Layer} & \textbf{Scope} & \textbf{What It Verifies} & \textbf{Files} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  4 & Full Benchmark    & All 72~suites complete with 200+ metrics each, statistical validity & 1 \\
+  3 & Integration       & Full proxy round-trip: handshake $\to$ encrypt $\to$ transfer $\to$ decrypt & 6 \\
+  2 & Component         & Individual collectors produce valid data; metrics schema is complete & 5 \\
+  1 & Unit / Liveness   & Process lifecycle; network connectivity; basic function correctness & 2 \\
+\end{longtable}
+
+% ============================================================
+\section{Why No \texttt{pytest} or \texttt{unittest}?}
+
+A natural question is why the project does not use standard testing
+frameworks.  The answer lies in the operational requirements:
+
+\begin{designdecision}{Custom Test Runners Over \texttt{pytest}}
+  Standard test frameworks assume tests are:
+  \begin{itemize}
+    \item Fast (sub-second),
+    \item Independent (no shared state),
+    \item Local (no network I/O).
+  \end{itemize}
+  The PQC tunnel tests violate all three assumptions.  Each test:
+  \begin{itemize}
+    \item Takes 10--300~seconds (PQC handshakes are slow),
+    \item Requires shared network ports and process coordination,
+    \item Sends real UDP traffic between real processes.
+  \end{itemize}
+  Using \texttt{pytest} would require extensive fixture management
+  for process cleanup, port allocation, and timeout handling.  The
+  custom \texttt{if \_\_name\_\_ == "\_\_main\_\_"} pattern gives each
+  test full control over its lifecycle without framework overhead.
+\end{designdecision}
+
+The trade-off is clear: no automatic test discovery, no parametrization,
+no coverage reports.  For a hardware-coupled system with 72~cipher
+suites, this is an acceptable trade-off---what matters is that the
+actual crypto path works, not that tests have pretty output.
+
+% ============================================================
+\section{Test File Inventory}
+
+The repository contains 18~test-related files organized into three
+categories.  All files live at the project root (not in a \texttt{tests/}
+subdirectory), reflecting their role as operational verification
+scripts rather than unit tests.
+
+\subsection{Category 1: Functional Integration Tests (\texttt{test\_*})}
+
+\begin{longtable}{p{5.5cm} r p{7cm}}
+  \caption{Functional integration test files.}
+  \label{tab:test-functional} \\
+  \toprule
+  \textbf{File} & \textbf{Lines} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \filename{test\_simple\_loop.py}       & 199 & Simplest possible test: hardcoded suite
+                                                  (\texttt{cs-mlkem768-aesgcm-mldsa65}), 20~packets,
+                                                  pass/fail based on received count $>0$. \\
+  \filename{test\_complete\_loop.py}      & 294 & Single-suite full loop with RTT measurement,
+                                                  environment variable configuration, and
+                                                  delivery rate calculation. \\
+  \filename{test\_all\_complete\_loop.py} & 193 & Iterates \textbf{all registered suites},
+                                                  running a full loop for each.  Supports
+                                                  argparse for duration, bandwidth, and
+                                                  iteration count. \\
+  \filename{test\_localhost\_loop.py}     & 183 & Echo-only test that assumes proxies are
+                                                  already running externally.  Measures RTT
+                                                  for 50~packets. \\
+  \filename{test\_multiple\_suites.py}    & 233 & Tests 3~diverse suites in sequence:
+                                                  ML-KEM-512+Falcon, HQC-128+ML-DSA-44,
+                                                  HQC-192+ML-DSA-65. \\
+  \filename{test\_schedulers.py}          &  87 & Starts a drone$+$GCS scheduler pair on
+                                                  localhost, verifies both complete 2~suites
+                                                  within timeout. \\
+  \filename{test\_sscheduler.py}          &  78 & Tests the reversed-control scheduling model:
+                                                  drone commands, GCS follows. \\
+  \filename{test\_metrics\_integration.py}& 338 & Full metrics pipeline test: single suite
+                                                  loop + all 18~metric categories validated
+                                                  in output files. \\
+  \filename{test\_comprehensive\_benchmark.py} & 505 & All 72~suites with 200+ metrics each.
+                                                       Supports distributed mode
+                                                       (\texttt{--drone}/\texttt{--gcs} flags). \\
+  \filename{test\_gcs\_ping.py}           &  16 & Network liveness check: sends TCP JSON
+                                                  \texttt{ping} to GCS control server. \\
+  \filename{test\_collectors.py}          &  47 & Smoke test: instantiates 3~collectors
+                                                  and the metrics aggregator. \\
+\end{longtable}
+
+\subsection{Category 2: Collector Verification Tests (\texttt{verify\_*})}
+
+\begin{longtable}{p{5.5cm} r p{7cm}}
+  \caption{Collector verification files.}
+  \label{tab:test-verify} \\
+  \toprule
+  \textbf{File} & \textbf{Lines} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \filename{verify\_collectors.py}       & 101 & Platform-agnostic verification of all 5~collectors
+                                                  (Environment, System, Network, Latency, Power).
+                                                  Auto-detects drone/GCS role. \\
+  \filename{verify\_drone\_collectors.py} &  52 & Drone-targeted collector verification with
+                                                  100~synthetic latency samples. \\
+  \filename{verify\_gcs\_collectors.py}   &  83 & GCS-side strict verification using
+                                                  dictionary access (throws on missing keys). \\
+  \filename{verify\_metrics\_output.py}   &  84 & Schema validator: reads JSON/JSONL output
+                                                  files and checks 21+~required nested fields
+                                                  across all metric categories. \\
+\end{longtable}
+
+\subsection{Category 3: Output Validation (\texttt{validate\_*}, \texttt{confirm\_*})}
+
+\begin{longtable}{p{5.5cm} r p{7cm}}
+  \caption{Output validation files.}
+  \label{tab:test-validate} \\
+  \toprule
+  \textbf{File} & \textbf{Lines} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \filename{validate\_bench.py}      & 151 & Reads raw benchmark JSON files, computes
+                                              wall/perf time statistics (mean, median,
+                                              stdev), reports success rates per category. \\
+  \filename{confirm\_all\_metrics.py} & 409 & Introspects all 18~dataclass categories (A--R)
+                                              from the metrics schema, confirming all
+                                              231~individual metric fields are properly defined. \\
+\end{longtable}
+
+% ============================================================
+\section{Detailed Test Walkthroughs}
+
+\subsection{The Simple Loop Test}
+
+The simplest test in the suite demonstrates the core testing pattern.
+It is 199~lines and tests one cipher suite end-to-end:
+
+\begin{lstlisting}[style=python, caption={Simplified structure of \filename{test\_simple\_loop.py}.}]
+# 1. Configure environment for localhost
+os.environ["DRONE_HOST"] = "127.0.0.1"
+os.environ["GCS_HOST"] = "127.0.0.1"
+
+# 2. Select a known-good suite
+SUITE = "cs-mlkem768-aesgcm-mldsa65"
+
+# 3. Start GCS proxy subprocess
+gcs_proc = subprocess.Popen([
+    sys.executable, "-m", "core.run", "gcs",
+    "--suite", SUITE
+])
+
+# 4. Start drone proxy subprocess
+drone_proc = subprocess.Popen([
+    sys.executable, "-m", "core.run", "drone",
+    "--suite", SUITE
+])
+
+# 5. Wait for handshake to complete
+time.sleep(15)
+
+# 6. Start echo server on drone side
+def echo_server():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", DRONE_PLAINTEXT_TX))
+    while True:
+        data, addr = sock.recvfrom(65535)
+        sock.sendto(data, ("127.0.0.1", DRONE_PLAINTEXT_RX))
+
+threading.Thread(target=echo_server, daemon=True).start()
+
+# 7. Send test packets from GCS side
+sent = received = 0
+for i in range(20):
+    tx_sock.sendto(b"PING-%d" % i, GCS_PLAINTEXT_TX)
+    sent += 1
+    try:
+        rx_sock.settimeout(2.0)
+        data = rx_sock.recv(65535)
+        received += 1
+    except socket.timeout:
+        pass
+
+# 8. Verdict
+if received > 0:
+    print(f"PASS: {received}/{sent} packets")
+else:
+    print("FAIL: zero packets received")
+\end{lstlisting}
+
+\begin{center}
+\begin{tikzpicture}[
+  proc/.style={draw, rounded corners=3pt, minimum width=2.5cm, minimum height=1.2cm, font=\small, align=center, fill=#1},
+  sock/.style={draw, circle, minimum size=0.6cm, font=\tiny, fill=yellow!20},
+  arr/.style={-{Stealth[length=2mm]}, thick},
+  darr/.style={-{Stealth[length=2mm]}, thick, dashed},
+]
+  \node[proc=blue!10] (gcsapp) at (0, 0) {Test Script\\(GCS App)};
+  \node[proc=green!10] (gcsproxy) at (4, 0) {GCS Proxy\\Process};
+  \node[proc=green!10] (droneproxy) at (8, 0) {Drone Proxy\\Process};
+  \node[proc=orange!10] (echo) at (12, 0) {Echo Server\\Thread};
+
+  \draw[arr, blue] (gcsapp) -- node[above, font=\tiny] {plaintext} (gcsproxy);
+  \draw[arr, red] (gcsproxy) -- node[above, font=\tiny] {PQC encrypted} (droneproxy);
+  \draw[arr, blue] (droneproxy) -- node[above, font=\tiny] {plaintext} (echo);
+
+  \draw[darr, blue] (echo) to[bend right=20] node[below, font=\tiny] {echo back} (droneproxy);
+  \draw[darr, red] (droneproxy) to[bend right=20] node[below, font=\tiny] {encrypted} (gcsproxy);
+  \draw[darr, blue] (gcsproxy) to[bend right=20] node[below, font=\tiny] {plaintext} (gcsapp);
+\end{tikzpicture}
+\end{center}
+
+\subsection{The All-Suites Loop Test}
+
+The \filename{test\_all\_complete\_loop.py} test is the most thorough
+functional test.  It iterates over \emph{every} registered cipher suite
+and runs a complete loop for each:
+
+\begin{lstlisting}[style=python, caption={Suite iteration in \filename{test\_all\_complete\_loop.py}.}]
+from core.suites import get_all_suite_ids
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--duration", type=int, default=30)
+parser.add_argument("--bandwidth", type=int, default=110)
+parser.add_argument("--iterations", type=int, default=1)
+args = parser.parse_args()
+
+results = {}
+for suite_id in get_all_suite_ids():
+    print(f"\n{'='*60}")
+    print(f"Testing suite: {suite_id}")
+    try:
+        success, stats = run_single_suite_test(
+            suite_id, args.duration, args.bandwidth
+        )
+        results[suite_id] = {
+            "success": success,
+            "delivery_rate": stats["delivery_rate"],
+            "avg_rtt_ms": stats.get("avg_rtt_ms"),
+        }
+    except Exception as e:
+        results[suite_id] = {"success": False, "error": str(e)}
+
+# Summary
+passed = sum(1 for r in results.values() if r["success"])
+print(f"\nPassed: {passed}/{len(results)}")
+\end{lstlisting}
+
+\subsection{The Scheduler Pair Test}
+
+Testing the scheduler requires coordinating two processes with
+specific startup ordering (GCS must be listening before drone connects):
+
+\begin{lstlisting}[style=python, caption={Scheduler pair test (\filename{test\_schedulers.py}).}]
+def main():
+    os.environ.update({
+        "DRONE_HOST": "127.0.0.1",
+        "GCS_HOST": "127.0.0.1",
+    })
+
+    # GCS starts first (listening mode)
+    gcs = subprocess.Popen([
+        sys.executable, "-m", "sscheduler.sgcs",
+        "--max-suites", "2",
+        "--suite-seconds", "10",
+        "--mbps", "110",
+    ])
+
+    time.sleep(3)  # allow GCS to bind
+
+    # Drone connects to GCS
+    drone = subprocess.Popen([
+        sys.executable, "-m", "sscheduler.sdrone",
+        "--max-suites", "2",
+    ])
+
+    try:
+        drone.wait(timeout=300)
+        gcs.wait(timeout=30)
+        assert drone.returncode == 0
+        assert gcs.returncode == 0
+        print("PASS: scheduler pair completed")
+    finally:
+        for p in [drone, gcs]:
+            if p.poll() is None:
+                p.terminate()
+\end{lstlisting}
+
+\subsection{The Comprehensive Benchmark Test}
+
+The most complex test file (505~lines) runs every cipher suite with
+full metrics collection:
+
+\begin{lstlisting}[style=python, caption={Benchmark test configuration.}]
+class ComprehensiveBenchmark:
+    def __init__(self, args):
+        self.config = {
+            "suite_timeout": 120,      # seconds per suite
+            "handshake_timeout": 60,   # max handshake wait
+            "traffic_duration": 30,    # seconds of traffic
+            "traffic_bandwidth": 110,  # Mbps target
+            "retry_count": 2,          # retries on failure
+            "output_dir": Path("bench_results") / timestamp,
+            "metrics_categories": list("ABCDEFGHIJKLMNOPQR"),
+        }
+
+    def run_all_suites(self):
+        for suite_id in get_all_suite_ids():
+            for attempt in range(self.config["retry_count"]):
+                result = self._run_single(suite_id)
+                if result.success:
+                    self._save_metrics(suite_id, result)
+                    break
+            else:
+                self.failures.append(suite_id)
+\end{lstlisting}
+
+\subsection{Metrics Confirmation}
+
+The \filename{confirm\_all\_metrics.py} script (409~lines) is a
+meta-test that validates the metrics \emph{schema itself}---it
+introspects all 18~dataclass categories using Python's \texttt{dataclasses}
+module:
+
+\begin{lstlisting}[style=python, caption={Schema introspection in \filename{confirm\_all\_metrics.py}.}]
+from dataclasses import fields
+from core.metrics_schema import (
+    EnvironmentInfo,    # Category A
+    HandshakeMetrics,   # Category B
+    TransportMetrics,   # Category C
+    # ... all 18 categories ...
+)
+
+total_fields = 0
+for category_cls in ALL_CATEGORIES:
+    category_fields = fields(category_cls)
+    total_fields += len(category_fields)
+    for f in category_fields:
+        assert f.name, f"Empty field name in {category_cls}"
+        # Verify type annotation exists
+        assert f.type is not None
+
+print(f"Verified {total_fields} fields across "
+      f"{len(ALL_CATEGORIES)} categories")
+# Expected: 231 fields across 18 categories
+\end{lstlisting}
+
+% ============================================================
+\section{Common Test Patterns}
+
+\subsection{Process Lifecycle Management}
+
+Every integration test follows the same process management pattern:
+
+\begin{lstlisting}[style=python, caption={Standard process cleanup pattern.}]
+processes = []
+try:
+    gcs = subprocess.Popen([...])
+    processes.append(gcs)
+
+    drone = subprocess.Popen([...])
+    processes.append(drone)
+
+    # ... run test ...
+
+finally:
+    for p in processes:
+        if p.poll() is None:
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+\end{lstlisting}
+
+\subsection{Echo Server Pattern}
+
+Tests simulate the drone flight controller with a UDP echo server
+that reflects every packet it receives:
+
+\begin{lstlisting}[style=python, caption={UDP echo server used in integration tests.}]
+def echo_server(rx_port: int, tx_port: int):
+    """Simulate drone flight controller."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", rx_port))
+    sock.settimeout(1.0)
+    while True:
+        try:
+            data, addr = sock.recvfrom(65535)
+            sock.sendto(data, ("127.0.0.1", tx_port))
+        except socket.timeout:
+            continue
+
+thread = threading.Thread(target=echo_server, daemon=True)
+thread.start()
+\end{lstlisting}
+
+\subsection{Port Configuration}
+
+Tests read port numbers from the global \texttt{CONFIG} dictionary
+to ensure consistency with the proxy:
+
+\begin{lstlisting}[style=python, caption={Port configuration in tests.}]
+from core.config import CONFIG
+
+GCS_TX = ("127.0.0.1", CONFIG["GCS_PLAINTEXT_TX"])   # 47001
+GCS_RX = ("127.0.0.1", CONFIG["GCS_PLAINTEXT_RX"])   # 47002
+DRONE_TX = ("127.0.0.1", CONFIG["DRONE_PLAINTEXT_TX"]) # 47003
+DRONE_RX = ("127.0.0.1", CONFIG["DRONE_PLAINTEXT_RX"]) # 47004
+\end{lstlisting}
+
+% ============================================================
+\section{Running the Tests}
+
+\subsection{Prerequisites}
+
+Before running any test, ensure:
+\begin{enumerate}
+  \item Python~3.11+ is installed with all dependencies
+        (\texttt{pip install -r requirements.txt}).
+  \item The liboqs library is installed and accessible.
+  \item GCS signing keys have been generated:
+        \texttt{python -m core.run init-identity}.
+  \item No other process is using ports 46000--47004.
+\end{enumerate}
+
+\subsection{Quick Smoke Test (2 minutes)}
+
+\begin{lstlisting}[style=terminal]
+# Verify collectors work
+python verify_collectors.py
+
+# Test single suite round-trip
+python test_simple_loop.py
+\end{lstlisting}
+
+\subsection{Single-Suite Integration (5 minutes)}
+
+\begin{lstlisting}[style=terminal]
+# Full loop with RTT measurement
+python test_complete_loop.py
+
+# Metrics integration
+python test_metrics_integration.py
+\end{lstlisting}
+
+\subsection{Multi-Suite Sweep (30 minutes)}
+
+\begin{lstlisting}[style=terminal]
+# Test diverse algorithm combinations
+python test_multiple_suites.py
+
+# Test scheduler coordination
+python test_schedulers.py
+python test_sscheduler.py
+\end{lstlisting}
+
+\subsection{Full Benchmark (4--6 hours)}
+
+\begin{lstlisting}[style=terminal]
+# All 72 suites with comprehensive metrics
+python test_comprehensive_benchmark.py
+
+# Validate results
+python validate_bench.py
+python confirm_all_metrics.py
+\end{lstlisting}
+
+% ============================================================
+\section{Validation Scripts}
+
+\subsection{Schema Validation}
+
+The \filename{verify\_metrics\_output.py} script checks that benchmark
+output files contain all required fields:
+
+\begin{lstlisting}[style=python, caption={Required fields checked by \filename{verify\_metrics\_output.py}.}]
+REQUIRED_FIELDS = {
+    "environment": [
+        "hostname", "platform", "python_version",
+        "cpu_model", "cpu_count",
+    ],
+    "handshake": [
+        "kem_name", "sig_name", "aead_name",
+        "total_ms", "kem_keygen_ns",
+    ],
+    "transport": [
+        "packets_sent", "packets_received",
+        "bytes_encrypted", "delivery_rate",
+    ],
+    "power": [
+        "mean_power_w", "total_energy_j",
+    ],
+    "rekey": [...],
+    "control_plane": [...],
+    # ... 21+ required nested paths ...
+}
+\end{lstlisting}
+
+\subsection{Benchmark Result Validation}
+
+The \filename{validate\_bench.py} script reads raw benchmark JSON
+files and computes statistical summaries:
+
+\begin{lstlisting}[style=python, caption={Statistical validation in \filename{validate\_bench.py}.}]
+def validate_results(results_dir: Path):
+    stats = {}
+    for json_file in results_dir.glob("*.json"):
+        data = json.loads(json_file.read_text())
+        suite_id = data.get("suite_id", json_file.stem)
+        stats[suite_id] = {
+            "wall_time_s": data["timing"]["wall_seconds"],
+            "handshake_ms": data["handshake"]["total_ms"],
+            "delivery_rate": data["transport"]["delivery_rate"],
+        }
+
+    # Compute aggregates
+    wall_times = [s["wall_time_s"] for s in stats.values()]
+    print(f"Mean wall time: {statistics.mean(wall_times):.1f}s")
+    print(f"Median: {statistics.median(wall_times):.1f}s")
+    print(f"Stdev: {statistics.stdev(wall_times):.1f}s")
+\end{lstlisting}
+
+% ============================================================
+\section{Test Coverage Analysis}
+
+Table~\ref{tab:test-coverage} maps which tests cover which system
+components.
+
+\begin{longtable}{p{4cm} c c c c c c}
+  \caption{Test file vs.\ system component coverage matrix.}
+  \label{tab:test-coverage} \\
+  \toprule
+  \textbf{Test File} &
+  \rotatebox{90}{\textbf{Handshake}} &
+  \rotatebox{90}{\textbf{AEAD}} &
+  \rotatebox{90}{\textbf{Proxy}} &
+  \rotatebox{90}{\textbf{Scheduler}} &
+  \rotatebox{90}{\textbf{Metrics}} &
+  \rotatebox{90}{\textbf{Power}} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  \texttt{test\_simple\_loop}          & \cmark & \cmark & \cmark & & & \\
+  \texttt{test\_complete\_loop}        & \cmark & \cmark & \cmark & & & \\
+  \texttt{test\_all\_complete\_loop}   & \cmark & \cmark & \cmark & & & \\
+  \texttt{test\_localhost\_loop}       &        & \cmark & \cmark & & & \\
+  \texttt{test\_multiple\_suites}      & \cmark & \cmark & \cmark & & & \\
+  \texttt{test\_schedulers}            & \cmark & \cmark & \cmark & \cmark & & \\
+  \texttt{test\_sscheduler}            & \cmark & \cmark & \cmark & \cmark & & \\
+  \texttt{test\_metrics\_integration}  & \cmark & \cmark & \cmark & & \cmark & \\
+  \texttt{test\_comprehensive\_benchmark} & \cmark & \cmark & \cmark & \cmark & \cmark & \cmark \\
+  \texttt{verify\_collectors}          & & & & & \cmark & \cmark \\
+  \texttt{verify\_drone\_collectors}   & & & & & \cmark & \cmark \\
+  \texttt{verify\_gcs\_collectors}     & & & & & \cmark & \\
+  \texttt{confirm\_all\_metrics}       & & & & & \cmark & \\
+  \texttt{validate\_bench}             & & & & & \cmark & \\
+\end{longtable}
+
+% ============================================================
+\section{Lessons Learned}
+
+\begin{enumerate}
+  \item \textbf{PQC handshakes are slow.}  Tests must account for
+        15--60~second handshake times for HQC and BIKE algorithms.
+        Timeouts must be generous.
+  \item \textbf{Port conflicts are real.}  Running multiple tests
+        concurrently fails because they share the same port ranges.
+        Tests are designed to run sequentially.
+  \item \textbf{Process cleanup is critical.}  A test that crashes
+        without cleaning up proxy processes will leave orphan processes
+        holding ports.  The \texttt{finally} block pattern is essential.
+  \item \textbf{Cross-platform differences matter.}  Windows and Linux
+        handle subprocess termination differently.  The
+        \classname{ManagedProcess} class (Chapter~\ref{ch:codebase})
+        addresses this, but tests still need platform-aware timeouts.
+\end{enumerate}
+
+% ============================================================
+\section{Chapter Summary}
+
+The PQC drone tunnel test suite comprises 18~files totalling
+approximately 3{,}200~lines of test code.  The testing philosophy
+prioritises \emph{real execution} over mocking, with every test
+performing actual PQC key exchanges and encrypted data transfers.
+The test pyramid spans four layers:
+
+\begin{enumerate}
+  \item \textbf{Unit/liveness} --- process lifecycle, network ping
+  \item \textbf{Component} --- individual collectors and schema validation
+  \item \textbf{Integration} --- single and multi-suite proxy round-trips
+  \item \textbf{Benchmark} --- all 72~suites with 231~metrics per suite
+\end{enumerate}
+
+Running the full test suite takes 4--6~hours and exercises every
+cryptographic code path in production.

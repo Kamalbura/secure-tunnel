@@ -310,7 +310,7 @@ The return path (GCS commands to drone) follows the exact inverse: plaintext fro
   node distance=1.2cm and 2.5cm,
   box/.style={draw, rounded corners, minimum width=2.5cm, minimum height=0.8cm, align=center, font=\small},
   arrow/.style={-{Stealth[length=6pt]}, thick},
-  label/.style={font=\scriptsize\itshape, text=gray}
+  label/.style={font=\scriptsize\itshape, text=gray, align=center}
 ]
   % Drone side
   \node[box, fill=blue!10] (pixhawk) {Pixhawk};
@@ -331,7 +331,7 @@ The return path (GCS commands to drone) follows the exact inverse: plaintext fro
   \draw[arrow] (mavproxy-g) -- node[right, label] {} (mp);
   
   % Encrypted link
-  \draw[arrow, BrickRed, very thick] (proxy-d) -- node[below, font=\small\bfseries, text=BrickRed] {Encrypted UDP\\WiFi LAN} (proxy-g);
+  \draw[arrow, BrickRed, very thick] (proxy-d) -- node[below, font=\small\bfseries, text=BrickRed, align=center] {Encrypted UDP\\WiFi LAN} (proxy-g);
   
   % Handshake
   \draw[arrow, dashed, ForestGreen] ([yshift=-5pt]proxy-d.east) -- node[above, font=\scriptsize, text=ForestGreen] {TCP Handshake (PQC)} ([yshift=-5pt]proxy-g.west);

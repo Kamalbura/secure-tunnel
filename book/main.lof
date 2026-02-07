@@ -1,28 +1,56 @@
 \babel@toc {english}{}\relax 
 \addvspace {10\p@ }
+\contentsline {figure}{\numberline {1.1}{\ignorespaces System overview: the PQC proxy sits transparently between applications and the network. All traffic crossing the WiFi link is post-quantum encrypted.}}{5}{figure.caption.12}%
 \addvspace {10\p@ }
-\contentsline {figure}{\numberline {2.1}{\ignorespaces Data flow through the PQC tunnel system}}{16}{figure.caption.15}%
-\addvspace {10\p@ }
-\addvspace {10\p@ }
-\addvspace {10\p@ }
-\addvspace {10\p@ }
-\contentsline {figure}{\numberline {6.1}{\ignorespaces Physical hardware topology of the secure tunnel system.}}{48}{figure.caption.26}%
-\contentsline {figure}{\numberline {6.2}{\ignorespaces The three communication planes of the secure tunnel.}}{49}{figure.caption.28}%
-\addvspace {10\p@ }
-\contentsline {figure}{\numberline {7.1}{\ignorespaces The two-message PQC handshake protocol.}}{60}{figure.caption.31}%
+\contentsline {figure}{\numberline {2.1}{\ignorespaces Data flow through the PQC tunnel system}}{16}{figure.caption.16}%
 \addvspace {10\p@ }
 \addvspace {10\p@ }
 \addvspace {10\p@ }
 \addvspace {10\p@ }
-\contentsline {figure}{\numberline {11.1}{\ignorespaces Controller--follower architecture. The drone sends commands over a plaintext TCP control channel; the encrypted tunnel carries MAVLink data.}}{88}{figure.caption.41}%
-\contentsline {figure}{\numberline {11.2}{\ignorespaces Lifecycle of the benchmark main loop. Each suite goes through activation, handshake, metric collection, and policy evaluation.}}{93}{figure.caption.44}%
+\contentsline {figure}{\numberline {6.1}{\ignorespaces Physical hardware topology of the secure tunnel system.}}{48}{figure.caption.27}%
+\contentsline {figure}{\numberline {6.2}{\ignorespaces The three communication planes of the secure tunnel.}}{49}{figure.caption.29}%
 \addvspace {10\p@ }
-\contentsline {figure}{\numberline {12.1}{\ignorespaces INA219 measurement topology. The sensor sits in-line between the power supply and the Pi, measuring the voltage drop across the shunt resistor.}}{106}{figure.caption.49}%
-\contentsline {figure}{\numberline {12.2}{\ignorespaces Metric flow: four drone-side collectors and the GCS aggregator merge into a single ComprehensiveSuiteMetrics object.}}{109}{figure.caption.51}%
-\addvspace {10\p@ }
-\contentsline {figure}{\numberline {13.1}{\ignorespaces Data flow from benchmark output files through the backend API, Zustand state management, React pages, and into Recharts visualisations.}}{120}{figure.caption.57}%
+\contentsline {figure}{\numberline {7.1}{\ignorespaces The two-message PQC handshake protocol.}}{60}{figure.caption.32}%
 \addvspace {10\p@ }
 \addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {11.1}{\ignorespaces Controller--follower architecture. The drone sends commands over a plaintext TCP control channel; the encrypted tunnel carries MAVLink data.}}{92}{figure.caption.42}%
+\contentsline {figure}{\numberline {11.2}{\ignorespaces Lifecycle of the benchmark main loop. Each suite goes through activation, handshake, metric collection, and policy evaluation.}}{97}{figure.caption.45}%
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {12.1}{\ignorespaces INA219 measurement topology. The sensor sits in-line between the power supply and the Pi, measuring the voltage drop across the shunt resistor.}}{110}{figure.caption.50}%
+\contentsline {figure}{\numberline {12.2}{\ignorespaces Metric flow: four drone-side collectors and the GCS aggregator merge into a single ComprehensiveSuiteMetrics object.}}{113}{figure.caption.52}%
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {13.1}{\ignorespaces Data flow from benchmark output files through the backend API, Zustand state management, React pages, and into Recharts visualisations.}}{126}{figure.caption.59}%
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {14.1}{\ignorespaces Trust boundary diagram. Green regions are trusted (localhost). The red region (WiFi LAN) is the untrusted channel secured by the PQC tunnel. The bold red arrows represent AEAD-encrypted traffic.}}{138}{figure.caption.62}%
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {15.1}{\ignorespaces Future work roadmap.}}{148}{figure.caption.65}%
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {19.1}{\ignorespaces KEM keygen time comparison (log scale).}}{205}{figure.19.1}%
+\contentsline {figure}{\numberline {19.2}{\ignorespaces Signature signing time comparison (log scale).}}{206}{figure.19.2}%
+\contentsline {figure}{\numberline {19.3}{\ignorespaces AEAD encrypt time vs.\ payload size.}}{208}{figure.19.3}%
+\contentsline {figure}{\numberline {19.4}{\ignorespaces Full handshake time by cipher suite.}}{210}{figure.19.4}%
+\contentsline {figure}{\numberline {19.5}{\ignorespaces Time--energy trade-off for PQC operations.}}{211}{figure.19.5}%
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {21.1}{\ignorespaces Research positioning: intersection of drone security, post-quantum cryptography, and embedded benchmarking.}}{241}{figure.caption.103}%
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {22.1}{\ignorespaces Handshake state machines for GCS (server) and drone (client). Green = terminal success. Red dashed = failure paths.}}{250}{figure.caption.122}%
+\contentsline {figure}{\numberline {22.2}{\ignorespaces Data-plane state machine.}}{251}{figure.caption.124}%
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {23.1}{\ignorespaces Exception class hierarchy.}}{261}{figure.caption.130}%
+\contentsline {figure}{\numberline {23.2}{\ignorespaces Cross-package dependency graph. Solid arrows = Python import. Dashed red = network (TCP/JSON) dependency.}}{292}{figure.caption.140}%
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {24.1}{\ignorespaces Trust boundaries and data flow. The red thick arrow crosses the untrusted network boundary.}}{296}{figure.caption.143}%
+\contentsline {figure}{\numberline {24.2}{\ignorespaces Attack tree: Decrypt MAVLink traffic.}}{299}{figure.caption.144}%
+\contentsline {figure}{\numberline {24.3}{\ignorespaces Attack tree: Inject malicious MAVLink commands.}}{299}{figure.caption.146}%
+\contentsline {figure}{\numberline {24.4}{\ignorespaces Attack tree: Deny service to drone.}}{300}{figure.caption.147}%
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {25.1}{\ignorespaces Pareto frontier of handshake time vs.\ security level. The dashed line connects Pareto-optimal suites.}}{320}{figure.caption.182}%
 \addvspace {10\p@ }
 \addvspace {10\p@ }
 \addvspace {10\p@ }

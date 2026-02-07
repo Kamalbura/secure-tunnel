@@ -410,6 +410,111 @@ Zustand state management, React pages, and into Recharts visualisations.}
 \end{figure}
 
 % ============================================================
+\section{Interpreting Dashboard Data}
+\label{sec:dash-interpretation}
+
+The dashboard presents raw observational data.  Misreading the data
+is easy; this section addresses the most common pitfalls.
+
+\subsection{Null Is Not Zero}
+
+Many metric fields are \texttt{Optional} (nullable).  A \texttt{null}
+value means ``not measured'' or ``not applicable,'' \textbf{not}
+``the measured value was zero.''  For example:
+
+\begin{description}
+  \item[\texttt{power\_avg\_watts = null}] means no power sensor was
+        available (e.g.\ GCS on Windows), not that the system consumed
+        zero watts.
+  \item[\texttt{one\_way\_latency\_avg\_ms = null}] means the latency
+        estimation was invalid (no \texttt{SYSTEM\_TIME} messages), not
+        that latency was zero.
+  \item[\texttt{rekey\_attempts = null}] means no rekey was attempted
+        during this suite, which is normal for single-handshake
+        benchmark intervals.
+\end{description}
+
+The dashboard's suite detail page shows a \textbf{reliability badge}
+next to each value (\textsc{verified}, \textsc{conditional},
+\textsc{deprecated}, \textsc{missing}).  Always check the badge
+before interpreting a numeric value.
+
+\subsection{Understanding FAIL Verdicts}
+
+A suite with a \textsc{fail} verdict does not necessarily indicate
+a system bug.  Common legitimate reasons include:
+
+\begin{enumerate}
+  \item \textbf{Algorithm unavailable}: The KEM or SIG algorithm
+        was not compiled into the platform's \texttt{liboqs} build.
+        The handshake fails immediately.
+  \item \textbf{Handshake timeout}: Very heavy algorithms (Classic
+        McEliece at L5, 1.3\,MB public key) may exceed the 45-second
+        timeout on slow or congested links.
+  \item \textbf{Transient network failure}: A WiFi dropout during the
+        handshake TCP exchange causes a connection reset.
+\end{enumerate}
+
+\begin{keyinsight}
+A handful of \textsc{fail} verdicts in a 72-suite run is normal,
+especially for Classic McEliece suites on constrained hardware.  If
+\textbf{all} suites fail, check basic connectivity (can the machines
+ping each other?) and key deployment (are the signing keys and PSK
+correctly installed?).
+\end{keyinsight}
+
+\subsection{Comparing Across Scenarios}
+
+The multi-run comparison page shows the same suite's metrics under
+different network conditions (baseline vs.\ DDoS).  When comparing:
+
+\begin{itemize}
+  \item \textbf{Handshake duration} should be nearly identical across
+        scenarios because the handshake uses TCP (reliable delivery).
+        A large difference suggests the DDoS traffic overwhelmed the
+        WiFi adapter.
+  \item \textbf{Packet loss ratio} is expected to increase under DDoS.
+        A ratio below 1\% under DDoS suggests the attack was
+        ineffective or improperly configured.
+  \item \textbf{Power measurements} across scenarios are only comparable
+        if the hardware setup (INA219 wiring, cooling, ambient
+        temperature) is identical between runs.
+  \item \textbf{Anomaly flags} are always computed relative to the
+        \emph{current run's} population statistics.  A suite flagged
+        as anomalous in the baseline run may be normal in a DDoS run
+        (where higher latency is expected).
+\end{itemize}
+
+\subsection{When Data Is Missing}
+
+If entire categories appear empty in the suite detail page:
+
+\begin{description}
+  \item[Category N (Power) all null:] The benchmark was run on a
+        platform without power sensing.  This is normal for
+        GCS-side records and for drone runs without INA219 hardware.
+  \item[Category I (MAVLink Drone) all null:] The benchmark was run
+        in SYNTHETIC mode (no Pixhawk).  MAVLink metrics require a
+        real flight controller.
+  \item[Category H (Latency) marked invalid:] Check
+        \texttt{latency\_invalid\_reason} in the raw JSON.  Common
+        reasons: no \texttt{SYSTEM\_TIME} messages, insufficient
+        samples, or clock sync failure.
+  \item[Category J (MAVLink GCS) mostly null:] This is by design
+        since the 2026-01-18 policy realignment (only two validation
+        fields are retained).
+\end{description}
+
+\subsection{Heatmap Colour Scale}
+
+The Suite Explorer table colours numeric cells on a
+\textbf{per-column} green-to-red gradient.  The colour indicates
+a value's position within its column's observed range, \textbf{not}
+an absolute quality judgement.  In a run where all suites have fast
+handshakes (e.g.\ ML-KEM only), the ``slowest'' ML-KEM suite
+appears red even though its absolute time may be under 20\,ms.
+
+% ============================================================
 \section{Anomaly Detection}
 \label{sec:dash-anomaly}
 

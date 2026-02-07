@@ -1,90 +1,201 @@
 \babel@toc {english}{}\relax 
 \addvspace {10\p@ }
+\contentsline {table}{\numberline {1.1}{\ignorespaces Chapter map and reading guide.}}{7}{table.1.1}%
 \addvspace {10\p@ }
-\contentsline {table}{\numberline {2.1}{\ignorespaces The TCP/IP layered model}}{10}{table.caption.12}%
-\contentsline {table}{\numberline {2.2}{\ignorespaces Key ports used by the PQC tunnel system}}{11}{table.caption.13}%
-\contentsline {table}{\numberline {2.3}{\ignorespaces UDP header structure (8 bytes total)}}{13}{table.caption.14}%
-\addvspace {10\p@ }
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {4.1}{\ignorespaces NIST security levels and their classical equivalents.}}{29}{table.caption.16}%
-\contentsline {table}{\numberline {4.2}{\ignorespaces ML-KEM parameter sets used in this system.}}{32}{table.caption.17}%
-\contentsline {table}{\numberline {4.3}{\ignorespaces Classic McEliece parameter sets used in this system.}}{33}{table.caption.18}%
-\contentsline {table}{\numberline {4.4}{\ignorespaces HQC parameter sets used in this system.}}{33}{table.caption.19}%
-\contentsline {table}{\numberline {4.5}{\ignorespaces ML-DSA parameter sets used in this system.}}{34}{table.caption.20}%
-\contentsline {table}{\numberline {4.6}{\ignorespaces Falcon parameter sets used in this system.}}{35}{table.caption.21}%
-\contentsline {table}{\numberline {4.7}{\ignorespaces SPHINCS+ parameter sets used in this system (``s'' = small/slow variant).}}{35}{table.caption.22}%
-\contentsline {table}{\numberline {4.8}{\ignorespaces Comparative overview of post-quantum algorithm families in this system.}}{37}{table.caption.23}%
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {5.1}{\ignorespaces MAVLink v2 frame structure.}}{42}{table.caption.24}%
-\contentsline {table}{\numberline {5.2}{\ignorespaces MAVLink metrics collected by the system.}}{46}{table.caption.25}%
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {6.1}{\ignorespaces Complete network port map.}}{49}{table.caption.27}%
-\contentsline {table}{\numberline {6.2}{\ignorespaces Key modules in \texttt {core/}.}}{50}{table.caption.29}%
-\contentsline {table}{\numberline {6.3}{\ignorespaces Key modules in \texttt {sscheduler/}.}}{51}{table.caption.30}%
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {7.1}{\ignorespaces Handshake timing metrics collected.}}{64}{table.caption.32}%
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {8.1}{\ignorespaces AEAD packet header fields (22 bytes total).}}{66}{table.caption.33}%
-\contentsline {table}{\numberline {8.2}{\ignorespaces Wire packet sizes for a 21-byte MAVLink message.}}{70}{table.caption.34}%
-\contentsline {table}{\numberline {8.3}{\ignorespaces Wire packet sizes for a 40-byte MAVLink message.}}{70}{table.caption.35}%
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {9.1}{\ignorespaces The four UDP sockets managed by the proxy.}}{74}{table.caption.36}%
-\contentsline {table}{\numberline {9.2}{\ignorespaces Drop reason counters in the proxy.}}{76}{table.caption.37}%
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {10.1}{\ignorespaces KEM registry entries.}}{79}{table.caption.38}%
-\contentsline {table}{\numberline {10.2}{\ignorespaces Signature registry entries.}}{80}{table.caption.39}%
-\contentsline {table}{\numberline {10.3}{\ignorespaces AEAD registry entries.}}{80}{table.caption.40}%
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {11.1}{\ignorespaces TCP control channel commands}}{88}{table.caption.42}%
-\contentsline {table}{\numberline {11.2}{\ignorespaces SuiteMetrics fields collected by BenchmarkPolicy}}{91}{table.caption.43}%
-\contentsline {table}{\numberline {11.3}{\ignorespaces GCS server internal components}}{95}{table.caption.45}%
-\contentsline {table}{\numberline {11.4}{\ignorespaces Decision hierarchy of TelemetryAwarePolicyV2}}{96}{table.caption.46}%
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {12.1}{\ignorespaces The 18-category metrics schema}}{102}{table.caption.47}%
-\contentsline {table}{\numberline {12.2}{\ignorespaces MAVLink collector metric groups}}{105}{table.caption.48}%
-\contentsline {table}{\numberline {12.3}{\ignorespaces INA219 ADC profiles}}{106}{table.caption.50}%
-\contentsline {table}{\numberline {12.4}{\ignorespaces Output file formats}}{111}{table.caption.52}%
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {13.1}{\ignorespaces Dashboard technology stack}}{113}{table.caption.53}%
-\contentsline {table}{\numberline {13.2}{\ignorespaces Scenario folder mapping}}{114}{table.caption.54}%
-\contentsline {table}{\numberline {13.3}{\ignorespaces Dashboard API endpoints}}{115}{table.caption.55}%
-\contentsline {table}{\numberline {13.4}{\ignorespaces Dashboard navigation structure}}{116}{table.caption.56}%
-\addvspace {10\p@ }
-\contentsline {table}{\numberline {14.1}{\ignorespaces Representative handshake times by NIST level (Raspberry Pi~5)}}{125}{table.caption.58}%
-\contentsline {table}{\numberline {14.2}{\ignorespaces AEAD algorithm trade-offs}}{126}{table.caption.59}%
-\contentsline {table}{\numberline {14.3}{\ignorespaces Platform comparison}}{129}{table.caption.60}%
+\contentsline {table}{\numberline {2.1}{\ignorespaces The TCP/IP layered model}}{10}{table.caption.13}%
+\contentsline {table}{\numberline {2.2}{\ignorespaces Key ports used by the PQC tunnel system}}{11}{table.caption.14}%
+\contentsline {table}{\numberline {2.3}{\ignorespaces UDP header structure (8 bytes total)}}{13}{table.caption.15}%
 \addvspace {10\p@ }
 \addvspace {10\p@ }
-\contentsline {table}{\numberline {A.1}{\ignorespaces Handshake and data-plane port configuration keys.}}{137}{table.A.1}%
-\contentsline {table}{\numberline {A.2}{\ignorespaces Host address configuration keys.}}{138}{table.A.2}%
-\contentsline {table}{\numberline {A.3}{\ignorespaces Cryptographic and runtime configuration keys.}}{138}{table.A.3}%
-\contentsline {table}{\numberline {A.4}{\ignorespaces Security and hardening configuration keys.}}{139}{table.A.4}%
-\contentsline {table}{\numberline {A.5}{\ignorespaces TCP control channel configuration keys.}}{139}{table.A.5}%
-\contentsline {table}{\numberline {A.6}{\ignorespaces MAVProxy and MAVLink configuration keys.}}{140}{table.A.6}%
-\contentsline {table}{\numberline {A.7}{\ignorespaces Bare scheduler timing defaults.}}{140}{table.A.7}%
-\contentsline {table}{\numberline {A.8}{\ignorespaces Simple automation configuration keys.}}{140}{table.A.8}%
-\contentsline {table}{\numberline {A.9}{\ignorespaces Simulation and testing configuration keys.}}{141}{table.A.9}%
-\contentsline {table}{\numberline {A.10}{\ignorespaces AUTO\_DRONE sub-dictionary fields.}}{141}{table.A.10}%
-\contentsline {table}{\numberline {A.11}{\ignorespaces AUTO\_GCS sub-dictionary fields (selected).}}{141}{table.A.11}%
-\contentsline {table}{\numberline {A.12}{\ignorespaces BENCHMARK sub-dictionary fields.}}{142}{table.A.12}%
+\contentsline {table}{\numberline {4.1}{\ignorespaces NIST security levels and their classical equivalents.}}{29}{table.caption.17}%
+\contentsline {table}{\numberline {4.2}{\ignorespaces ML-KEM parameter sets used in this system.}}{32}{table.caption.18}%
+\contentsline {table}{\numberline {4.3}{\ignorespaces Classic McEliece parameter sets used in this system.}}{33}{table.caption.19}%
+\contentsline {table}{\numberline {4.4}{\ignorespaces HQC parameter sets used in this system.}}{33}{table.caption.20}%
+\contentsline {table}{\numberline {4.5}{\ignorespaces ML-DSA parameter sets used in this system.}}{34}{table.caption.21}%
+\contentsline {table}{\numberline {4.6}{\ignorespaces Falcon parameter sets used in this system.}}{35}{table.caption.22}%
+\contentsline {table}{\numberline {4.7}{\ignorespaces SPHINCS+ parameter sets used in this system (``s'' = small/slow variant).}}{35}{table.caption.23}%
+\contentsline {table}{\numberline {4.8}{\ignorespaces Comparative overview of post-quantum algorithm families in this system.}}{37}{table.caption.24}%
 \addvspace {10\p@ }
-\contentsline {table}{\numberline {B.1}{\ignorespaces AEAD header fields (22 bytes total).}}{144}{table.caption.61}%
-\contentsline {table}{\numberline {B.2}{\ignorespaces Packet sizes for representative MAVLink messages.}}{146}{table.caption.68}%
+\contentsline {table}{\numberline {5.1}{\ignorespaces MAVLink v2 frame structure.}}{42}{table.caption.25}%
+\contentsline {table}{\numberline {5.2}{\ignorespaces MAVLink metrics collected by the system.}}{46}{table.caption.26}%
 \addvspace {10\p@ }
-\contentsline {table}{\numberline {C.1}{\ignorespaces Category A --- Run context and environment (20 fields).}}{149}{table.C.1}%
-\contentsline {table}{\numberline {C.2}{\ignorespaces Category B --- Suite cryptographic identity (8 fields).}}{150}{table.C.2}%
-\contentsline {table}{\numberline {C.3}{\ignorespaces Category C --- Suite lifecycle timeline (5 fields).}}{150}{table.C.3}%
-\contentsline {table}{\numberline {C.4}{\ignorespaces Category D --- Handshake timing and status (7 fields).}}{150}{table.C.4}%
-\contentsline {table}{\numberline {C.5}{\ignorespaces Category E --- Cryptographic primitive timing (16 fields).}}{151}{table.C.5}%
-\contentsline {table}{\numberline {C.6}{\ignorespaces Category F --- Rekey operation metrics (7 fields).}}{151}{table.C.6}%
-\contentsline {table}{\numberline {C.7}{\ignorespaces Category G --- Data plane (proxy-level) metrics (21 fields).}}{151}{table.C.7}%
-\contentsline {table}{\numberline {C.8}{\ignorespaces Category H --- Latency and jitter metrics (12 fields).}}{152}{table.C.8}%
-\contentsline {table}{\numberline {C.9}{\ignorespaces Category I --- MAVProxy drone-side metrics (15 fields).}}{153}{table.C.9}%
-\contentsline {table}{\numberline {C.10}{\ignorespaces Category J --- MAVProxy GCS-side metrics (2 fields, pruned).}}{153}{table.C.10}%
-\contentsline {table}{\numberline {C.11}{\ignorespaces Category K --- MAVLink semantic integrity (9 fields).}}{154}{table.C.11}%
-\contentsline {table}{\numberline {C.12}{\ignorespaces Category L --- Flight controller telemetry (10 fields).}}{154}{table.C.12}%
-\contentsline {table}{\numberline {C.13}{\ignorespaces Category M --- Scheduler control plane (7 fields).}}{154}{table.C.13}%
-\contentsline {table}{\numberline {C.14}{\ignorespaces Category N --- Drone system resources (12 fields).}}{155}{table.C.14}%
-\contentsline {table}{\numberline {C.15}{\ignorespaces Category P --- Power and energy measurements (8 fields).}}{155}{table.C.15}%
-\contentsline {table}{\numberline {C.16}{\ignorespaces Category Q --- Observability and logging (5 fields).}}{156}{table.C.16}%
-\contentsline {table}{\numberline {C.17}{\ignorespaces Category R --- Validation and integrity (6 fields).}}{156}{table.C.17}%
+\contentsline {table}{\numberline {6.1}{\ignorespaces Complete network port map.}}{49}{table.caption.28}%
+\contentsline {table}{\numberline {6.2}{\ignorespaces Key modules in \texttt {core/}.}}{50}{table.caption.30}%
+\contentsline {table}{\numberline {6.3}{\ignorespaces Key modules in \texttt {sscheduler/}.}}{51}{table.caption.31}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {7.1}{\ignorespaces Handshake timing metrics collected.}}{64}{table.caption.33}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {8.1}{\ignorespaces AEAD packet header fields (22 bytes total).}}{70}{table.caption.34}%
+\contentsline {table}{\numberline {8.2}{\ignorespaces Wire packet sizes for a 21-byte MAVLink message.}}{74}{table.caption.35}%
+\contentsline {table}{\numberline {8.3}{\ignorespaces Wire packet sizes for a 40-byte MAVLink message.}}{74}{table.caption.36}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {9.1}{\ignorespaces The four UDP sockets managed by the proxy.}}{78}{table.caption.37}%
+\contentsline {table}{\numberline {9.2}{\ignorespaces Drop reason counters in the proxy.}}{80}{table.caption.38}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {10.1}{\ignorespaces KEM registry entries.}}{83}{table.caption.39}%
+\contentsline {table}{\numberline {10.2}{\ignorespaces Signature registry entries.}}{84}{table.caption.40}%
+\contentsline {table}{\numberline {10.3}{\ignorespaces AEAD registry entries.}}{84}{table.caption.41}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {11.1}{\ignorespaces TCP control channel commands}}{92}{table.caption.43}%
+\contentsline {table}{\numberline {11.2}{\ignorespaces SuiteMetrics fields collected by BenchmarkPolicy}}{95}{table.caption.44}%
+\contentsline {table}{\numberline {11.3}{\ignorespaces GCS server internal components}}{99}{table.caption.46}%
+\contentsline {table}{\numberline {11.4}{\ignorespaces Decision hierarchy of TelemetryAwarePolicyV2}}{100}{table.caption.47}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {12.1}{\ignorespaces The 18-category metrics schema}}{106}{table.caption.48}%
+\contentsline {table}{\numberline {12.2}{\ignorespaces MAVLink collector metric groups}}{109}{table.caption.49}%
+\contentsline {table}{\numberline {12.3}{\ignorespaces INA219 ADC profiles}}{110}{table.caption.51}%
+\contentsline {table}{\numberline {12.4}{\ignorespaces How failure classes affect the validation verdict.}}{116}{table.caption.53}%
+\contentsline {table}{\numberline {12.5}{\ignorespaces Output file formats}}{118}{table.caption.54}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {13.1}{\ignorespaces Dashboard technology stack}}{119}{table.caption.55}%
+\contentsline {table}{\numberline {13.2}{\ignorespaces Scenario folder mapping}}{120}{table.caption.56}%
+\contentsline {table}{\numberline {13.3}{\ignorespaces Dashboard API endpoints}}{121}{table.caption.57}%
+\contentsline {table}{\numberline {13.4}{\ignorespaces Dashboard navigation structure}}{122}{table.caption.58}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {14.1}{\ignorespaces Representative handshake times by NIST level (Raspberry Pi~5)}}{133}{table.caption.60}%
+\contentsline {table}{\numberline {14.2}{\ignorespaces AEAD algorithm trade-offs}}{134}{table.caption.61}%
+\contentsline {table}{\numberline {14.3}{\ignorespaces Platform comparison}}{140}{table.caption.63}%
+\contentsline {table}{\numberline {14.4}{\ignorespaces Reproducibility assessment for key result categories.}}{143}{table.caption.64}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {15.1}{\ignorespaces Headline benchmark results (median, $n=200$, RPi~4 Cortex-A72).}}{146}{table.15.1}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {16.16}{\ignorespaces Frontend runtime dependencies.}}{163}{table.16.16}%
+\contentsline {table}{\numberline {16.17}{\ignorespaces Frontend development dependencies.}}{164}{table.16.17}%
+\contentsline {table}{\numberline {16.19}{\ignorespaces Security considerations for key dependencies.}}{167}{table.16.19}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {17.1}{\ignorespaces Top-level directory purposes.}}{169}{table.17.1}%
+\contentsline {table}{\numberline {17.2}{\ignorespaces Complete \texttt {core/} module inventory.}}{170}{table.17.2}%
+\contentsline {table}{\numberline {17.3}{\ignorespaces Complete \texttt {sscheduler/} module inventory.}}{183}{table.17.3}%
+\contentsline {table}{\numberline {17.4}{\ignorespaces Devtools module inventory.}}{184}{table.17.4}%
+\contentsline {table}{\numberline {17.5}{\ignorespaces Scripts directory inventory.}}{184}{table.17.5}%
+\contentsline {table}{\numberline {17.6}{\ignorespaces Tools directory inventory.}}{185}{table.17.6}%
+\contentsline {table}{\numberline {17.7}{\ignorespaces Benchmark analysis module inventory.}}{186}{table.17.7}%
+\contentsline {table}{\numberline {17.8}{\ignorespaces Codebase size by directory.}}{186}{table.17.8}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {18.1}{\ignorespaces Test layer classification.}}{190}{table.18.1}%
+\contentsline {table}{\numberline {18.2}{\ignorespaces Functional integration test files.}}{191}{table.18.2}%
+\contentsline {table}{\numberline {18.3}{\ignorespaces Collector verification files.}}{192}{table.18.3}%
+\contentsline {table}{\numberline {18.4}{\ignorespaces Output validation files.}}{192}{table.18.4}%
+\contentsline {table}{\numberline {18.5}{\ignorespaces Test file vs.\ system component coverage matrix.}}{200}{table.18.5}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {19.1}{\ignorespaces Benchmark environment specifications.}}{203}{table.19.1}%
+\contentsline {table}{\numberline {19.2}{\ignorespaces Benchmark dataset dimensions.}}{204}{table.19.2}%
+\contentsline {table}{\numberline {19.3}{\ignorespaces KEM timing results (median, $n=200$).}}{204}{table.19.3}%
+\contentsline {table}{\numberline {19.4}{\ignorespaces KEM key and ciphertext sizes (bytes).}}{205}{table.19.4}%
+\contentsline {table}{\numberline {19.5}{\ignorespaces Signature timing results (median, $n=200$).}}{206}{table.19.5}%
+\contentsline {table}{\numberline {19.6}{\ignorespaces Signature key and signature sizes (bytes).}}{207}{table.19.6}%
+\contentsline {table}{\numberline {19.7}{\ignorespaces AEAD encrypt timing (median microseconds, $n=200$).}}{207}{table.19.7}%
+\contentsline {table}{\numberline {19.8}{\ignorespaces AEAD encrypt timing at 4096\,B and throughput.}}{207}{table.19.8}%
+\contentsline {table}{\numberline {19.9}{\ignorespaces KEM power and energy consumption.}}{208}{table.19.9}%
+\contentsline {table}{\numberline {19.10}{\ignorespaces Signature power and energy consumption.}}{209}{table.19.10}%
+\contentsline {table}{\numberline {19.11}{\ignorespaces Full handshake timing by cipher suite ($n=200$).}}{209}{table.19.11}%
+\contentsline {table}{\numberline {19.12}{\ignorespaces Aggregate timing by NIST security level.}}{210}{table.19.12}%
+\contentsline {table}{\numberline {19.13}{\ignorespaces Algorithm recommendations by deployment scenario.}}{212}{table.19.13}%
+\contentsline {table}{\numberline {19.14}{\ignorespaces Estimated flight-time impact per re-key cycle.}}{212}{table.19.14}%
+\contentsline {table}{\numberline {19.15}{\ignorespaces Statistical measures used in benchmark analysis.}}{213}{table.19.15}%
+\contentsline {table}{\numberline {19.16}{\ignorespaces Benchmark analysis output files.}}{213}{table.19.16}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {20.1}{\ignorespaces Drone hardware requirements.}}{215}{table.20.1}%
+\contentsline {table}{\numberline {20.2}{\ignorespaces GCS hardware requirements.}}{216}{table.20.2}%
+\contentsline {table}{\numberline {20.3}{\ignorespaces Network address assignment.}}{218}{table.20.3}%
+\contentsline {table}{\numberline {20.4}{\ignorespaces Complete port allocation map.}}{218}{table.20.4}%
+\contentsline {table}{\numberline {20.5}{\ignorespaces Common deployment issues and solutions.}}{225}{table.20.5}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {21.1}{\ignorespaces Comparative analysis of secure drone communication systems.}}{240}{table.21.1}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {22.1}{\ignorespaces ServerHello wire format.}}{244}{table.caption.104}%
+\contentsline {table}{\numberline {22.2}{\ignorespaces ServerHello message sizes by algorithm combination.}}{245}{table.22.2}%
+\contentsline {table}{\numberline {22.3}{\ignorespaces ClientReply wire format.}}{245}{table.caption.107}%
+\contentsline {table}{\numberline {22.4}{\ignorespaces ClientReply sizes by KEM family.}}{246}{table.22.4}%
+\contentsline {table}{\numberline {22.5}{\ignorespaces EncryptedDatagram wire format.}}{247}{table.caption.110}%
+\contentsline {table}{\numberline {22.6}{\ignorespaces EncryptedDatagram sizes for common MAVLink messages.}}{248}{table.caption.115}%
+\contentsline {table}{\numberline {22.7}{\ignorespaces KEM identifier registry.}}{248}{table.caption.116}%
+\contentsline {table}{\numberline {22.8}{\ignorespaces Signature identifier registry.}}{249}{table.caption.117}%
+\contentsline {table}{\numberline {22.9}{\ignorespaces HKDF-SHA256 parameters for key derivation.}}{249}{table.caption.119}%
+\contentsline {table}{\numberline {22.10}{\ignorespaces GCS handshake state transitions.}}{251}{table.22.10}%
+\contentsline {table}{\numberline {22.11}{\ignorespaces Replay window parameters.}}{252}{table.caption.125}%
+\contentsline {table}{\numberline {22.12}{\ignorespaces Scheduler control protocol message types.}}{253}{table.22.12}%
+\contentsline {table}{\numberline {22.13}{\ignorespaces Exception hierarchy.}}{255}{table.22.13}%
+\contentsline {table}{\numberline {22.14}{\ignorespaces Configuration keys (security-critical subset).}}{256}{table.22.14}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {23.1}{\ignorespaces Modules in the \texttt {core} package.}}{259}{table.23.1}%
+\contentsline {table}{\numberline {23.2}{\ignorespaces Exception classes and their semantics.}}{261}{table.23.2}%
+\contentsline {table}{\numberline {23.3}{\ignorespaces \texttt {core.aead} module constants.}}{262}{table.23.3}%
+\contentsline {table}{\numberline {23.4}{\ignorespaces \texttt {core.aead} module-level functions.}}{265}{table.23.4}%
+\contentsline {table}{\numberline {23.5}{\ignorespaces \texttt {core.handshake} module-level functions.}}{266}{table.23.5}%
+\contentsline {table}{\numberline {23.6}{\ignorespaces \texttt {core.crypto\_utils} OQS wrapper functions.}}{267}{table.23.6}%
+\contentsline {table}{\numberline {23.7}{\ignorespaces \texttt {CONFIG} key groups.}}{270}{table.23.7}%
+\contentsline {table}{\numberline {23.8}{\ignorespaces \texttt {core.suites} module-level functions.}}{272}{table.23.8}%
+\contentsline {table}{\numberline {23.9}{\ignorespaces \texttt {core.keys} module-level functions.}}{273}{table.23.9}%
+\contentsline {table}{\numberline {23.10}{\ignorespaces Security-critical instance variables of \texttt {ProxyEngine}.}}{275}{table.23.10}%
+\contentsline {table}{\numberline {23.11}{\ignorespaces \texttt {core.proxy} module-level functions.}}{276}{table.23.11}%
+\contentsline {table}{\numberline {23.12}{\ignorespaces Metrics schema categories overview.}}{277}{table.23.12}%
+\contentsline {table}{\numberline {23.13}{\ignorespaces HealthChecker implementations.}}{284}{table.23.13}%
+\contentsline {table}{\numberline {23.14}{\ignorespaces Modules in the \texttt {sscheduler} package.}}{289}{table.23.14}%
+\contentsline {table}{\numberline {23.15}{\ignorespaces Modules in the \texttt {scheduler} package.}}{291}{table.23.15}%
+\contentsline {table}{\numberline {23.16}{\ignorespaces Codebase summary statistics.}}{293}{table.caption.141}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {24.1}{\ignorespaces Adversary classes.}}{296}{table.24.1}%
+\contentsline {table}{\numberline {24.2}{\ignorespaces Data flows across trust boundaries.}}{297}{table.24.2}%
+\contentsline {table}{\numberline {24.3}{\ignorespaces System entry points.}}{297}{table.24.3}%
+\contentsline {table}{\numberline {24.4}{\ignorespaces STRIDE threat enumeration.}}{298}{table.24.4}%
+\contentsline {table}{\numberline {24.5}{\ignorespaces DREAD risk scores for each threat (1 = low, 10 = high).}}{300}{table.24.5}%
+\contentsline {table}{\numberline {24.6}{\ignorespaces Threat-to-mitigation mapping.}}{301}{table.24.6}%
+\contentsline {table}{\numberline {24.7}{\ignorespaces Cryptographic agility risks and mitigations.}}{306}{table.24.7}%
+\contentsline {table}{\numberline {24.8}{\ignorespaces Timing side-channel analysis.}}{306}{table.24.8}%
+\contentsline {table}{\numberline {24.9}{\ignorespaces Security goals and their formal definitions.}}{307}{table.24.9}%
+\contentsline {table}{\numberline {24.14}{\ignorespaces Residual risks after all implemented mitigations.}}{310}{table.24.14}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {25.1}{\ignorespaces Experimental design parameters.}}{311}{table.25.1}%
+\contentsline {table}{\numberline {25.2}{\ignorespaces Statistical tests employed.}}{312}{table.25.2}%
+\contentsline {table}{\numberline {25.3}{\ignorespaces Shapiro--Wilk normality test for handshake latency ($n=100$).}}{313}{table.caption.161}%
+\contentsline {table}{\numberline {25.4}{\ignorespaces Handshake latency descriptive statistics (ms), $n=100$ per suite. Representative suite using ML-DSA-65 and AES-256-GCM.}}{313}{table.25.4}%
+\contentsline {table}{\numberline {25.5}{\ignorespaces Dunn's post-hoc pairwise comparisons.}}{314}{table.caption.163}%
+\contentsline {table}{\numberline {25.6}{\ignorespaces Signature algorithm effect on handshake latency (ms).}}{314}{table.caption.164}%
+\contentsline {table}{\numberline {25.7}{\ignorespaces AEAD throughput on Raspberry Pi 4 (ARMv8 Cortex-A72 @ 1.8\,GHz).}}{315}{table.caption.167}%
+\contentsline {table}{\numberline {25.8}{\ignorespaces Overhead percentage by MAVLink message size.}}{316}{table.caption.168}%
+\contentsline {table}{\numberline {25.9}{\ignorespaces End-to-end latency percentiles (ms), ML-KEM-768 + AES-256-GCM + ML-DSA-65.}}{316}{table.caption.170}%
+\contentsline {table}{\numberline {25.10}{\ignorespaces Jitter statistics (ms) by AEAD algorithm.}}{317}{table.caption.172}%
+\contentsline {table}{\numberline {25.11}{\ignorespaces CPU usage (\%) on Raspberry Pi 4 during steady-state data plane.}}{317}{table.caption.173}%
+\contentsline {table}{\numberline {25.12}{\ignorespaces Memory usage (MB) by component.}}{318}{table.caption.175}%
+\contentsline {table}{\numberline {25.13}{\ignorespaces Energy per handshake on Raspberry Pi 4 (measured at USB-C power input).}}{318}{table.caption.176}%
+\contentsline {table}{\numberline {25.14}{\ignorespaces Regression coefficients for handshake time model.}}{319}{table.caption.178}%
+\contentsline {table}{\numberline {25.15}{\ignorespaces Throughput model parameters.}}{319}{table.caption.180}%
+\contentsline {table}{\numberline {25.16}{\ignorespaces Performance cost per NIST security level.}}{320}{table.25.16}%
+\contentsline {table}{\numberline {25.17}{\ignorespaces Handshake overhead at different rekey intervals.}}{321}{table.caption.183}%
+\contentsline {table}{\numberline {25.18}{\ignorespaces Theoretical drone capacity per GCS.}}{321}{table.caption.184}%
+\contentsline {table}{\numberline {25.19}{\ignorespaces Anomalies identified in benchmark data.}}{322}{table.25.19}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {A.1}{\ignorespaces Handshake and data-plane port configuration keys.}}{325}{table.A.1}%
+\contentsline {table}{\numberline {A.2}{\ignorespaces Host address configuration keys.}}{326}{table.A.2}%
+\contentsline {table}{\numberline {A.3}{\ignorespaces Cryptographic and runtime configuration keys.}}{326}{table.A.3}%
+\contentsline {table}{\numberline {A.4}{\ignorespaces Security and hardening configuration keys.}}{327}{table.A.4}%
+\contentsline {table}{\numberline {A.5}{\ignorespaces TCP control channel configuration keys.}}{327}{table.A.5}%
+\contentsline {table}{\numberline {A.6}{\ignorespaces MAVProxy and MAVLink configuration keys.}}{328}{table.A.6}%
+\contentsline {table}{\numberline {A.7}{\ignorespaces Bare scheduler timing defaults.}}{328}{table.A.7}%
+\contentsline {table}{\numberline {A.8}{\ignorespaces Simple automation configuration keys.}}{328}{table.A.8}%
+\contentsline {table}{\numberline {A.9}{\ignorespaces Simulation and testing configuration keys.}}{329}{table.A.9}%
+\contentsline {table}{\numberline {A.10}{\ignorespaces AUTO\_DRONE sub-dictionary fields.}}{329}{table.A.10}%
+\contentsline {table}{\numberline {A.11}{\ignorespaces AUTO\_GCS sub-dictionary fields (selected).}}{329}{table.A.11}%
+\contentsline {table}{\numberline {A.12}{\ignorespaces BENCHMARK sub-dictionary fields.}}{330}{table.A.12}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {B.1}{\ignorespaces AEAD header fields (22 bytes total).}}{332}{table.caption.186}%
+\contentsline {table}{\numberline {B.2}{\ignorespaces Packet sizes for representative MAVLink messages.}}{334}{table.caption.193}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {C.1}{\ignorespaces Category A --- Run context and environment (20 fields).}}{337}{table.C.1}%
+\contentsline {table}{\numberline {C.2}{\ignorespaces Category B --- Suite cryptographic identity (8 fields).}}{338}{table.C.2}%
+\contentsline {table}{\numberline {C.3}{\ignorespaces Category C --- Suite lifecycle timeline (5 fields).}}{338}{table.C.3}%
+\contentsline {table}{\numberline {C.4}{\ignorespaces Category D --- Handshake timing and status (7 fields).}}{338}{table.C.4}%
+\contentsline {table}{\numberline {C.5}{\ignorespaces Category E --- Cryptographic primitive timing (16 fields).}}{339}{table.C.5}%
+\contentsline {table}{\numberline {C.6}{\ignorespaces Category F --- Rekey operation metrics (7 fields).}}{339}{table.C.6}%
+\contentsline {table}{\numberline {C.7}{\ignorespaces Category G --- Data plane (proxy-level) metrics (21 fields).}}{339}{table.C.7}%
+\contentsline {table}{\numberline {C.8}{\ignorespaces Category H --- Latency and jitter metrics (12 fields).}}{340}{table.C.8}%
+\contentsline {table}{\numberline {C.9}{\ignorespaces Category I --- MAVProxy drone-side metrics (15 fields).}}{341}{table.C.9}%
+\contentsline {table}{\numberline {C.10}{\ignorespaces Category J --- MAVProxy GCS-side metrics (2 fields, pruned).}}{341}{table.C.10}%
+\contentsline {table}{\numberline {C.11}{\ignorespaces Category K --- MAVLink semantic integrity (9 fields).}}{342}{table.C.11}%
+\contentsline {table}{\numberline {C.12}{\ignorespaces Category L --- Flight controller telemetry (10 fields).}}{342}{table.C.12}%
+\contentsline {table}{\numberline {C.13}{\ignorespaces Category M --- Scheduler control plane (7 fields).}}{342}{table.C.13}%
+\contentsline {table}{\numberline {C.14}{\ignorespaces Category N --- Drone system resources (12 fields).}}{343}{table.C.14}%
+\contentsline {table}{\numberline {C.15}{\ignorespaces Category P --- Power and energy measurements (8 fields).}}{343}{table.C.15}%
+\contentsline {table}{\numberline {C.16}{\ignorespaces Category Q --- Observability and logging (5 fields).}}{344}{table.C.16}%
+\contentsline {table}{\numberline {C.17}{\ignorespaces Category R --- Validation and integrity (6 fields).}}{344}{table.C.17}%

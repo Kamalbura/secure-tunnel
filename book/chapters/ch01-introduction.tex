@@ -67,6 +67,48 @@ More technically:
 
 The system supports over 70 different \textbf{cipher suites}---combinations of key encapsulation, signature, and encryption algorithms---allowing comprehensive benchmarking of different post-quantum approaches on real hardware.
 
+% -- System Overview Diagram --
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  block/.style={draw, rounded corners=4pt, minimum width=3.2cm, minimum height=1cm,
+                font=\small, align=center, fill=#1},
+  arr/.style={-{Stealth[length=2.5mm]}, thick},
+  darr/.style={{Stealth[length=2.5mm]}-{Stealth[length=2.5mm]}, thick},
+]
+  % Drone side
+  \node[block=blue!10] (fc) at (0, 0) {Pixhawk FC\\ArduPilot};
+  \node[block=blue!15] (mavd) at (0, 2) {MAVProxy\\(Drone)};
+  \node[block=orange!20] (proxyd) at (0, 4) {PQC Proxy\\(Drone Side)};
+
+  % Network
+  \node[block=red!10, minimum width=4cm] (net) at (5, 4) {WiFi LAN\\Encrypted UDP};
+
+  % GCS side
+  \node[block=orange!20] (proxyg) at (10, 4) {PQC Proxy\\(GCS Side)};
+  \node[block=green!15] (mavg) at (10, 2) {MAVProxy\\(GCS)};
+  \node[block=green!10] (mp) at (10, 0) {Mission Planner\\QGroundControl};
+
+  % Arrows
+  \draw[darr, blue] (fc) -- node[right, font=\tiny] {USB serial} (mavd);
+  \draw[darr, blue] (mavd) -- node[right, font=\tiny, align=center] {plaintext UDP\\(localhost)} (proxyd);
+  \draw[darr, red] (proxyd) -- node[above, font=\tiny] {PQC-encrypted} (net);
+  \draw[darr, red] (net) -- node[above, font=\tiny] {PQC-encrypted} (proxyg);
+  \draw[darr, blue] (proxyg) -- node[right, font=\tiny, align=center] {plaintext UDP\\(localhost)} (mavg);
+  \draw[darr, blue] (mavg) -- node[right, font=\tiny] {localhost} (mp);
+
+  % Labels
+  \node[font=\footnotesize\bfseries, above=0.2cm of proxyd] {Drone (RPi)};
+  \node[font=\footnotesize\bfseries, above=0.2cm of proxyg] {GCS (Windows)};
+
+  % Power sensor
+  \node[block=yellow!20, minimum width=1.8cm, minimum height=0.6cm] (ina) at (-3, 1) {\tiny INA219\\Power};
+  \draw[arr, dashed, gray] (ina) -- (proxyd);
+\end{tikzpicture}
+\caption{System overview: the PQC proxy sits transparently between applications and the network.  All traffic crossing the WiFi link is post-quantum encrypted.}
+\label{fig:system-overview}
+\end{figure}
+
 \section{The Hardware}
 \label{sec:intro-hardware}
 
@@ -100,24 +142,45 @@ The cryptographic primitives are provided by \textbf{liboqs} (Open Quantum Safe)
 \section{The Scope of This Book}
 \label{sec:intro-scope}
 
-This book explains the \emph{entire} system. By the time you finish reading, you will understand:
+This book explains the \emph{entire} system---from the theoretical
+foundations of post-quantum cryptography through every line of
+implementation code to the deployment procedures and benchmark results.
+Table~\ref{tab:chapter-map} provides a chapter-by-chapter map.
 
-\begin{itemize}
-  \item How computer networks work (Chapter~\ref{ch:networking}).
-  \item What cryptography is and how it provides confidentiality, integrity, and authentication (Chapter~\ref{ch:cryptography}).
-  \item Why quantum computers threaten current cryptography and how post-quantum algorithms work (Chapter~\ref{ch:pqc}).
-  \item How drones communicate using MAVLink and MAVProxy (Chapter~\ref{ch:mavlink}).
-  \item The complete architecture of the secure tunnel system (Chapter~\ref{ch:architecture}).
-  \item How the handshake protocol establishes post-quantum keys (Chapter~\ref{ch:handshake}).
-  \item How AEAD framing protects individual packets (Chapter~\ref{ch:aead}).
-  \item How the proxy engine moves packets between plaintext and encrypted worlds (Chapter~\ref{ch:proxy}).
-  \item How 70+ cipher suites are defined, registered, and selected (Chapter~\ref{ch:suites}).
-  \item How the benchmark scheduler orchestrates test runs (Chapter~\ref{ch:scheduler}).
-  \item How metrics are collected, aggregated, and validated (Chapter~\ref{ch:metrics}).
-  \item How the dashboard visualizes results (Chapter~\ref{ch:dashboard}).
-  \item The engineering trade-offs, limitations, and lessons learned (Chapter~\ref{ch:engineering}).
-\end{itemize}
+\begin{longtable}{c l p{7cm}}
+  \caption{Chapter map and reading guide.}
+  \label{tab:chapter-map} \\
+  \toprule
+  \textbf{Ch.} & \textbf{Title} & \textbf{What You Will Learn} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
 
+  1  & Introduction        & Motivation, system overview, hardware/software \\
+  2  & Networking           & TCP/IP, UDP, sockets, NAT, mDNS \\
+  3  & Cryptography         & Symmetric/asymmetric, AEAD, key exchange, signatures \\
+  4  & Post-Quantum         & Lattices, codes, hashes; NIST standards \\
+  5  & MAVLink              & Drone protocol, packet format, security gaps \\
+  6  & Architecture         & System design, data flow, component interactions \\
+  7  & Handshake            & 2-message PQC authenticated key exchange \\
+  8  & AEAD Framing         & Wire format, replay protection, epoch management \\
+  9  & Proxy Engine         & Selectors loop, socket architecture, rekey integration \\
+  10 & Suite Registry       & KEM$\times$SIG$\times$AEAD composition, alias resolution \\
+  11 & Scheduler            & Drone-controlled cycling, GCS follower, MAVProxy mode \\
+  12 & Metrics              & 18-category schema, collectors, aggregation \\
+  13 & Dashboard            & FastAPI backend, React frontend, visualization \\
+  14 & Engineering          & Cross-platform, error handling, lessons learned \\
+  15 & Conclusion           & Contributions, findings, future work \\
+  16 & Dependencies         & Every package, its role, version constraints \\
+  17 & Codebase Walkthrough & Module-by-module tour of all 97 Python files \\
+  18 & Testing              & 18 test files, patterns, how to run the suite \\
+  19 & Benchmarks           & 19{,}600 measurements, KEM/SIG/AEAD/power results \\
+  20 & Deployment           & Step-by-step setup, launch, and troubleshooting \\
+  A  & Configuration Keys   & Complete CONFIG dictionary reference \\
+  B  & Wire Protocol        & Byte-level wire format specification \\
+  C  & Metrics Schema       & All 231 metric fields across 18 categories \\
+\end{longtable}
 \section{A Word About Reading Order}
 \label{sec:intro-reading-order}
 
@@ -125,6 +188,8 @@ If you are a student encountering these topics for the first time, read the book
 
 If you are an engineer who already understands networking and cryptography, you may skip to Part~II (Chapter~\ref{ch:mavlink}) and refer back to the Glossary and foundational chapters as needed.
 
-If you are a researcher interested specifically in the post-quantum performance measurements, you may focus on Chapters~\ref{ch:metrics} and~\ref{ch:dashboard}, but we strongly recommend at least skimming Chapter~\ref{ch:engineering} for an honest assessment of limitations.
+If you are a researcher interested specifically in the post-quantum performance measurements, jump directly to Chapter~\ref{ch:benchmarks} for the benchmark results, then read Chapters~\ref{ch:metrics} and~\ref{ch:dashboard} for context on how the data was collected and visualised.
+
+If you are deploying the system, start with Chapter~\ref{ch:deployment} for the step-by-step setup guide, then read Chapter~\ref{ch:dependencies} for the complete software dependency map.
 
 Let us begin.

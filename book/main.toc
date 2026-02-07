@@ -1,6 +1,6 @@
 \babel@toc {english}{}\relax 
 \contentsline {chapter}{Preface}{iii}{chapter*.1}%
-\contentsline {chapter}{Glossary}{xv}{chapter*.11}%
+\contentsline {chapter}{Glossary}{xxxiii}{chapter*.11}%
 \contentsline {part}{I\hspace {1em}Foundations}{1}{part.1}%
 \contentsline {chapter}{\numberline {1}Introduction}{3}{chapter.1}%
 \contentsline {section}{\numberline {1.1}Why This Book Exists}{3}{section.1.1}%
@@ -9,7 +9,7 @@
 \contentsline {section}{\numberline {1.4}The Hardware}{5}{section.1.4}%
 \contentsline {section}{\numberline {1.5}The Software Stack}{6}{section.1.5}%
 \contentsline {section}{\numberline {1.6}The Scope of This Book}{6}{section.1.6}%
-\contentsline {section}{\numberline {1.7}A Word About Reading Order}{7}{section.1.7}%
+\contentsline {section}{\numberline {1.7}A Word About Reading Order}{8}{section.1.7}%
 \contentsline {chapter}{\numberline {2}Networking Fundamentals}{9}{chapter.2}%
 \contentsline {section}{\numberline {2.1}What Is a Network?}{9}{section.2.1}%
 \contentsline {section}{\numberline {2.2}The Layered Model}{9}{section.2.2}%
@@ -114,223 +114,688 @@
 \contentsline {section}{\numberline {7.6}Step 5: Key Derivation}{63}{section.7.6}%
 \contentsline {section}{\numberline {7.7}Handshake Metrics}{63}{section.7.7}%
 \contentsline {section}{\numberline {7.8}Error Handling}{64}{section.7.8}%
-\contentsline {section}{\numberline {7.9}Summary}{64}{section.7.9}%
-\contentsline {chapter}{\numberline {8}AEAD Framing and Wire Format}{65}{chapter.8}%
-\contentsline {section}{\numberline {8.1}Wire Packet Structure}{65}{section.8.1}%
-\contentsline {subsection}{\numberline {8.1.1}Header Format}{65}{subsection.8.1.1}%
-\contentsline {subsection}{\numberline {8.1.2}What Is NOT on the Wire}{65}{subsection.8.1.2}%
-\contentsline {section}{\numberline {8.2}The Sender}{66}{section.8.2}%
-\contentsline {subsection}{\numberline {8.2.1}Encryption Flow}{67}{subsection.8.2.1}%
-\contentsline {subsection}{\numberline {8.2.2}Epoch Management}{67}{subsection.8.2.2}%
-\contentsline {section}{\numberline {8.3}The Receiver}{67}{section.8.3}%
-\contentsline {subsection}{\numberline {8.3.1}Decryption Flow}{68}{subsection.8.3.1}%
-\contentsline {subsection}{\numberline {8.3.2}Error Handling Modes}{68}{subsection.8.3.2}%
-\contentsline {section}{\numberline {8.4}The Sliding Replay Window}{68}{section.8.4}%
-\contentsline {subsection}{\numberline {8.4.1}Decision Logic}{69}{subsection.8.4.1}%
-\contentsline {section}{\numberline {8.5}The ASCON Adapter}{69}{section.8.5}%
-\contentsline {section}{\numberline {8.6}Packet Size Analysis}{70}{section.8.6}%
-\contentsline {section}{\numberline {8.7}Summary}{70}{section.8.7}%
-\contentsline {chapter}{\numberline {9}The Proxy Engine}{73}{chapter.9}%
-\contentsline {section}{\numberline {9.1}Role Duality}{73}{section.9.1}%
-\contentsline {section}{\numberline {9.2}Socket Architecture}{73}{section.9.2}%
-\contentsline {section}{\numberline {9.3}The Event Loop}{74}{section.9.3}%
-\contentsline {subsection}{\numberline {9.3.1}Plaintext Ingress Path}{74}{subsection.9.3.1}%
-\contentsline {subsection}{\numberline {9.3.2}Encrypted Ingress Path}{74}{subsection.9.3.2}%
-\contentsline {section}{\numberline {9.4}Handshake Orchestration}{75}{section.9.4}%
-\contentsline {section}{\numberline {9.5}Rate Limiting}{75}{section.9.5}%
-\contentsline {section}{\numberline {9.6}Drop Accounting}{76}{section.9.6}%
-\contentsline {section}{\numberline {9.7}DSCP Marking}{76}{section.9.7}%
-\contentsline {section}{\numberline {9.8}Rekey Integration}{76}{section.9.8}%
-\contentsline {section}{\numberline {9.9}Metrics Collection}{77}{section.9.9}%
-\contentsline {section}{\numberline {9.10}The CLI Entry Point}{77}{section.9.10}%
-\contentsline {section}{\numberline {9.11}Summary}{78}{section.9.11}%
-\contentsline {chapter}{\numberline {10}The Suite Registry}{79}{chapter.10}%
-\contentsline {section}{\numberline {10.1}The Three Registries}{79}{section.10.1}%
-\contentsline {subsection}{\numberline {10.1.1}KEM Registry}{79}{subsection.10.1.1}%
-\contentsline {subsection}{\numberline {10.1.2}Signature Registry}{80}{subsection.10.1.2}%
-\contentsline {subsection}{\numberline {10.1.3}AEAD Registry}{80}{subsection.10.1.3}%
-\contentsline {section}{\numberline {10.2}Suite Generation}{80}{section.10.2}%
-\contentsline {subsection}{\numberline {10.2.1}Stage 1: Level-Consistent Pairing}{80}{subsection.10.2.1}%
-\contentsline {subsection}{\numberline {10.2.2}Stage 2: AEAD Cross Product}{81}{subsection.10.2.2}%
-\contentsline {subsection}{\numberline {10.2.3}Suite ID Format}{81}{subsection.10.2.3}%
-\contentsline {section}{\numberline {10.3}Alias Resolution}{81}{section.10.3}%
-\contentsline {section}{\numberline {10.4}Runtime Probing}{81}{section.10.4}%
-\contentsline {subsection}{\numberline {10.4.1}OQS Mechanism Discovery}{82}{subsection.10.4.1}%
-\contentsline {subsection}{\numberline {10.4.2}AEAD Availability}{82}{subsection.10.4.2}%
-\contentsline {subsection}{\numberline {10.4.3}Suite Pruning}{82}{subsection.10.4.3}%
-\contentsline {section}{\numberline {10.5}Environment Overrides}{82}{section.10.5}%
-\contentsline {section}{\numberline {10.6}Query Functions}{82}{section.10.6}%
-\contentsline {section}{\numberline {10.7}Immutability}{83}{section.10.7}%
-\contentsline {section}{\numberline {10.8}Summary}{83}{section.10.8}%
-\contentsline {part}{IV\hspace {1em}Orchestration and Measurement}{85}{part.4}%
-\contentsline {chapter}{\numberline {11}Benchmark Orchestration and Scheduling}{87}{chapter.11}%
-\contentsline {section}{\numberline {11.1}Controller--Follower Architecture}{87}{section.11.1}%
-\contentsline {section}{\numberline {11.2}The TCP Control Channel}{88}{section.11.2}%
-\contentsline {subsection}{\numberline {11.2.1}Clock Synchronisation: Operation Chronos}{89}{subsection.11.2.1}%
-\contentsline {section}{\numberline {11.3}Benchmark Modes}{89}{section.11.3}%
-\contentsline {section}{\numberline {11.4}The BenchmarkPolicy}{90}{section.11.4}%
-\contentsline {subsection}{\numberline {11.4.1}Data Structures}{90}{subsection.11.4.1}%
-\contentsline {subsection}{\numberline {11.4.2}Two-Phase Commit Protocol}{90}{subsection.11.4.2}%
-\contentsline {subsection}{\numberline {11.4.3}Suite Cycling}{91}{subsection.11.4.3}%
-\contentsline {subsection}{\numberline {11.4.4}Metrics Collection per Suite}{91}{subsection.11.4.4}%
-\contentsline {subsection}{\numberline {11.4.5}Result Persistence}{91}{subsection.11.4.5}%
-\contentsline {section}{\numberline {11.5}The Drone Benchmark Scheduler}{92}{section.11.5}%
-\contentsline {subsection}{\numberline {11.5.1}Initialisation}{92}{subsection.11.5.1}%
-\contentsline {subsection}{\numberline {11.5.2}The Main Loop}{92}{subsection.11.5.2}%
-\contentsline {subsection}{\numberline {11.5.3}The DroneProxyManager}{94}{subsection.11.5.3}%
-\contentsline {subsection}{\numberline {11.5.4}Handshake Status Reader}{94}{subsection.11.5.4}%
-\contentsline {section}{\numberline {11.6}The GCS Benchmark Server}{94}{section.11.6}%
-\contentsline {subsection}{\numberline {11.6.1}Component Stack}{95}{subsection.11.6.1}%
-\contentsline {subsection}{\numberline {11.6.2}Command Handling}{95}{subsection.11.6.2}%
-\contentsline {subsection}{\numberline {11.6.3}Consistent Log Directories}{95}{subsection.11.6.3}%
-\contentsline {section}{\numberline {11.7}Scheduling Policies}{96}{section.11.7}%
-\contentsline {subsection}{\numberline {11.7.1}TelemetryAwarePolicyV2}{96}{subsection.11.7.1}%
-\contentsline {subsubsection}{\numberline {11.7.1.1}Suite Tier Mapping}{96}{subsubsection.11.7.1.1}%
-\contentsline {subsubsection}{\numberline {11.7.1.2}Hysteresis}{96}{subsubsection.11.7.1.2}%
-\contentsline {subsubsection}{\numberline {11.7.1.3}Blacklisting}{97}{subsubsection.11.7.1.3}%
-\contentsline {subsubsection}{\numberline {11.7.1.4}Rekey Rate Limiting}{97}{subsubsection.11.7.1.4}%
-\contentsline {subsection}{\numberline {11.7.2}Simple Policies}{97}{subsection.11.7.2}%
-\contentsline {section}{\numberline {11.8}Subprocess Management}{97}{section.11.8}%
-\contentsline {section}{\numberline {11.9}End-to-End Benchmark Flow}{98}{section.11.9}%
-\contentsline {section}{\numberline {11.10}Error Handling and Resilience}{98}{section.11.10}%
-\contentsline {section}{\numberline {11.11}Chapter Summary}{99}{section.11.11}%
-\contentsline {chapter}{\numberline {12}The Metrics Pipeline}{101}{chapter.12}%
-\contentsline {section}{\numberline {12.1}The 18-Category Schema}{101}{section.12.1}%
-\contentsline {subsection}{\numberline {12.1.1}Schema Design Principles}{101}{subsection.12.1.1}%
-\contentsline {section}{\numberline {12.2}Collectors}{103}{section.12.2}%
-\contentsline {subsection}{\numberline {12.2.1}EnvironmentCollector}{103}{subsection.12.2.1}%
-\contentsline {subsection}{\numberline {12.2.2}SystemCollector}{103}{subsection.12.2.2}%
-\contentsline {subsection}{\numberline {12.2.3}PowerCollector}{104}{subsection.12.2.3}%
-\contentsline {subsection}{\numberline {12.2.4}NetworkCollector}{104}{subsection.12.2.4}%
-\contentsline {subsection}{\numberline {12.2.5}MavLinkMetricsCollector}{104}{subsection.12.2.5}%
-\contentsline {subsubsection}{\numberline {12.2.5.1}Architecture}{104}{subsubsection.12.2.5.1}%
-\contentsline {subsubsection}{\numberline {12.2.5.2}Tracked Metrics}{104}{subsubsection.12.2.5.2}%
-\contentsline {subsubsection}{\numberline {12.2.5.3}One-Way Latency Estimation}{104}{subsubsection.12.2.5.3}%
-\contentsline {subsubsection}{\numberline {12.2.5.4}Sequence Gap Detection}{105}{subsubsection.12.2.5.4}%
-\contentsline {section}{\numberline {12.3}The INA219 Power Monitor}{105}{section.12.3}%
-\contentsline {subsection}{\numberline {12.3.1}Register-Level Access}{106}{subsection.12.3.1}%
-\contentsline {subsection}{\numberline {12.3.2}ADC Profiles}{106}{subsection.12.3.2}%
-\contentsline {subsection}{\numberline {12.3.3}Capture and Energy Integration}{106}{subsection.12.3.3}%
-\contentsline {subsection}{\numberline {12.3.4}RPi5 hwmon Backend}{107}{subsection.12.3.4}%
-\contentsline {subsection}{\numberline {12.3.5}Sign Resolution}{107}{subsection.12.3.5}%
-\contentsline {section}{\numberline {12.4}The Metrics Aggregator}{107}{section.12.4}%
-\contentsline {subsection}{\numberline {12.4.1}Lifecycle}{108}{subsection.12.4.1}%
-\contentsline {subsection}{\numberline {12.4.2}Cross-Side Metric Merging}{108}{subsection.12.4.2}%
-\contentsline {subsection}{\numberline {12.4.3}Validation Verdict (Category~R)}{109}{subsection.12.4.3}%
-\contentsline {section}{\numberline {12.5}The RobustLogger}{109}{section.12.5}%
-\contentsline {subsection}{\numberline {12.5.1}Output Files}{110}{subsection.12.5.1}%
-\contentsline {subsection}{\numberline {12.5.2}SyncTracker}{110}{subsection.12.5.2}%
-\contentsline {section}{\numberline {12.6}Metrics Data Flow: End to End}{110}{section.12.6}%
-\contentsline {section}{\numberline {12.7}Persistence Formats}{111}{section.12.7}%
-\contentsline {section}{\numberline {12.8}Chapter Summary}{111}{section.12.8}%
-\contentsline {chapter}{\numberline {13}The Forensic Dashboard}{113}{chapter.13}%
-\contentsline {section}{\numberline {13.1}Technology Stack}{113}{section.13.1}%
-\contentsline {section}{\numberline {13.2}Backend Architecture}{114}{section.13.2}%
-\contentsline {subsection}{\numberline {13.2.1}Data Loading: The MetricsStore}{114}{subsection.13.2.1}%
-\contentsline {subsection}{\numberline {13.2.2}Pydantic Models}{115}{subsection.13.2.2}%
-\contentsline {subsection}{\numberline {13.2.3}API Endpoints}{115}{subsection.13.2.3}%
-\contentsline {subsection}{\numberline {13.2.4}Settings Store}{115}{subsection.13.2.4}%
-\contentsline {section}{\numberline {13.3}Frontend Architecture}{116}{section.13.3}%
-\contentsline {subsection}{\numberline {13.3.1}Application Layout}{116}{subsection.13.3.1}%
-\contentsline {subsection}{\numberline {13.3.2}State Management: Zustand Store}{116}{subsection.13.3.2}%
-\contentsline {subsection}{\numberline {13.3.3}TypeScript Type System}{117}{subsection.13.3.3}%
-\contentsline {section}{\numberline {13.4}Dashboard Pages}{117}{section.13.4}%
-\contentsline {subsection}{\numberline {13.4.1}Overview (Dashboard)}{117}{subsection.13.4.1}%
-\contentsline {subsection}{\numberline {13.4.2}Suite Explorer}{117}{subsection.13.4.2}%
-\contentsline {subsection}{\numberline {13.4.3}Suite Detail}{118}{subsection.13.4.3}%
-\contentsline {subsection}{\numberline {13.4.4}Latency Analysis}{118}{subsection.13.4.4}%
-\contentsline {subsection}{\numberline {13.4.5}Security Impact}{118}{subsection.13.4.5}%
-\contentsline {subsection}{\numberline {13.4.6}Power Analysis}{118}{subsection.13.4.6}%
-\contentsline {subsection}{\numberline {13.4.7}Comparison View}{119}{subsection.13.4.7}%
-\contentsline {subsection}{\numberline {13.4.8}Multi-Run Comparison}{119}{subsection.13.4.8}%
-\contentsline {subsection}{\numberline {13.4.9}Integrity Monitor}{119}{subsection.13.4.9}%
-\contentsline {subsection}{\numberline {13.4.10}Metric Semantics}{119}{subsection.13.4.10}%
-\contentsline {subsection}{\numberline {13.4.11}Settings}{120}{subsection.13.4.11}%
-\contentsline {section}{\numberline {13.5}Data Flow: Backend to Frontend}{120}{section.13.5}%
-\contentsline {section}{\numberline {13.6}Anomaly Detection}{120}{section.13.6}%
-\contentsline {section}{\numberline {13.7}Chapter Summary}{121}{section.13.7}%
-\contentsline {part}{V\hspace {1em}Engineering and Reflection}{123}{part.5}%
-\contentsline {chapter}{\numberline {14}Engineering Trade-Offs and Security Analysis}{125}{chapter.14}%
-\contentsline {section}{\numberline {14.1}Performance Trade-Offs}{125}{section.14.1}%
-\contentsline {subsection}{\numberline {14.1.1}NIST Level vs.\ Latency}{125}{subsection.14.1.1}%
-\contentsline {subsection}{\numberline {14.1.2}KEM Family Characteristics}{125}{subsection.14.1.2}%
-\contentsline {subsection}{\numberline {14.1.3}AEAD Algorithm Comparison}{126}{subsection.14.1.3}%
-\contentsline {subsection}{\numberline {14.1.4}Power vs.\ Security}{126}{subsection.14.1.4}%
-\contentsline {section}{\numberline {14.2}Design Decisions and Their Rationale}{126}{section.14.2}%
-\contentsline {subsection}{\numberline {14.2.1}Bump-in-the-Wire Architecture}{126}{subsection.14.2.1}%
-\contentsline {subsection}{\numberline {14.2.2}UDP over TCP}{127}{subsection.14.2.2}%
-\contentsline {subsection}{\numberline {14.2.3}Selectors over asyncio}{127}{subsection.14.2.3}%
-\contentsline {subsection}{\numberline {14.2.4}No Key Caching}{127}{subsection.14.2.4}%
-\contentsline {subsection}{\numberline {14.2.5}Two-Phase Commit for Policy}{127}{subsection.14.2.5}%
-\contentsline {section}{\numberline {14.3}Security Analysis}{127}{section.14.3}%
-\contentsline {subsection}{\numberline {14.3.1}Threat Model}{127}{subsection.14.3.1}%
-\contentsline {subsection}{\numberline {14.3.2}Cryptographic Security Properties}{128}{subsection.14.3.2}%
-\contentsline {subsection}{\numberline {14.3.3}Known Limitations and Residual Risks}{128}{subsection.14.3.3}%
-\contentsline {section}{\numberline {14.4}Cross-Platform Considerations}{129}{section.14.4}%
-\contentsline {section}{\numberline {14.5}Scalability and Resource Usage}{130}{section.14.5}%
-\contentsline {subsection}{\numberline {14.5.1}Memory}{130}{subsection.14.5.1}%
-\contentsline {subsection}{\numberline {14.5.2}CPU}{130}{subsection.14.5.2}%
-\contentsline {subsection}{\numberline {14.5.3}Network Bandwidth}{130}{subsection.14.5.3}%
-\contentsline {section}{\numberline {14.6}Testing Strategy}{130}{section.14.6}%
-\contentsline {section}{\numberline {14.7}Chapter Summary}{131}{section.14.7}%
-\contentsline {chapter}{\numberline {15}Conclusion and Future Work}{133}{chapter.15}%
-\contentsline {section}{\numberline {15.1}Summary of Contributions}{133}{section.15.1}%
-\contentsline {section}{\numberline {15.2}Key Findings}{133}{section.15.2}%
-\contentsline {section}{\numberline {15.3}Lessons Learned}{134}{section.15.3}%
-\contentsline {section}{\numberline {15.4}Future Work}{134}{section.15.4}%
-\contentsline {subsection}{\numberline {15.4.1}Short-Term Improvements}{134}{subsection.15.4.1}%
-\contentsline {subsection}{\numberline {15.4.2}Medium-Term Research Directions}{135}{subsection.15.4.2}%
-\contentsline {subsection}{\numberline {15.4.3}Long-Term Vision}{135}{subsection.15.4.3}%
-\contentsline {section}{\numberline {15.5}Closing Remarks}{135}{section.15.5}%
-\contentsline {chapter}{\numberline {A}Configuration Reference}{137}{appendix.A}%
-\contentsline {section}{\numberline {A.1}Environment Variable Overrides}{137}{section.A.1}%
-\contentsline {section}{\numberline {A.2}Handshake and Data-Plane Ports}{137}{section.A.2}%
-\contentsline {section}{\numberline {A.3}Host Addresses}{138}{section.A.3}%
-\contentsline {section}{\numberline {A.4}Cryptographic and Runtime Parameters}{138}{section.A.4}%
-\contentsline {section}{\numberline {A.5}Security and Hardening}{139}{section.A.5}%
-\contentsline {section}{\numberline {A.6}Control Channel}{139}{section.A.6}%
-\contentsline {section}{\numberline {A.7}MAVProxy and MAVLink}{139}{section.A.7}%
-\contentsline {section}{\numberline {A.8}Bare Scheduler Defaults}{140}{section.A.8}%
-\contentsline {section}{\numberline {A.9}Simple Automation Defaults}{140}{section.A.9}%
-\contentsline {section}{\numberline {A.10}Simulation and Testing}{140}{section.A.10}%
-\contentsline {section}{\numberline {A.11}AUTO\_DRONE Sub-Dictionary}{141}{section.A.11}%
-\contentsline {section}{\numberline {A.12}AUTO\_GCS Sub-Dictionary}{141}{section.A.12}%
-\contentsline {section}{\numberline {A.13}BENCHMARK Sub-Dictionary}{142}{section.A.13}%
-\contentsline {section}{\numberline {A.14}Validation Rules}{142}{section.A.14}%
-\contentsline {chapter}{\numberline {B}Wire Format Specification}{143}{appendix.B}%
-\contentsline {section}{\numberline {B.1}Packet Structure Overview}{143}{section.B.1}%
-\contentsline {section}{\numberline {B.2}Header Format}{143}{section.B.2}%
-\contentsline {subsection}{\numberline {B.2.1}Field Semantics}{143}{subsection.B.2.1}%
-\contentsline {paragraph}{version.}{143}{section*.62}%
-\contentsline {paragraph}{kem\_id and kem\_param.}{144}{section*.63}%
-\contentsline {paragraph}{sig\_id and sig\_param.}{144}{section*.64}%
-\contentsline {paragraph}{session\_id.}{144}{section*.65}%
-\contentsline {paragraph}{seq.}{144}{section*.66}%
-\contentsline {paragraph}{epoch.}{144}{section*.67}%
-\contentsline {section}{\numberline {B.3}Nonce Construction}{145}{section.B.3}%
-\contentsline {section}{\numberline {B.4}Complete Packet Layout}{145}{section.B.4}%
-\contentsline {section}{\numberline {B.5}Packet Size Analysis}{145}{section.B.5}%
-\contentsline {section}{\numberline {B.6}Authentication Tag}{146}{section.B.6}%
-\contentsline {section}{\numberline {B.7}Replay Protection on the Wire}{146}{section.B.7}%
-\contentsline {section}{\numberline {B.8}Session ID Derivation}{147}{section.B.8}%
-\contentsline {chapter}{\numberline {C}Metrics Schema Reference}{149}{appendix.C}%
-\contentsline {section}{\numberline {C.1}Category A: Run Context}{149}{section.C.1}%
-\contentsline {section}{\numberline {C.2}Category B: Suite Crypto Identity}{150}{section.C.2}%
-\contentsline {section}{\numberline {C.3}Category C: Suite Lifecycle Timeline}{150}{section.C.3}%
-\contentsline {section}{\numberline {C.4}Category D: Handshake Metrics}{150}{section.C.4}%
-\contentsline {section}{\numberline {C.5}Category E: Crypto Primitive Breakdown}{151}{section.C.5}%
-\contentsline {section}{\numberline {C.6}Category F: Rekey Metrics}{151}{section.C.6}%
-\contentsline {section}{\numberline {C.7}Category G: Data Plane}{151}{section.C.7}%
-\contentsline {section}{\numberline {C.8}Category H: Latency and Jitter}{152}{section.C.8}%
-\contentsline {section}{\numberline {C.9}Category I: MAVProxy Drone}{152}{section.C.9}%
-\contentsline {section}{\numberline {C.10}Category J: MAVProxy GCS (Pruned)}{153}{section.C.10}%
-\contentsline {section}{\numberline {C.11}Category K: MAVLink Integrity}{153}{section.C.11}%
-\contentsline {section}{\numberline {C.12}Category L: Flight Controller Telemetry}{154}{section.C.12}%
-\contentsline {section}{\numberline {C.13}Category M: Control Plane}{154}{section.C.13}%
-\contentsline {section}{\numberline {C.14}Category N: System Resources (Drone)}{155}{section.C.14}%
-\contentsline {section}{\numberline {C.15}Category O: System Resources (GCS) --- Deprecated}{155}{section.C.15}%
-\contentsline {section}{\numberline {C.16}Category P: Power and Energy}{155}{section.C.16}%
-\contentsline {section}{\numberline {C.17}Category Q: Observability}{155}{section.C.17}%
-\contentsline {section}{\numberline {C.18}Category R: Validation}{156}{section.C.18}%
-\contentsline {section}{\numberline {C.19}Composite Record}{156}{section.C.19}%
-\contentsline {chapter}{Colophon}{157}{appendix*.69}%
+\contentsline {section}{\numberline {7.9}Cryptographic Key Lifecycle}{64}{section.7.9}%
+\contentsline {subsection}{\numberline {7.9.1}Phase 1: Key Generation (Handshake)}{64}{subsection.7.9.1}%
+\contentsline {subsection}{\numberline {7.9.2}Phase 2: Key Derivation (HKDF)}{64}{subsection.7.9.2}%
+\contentsline {subsection}{\numberline {7.9.3}Phase 3: Active Use (AEAD Encryption)}{65}{subsection.7.9.3}%
+\contentsline {subsection}{\numberline {7.9.4}Phase 4: Rekey (Suite Rotation)}{65}{subsection.7.9.4}%
+\contentsline {subsection}{\numberline {7.9.5}Phase 5: Key Destruction (Normal Termination)}{66}{subsection.7.9.5}%
+\contentsline {subsection}{\numberline {7.9.6}Phase 6: Crash Recovery}{66}{subsection.7.9.6}%
+\contentsline {section}{\numberline {7.10}Summary}{67}{section.7.10}%
+\contentsline {chapter}{\numberline {8}AEAD Framing and Wire Format}{69}{chapter.8}%
+\contentsline {section}{\numberline {8.1}Wire Packet Structure}{69}{section.8.1}%
+\contentsline {subsection}{\numberline {8.1.1}Header Format}{69}{subsection.8.1.1}%
+\contentsline {subsection}{\numberline {8.1.2}What Is NOT on the Wire}{69}{subsection.8.1.2}%
+\contentsline {section}{\numberline {8.2}The Sender}{70}{section.8.2}%
+\contentsline {subsection}{\numberline {8.2.1}Encryption Flow}{71}{subsection.8.2.1}%
+\contentsline {subsection}{\numberline {8.2.2}Epoch Management}{71}{subsection.8.2.2}%
+\contentsline {section}{\numberline {8.3}The Receiver}{71}{section.8.3}%
+\contentsline {subsection}{\numberline {8.3.1}Decryption Flow}{72}{subsection.8.3.1}%
+\contentsline {subsection}{\numberline {8.3.2}Error Handling Modes}{72}{subsection.8.3.2}%
+\contentsline {section}{\numberline {8.4}The Sliding Replay Window}{72}{section.8.4}%
+\contentsline {subsection}{\numberline {8.4.1}Decision Logic}{73}{subsection.8.4.1}%
+\contentsline {section}{\numberline {8.5}The ASCON Adapter}{73}{section.8.5}%
+\contentsline {section}{\numberline {8.6}Packet Size Analysis}{74}{section.8.6}%
+\contentsline {section}{\numberline {8.7}Summary}{74}{section.8.7}%
+\contentsline {chapter}{\numberline {9}The Proxy Engine}{77}{chapter.9}%
+\contentsline {section}{\numberline {9.1}Role Duality}{77}{section.9.1}%
+\contentsline {section}{\numberline {9.2}Socket Architecture}{77}{section.9.2}%
+\contentsline {section}{\numberline {9.3}The Event Loop}{78}{section.9.3}%
+\contentsline {subsection}{\numberline {9.3.1}Plaintext Ingress Path}{78}{subsection.9.3.1}%
+\contentsline {subsection}{\numberline {9.3.2}Encrypted Ingress Path}{78}{subsection.9.3.2}%
+\contentsline {section}{\numberline {9.4}Handshake Orchestration}{79}{section.9.4}%
+\contentsline {section}{\numberline {9.5}Rate Limiting}{79}{section.9.5}%
+\contentsline {section}{\numberline {9.6}Drop Accounting}{80}{section.9.6}%
+\contentsline {section}{\numberline {9.7}DSCP Marking}{80}{section.9.7}%
+\contentsline {section}{\numberline {9.8}Rekey Integration}{80}{section.9.8}%
+\contentsline {section}{\numberline {9.9}Metrics Collection}{81}{section.9.9}%
+\contentsline {section}{\numberline {9.10}The CLI Entry Point}{81}{section.9.10}%
+\contentsline {section}{\numberline {9.11}Summary}{82}{section.9.11}%
+\contentsline {chapter}{\numberline {10}The Suite Registry}{83}{chapter.10}%
+\contentsline {section}{\numberline {10.1}The Three Registries}{83}{section.10.1}%
+\contentsline {subsection}{\numberline {10.1.1}KEM Registry}{83}{subsection.10.1.1}%
+\contentsline {subsection}{\numberline {10.1.2}Signature Registry}{84}{subsection.10.1.2}%
+\contentsline {subsection}{\numberline {10.1.3}AEAD Registry}{84}{subsection.10.1.3}%
+\contentsline {section}{\numberline {10.2}Suite Generation}{84}{section.10.2}%
+\contentsline {subsection}{\numberline {10.2.1}Stage 1: Level-Consistent Pairing}{84}{subsection.10.2.1}%
+\contentsline {subsection}{\numberline {10.2.2}Stage 2: AEAD Cross Product}{85}{subsection.10.2.2}%
+\contentsline {subsection}{\numberline {10.2.3}Suite ID Format}{85}{subsection.10.2.3}%
+\contentsline {section}{\numberline {10.3}Alias Resolution}{85}{section.10.3}%
+\contentsline {section}{\numberline {10.4}Runtime Probing}{85}{section.10.4}%
+\contentsline {subsection}{\numberline {10.4.1}OQS Mechanism Discovery}{86}{subsection.10.4.1}%
+\contentsline {subsection}{\numberline {10.4.2}AEAD Availability}{86}{subsection.10.4.2}%
+\contentsline {subsection}{\numberline {10.4.3}Suite Pruning}{86}{subsection.10.4.3}%
+\contentsline {section}{\numberline {10.5}Environment Overrides}{86}{section.10.5}%
+\contentsline {section}{\numberline {10.6}Query Functions}{86}{section.10.6}%
+\contentsline {section}{\numberline {10.7}Immutability}{87}{section.10.7}%
+\contentsline {section}{\numberline {10.8}Summary}{87}{section.10.8}%
+\contentsline {part}{IV\hspace {1em}Orchestration and Measurement}{89}{part.4}%
+\contentsline {chapter}{\numberline {11}Benchmark Orchestration and Scheduling}{91}{chapter.11}%
+\contentsline {section}{\numberline {11.1}Controller--Follower Architecture}{91}{section.11.1}%
+\contentsline {section}{\numberline {11.2}The TCP Control Channel}{92}{section.11.2}%
+\contentsline {subsection}{\numberline {11.2.1}Clock Synchronisation: Operation Chronos}{93}{subsection.11.2.1}%
+\contentsline {section}{\numberline {11.3}Benchmark Modes}{93}{section.11.3}%
+\contentsline {section}{\numberline {11.4}The BenchmarkPolicy}{94}{section.11.4}%
+\contentsline {subsection}{\numberline {11.4.1}Data Structures}{94}{subsection.11.4.1}%
+\contentsline {subsection}{\numberline {11.4.2}Two-Phase Commit Protocol}{94}{subsection.11.4.2}%
+\contentsline {subsection}{\numberline {11.4.3}Suite Cycling}{95}{subsection.11.4.3}%
+\contentsline {subsection}{\numberline {11.4.4}Metrics Collection per Suite}{95}{subsection.11.4.4}%
+\contentsline {subsection}{\numberline {11.4.5}Result Persistence}{95}{subsection.11.4.5}%
+\contentsline {section}{\numberline {11.5}The Drone Benchmark Scheduler}{96}{section.11.5}%
+\contentsline {subsection}{\numberline {11.5.1}Initialisation}{96}{subsection.11.5.1}%
+\contentsline {subsection}{\numberline {11.5.2}The Main Loop}{96}{subsection.11.5.2}%
+\contentsline {subsection}{\numberline {11.5.3}The DroneProxyManager}{98}{subsection.11.5.3}%
+\contentsline {subsection}{\numberline {11.5.4}Handshake Status Reader}{98}{subsection.11.5.4}%
+\contentsline {section}{\numberline {11.6}The GCS Benchmark Server}{98}{section.11.6}%
+\contentsline {subsection}{\numberline {11.6.1}Component Stack}{99}{subsection.11.6.1}%
+\contentsline {subsection}{\numberline {11.6.2}Command Handling}{99}{subsection.11.6.2}%
+\contentsline {subsection}{\numberline {11.6.3}Consistent Log Directories}{99}{subsection.11.6.3}%
+\contentsline {section}{\numberline {11.7}Scheduling Policies}{100}{section.11.7}%
+\contentsline {subsection}{\numberline {11.7.1}TelemetryAwarePolicyV2}{100}{subsection.11.7.1}%
+\contentsline {subsubsection}{\numberline {11.7.1.1}Suite Tier Mapping}{100}{subsubsection.11.7.1.1}%
+\contentsline {subsubsection}{\numberline {11.7.1.2}Hysteresis}{100}{subsubsection.11.7.1.2}%
+\contentsline {subsubsection}{\numberline {11.7.1.3}Blacklisting}{101}{subsubsection.11.7.1.3}%
+\contentsline {subsubsection}{\numberline {11.7.1.4}Rekey Rate Limiting}{101}{subsubsection.11.7.1.4}%
+\contentsline {subsection}{\numberline {11.7.2}Simple Policies}{101}{subsection.11.7.2}%
+\contentsline {section}{\numberline {11.8}Subprocess Management}{101}{section.11.8}%
+\contentsline {section}{\numberline {11.9}End-to-End Benchmark Flow}{102}{section.11.9}%
+\contentsline {section}{\numberline {11.10}Error Handling and Resilience}{102}{section.11.10}%
+\contentsline {section}{\numberline {11.11}Chapter Summary}{103}{section.11.11}%
+\contentsline {chapter}{\numberline {12}The Metrics Pipeline}{105}{chapter.12}%
+\contentsline {section}{\numberline {12.1}The 18-Category Schema}{105}{section.12.1}%
+\contentsline {subsection}{\numberline {12.1.1}Schema Design Principles}{105}{subsection.12.1.1}%
+\contentsline {section}{\numberline {12.2}Collectors}{107}{section.12.2}%
+\contentsline {subsection}{\numberline {12.2.1}EnvironmentCollector}{107}{subsection.12.2.1}%
+\contentsline {subsection}{\numberline {12.2.2}SystemCollector}{107}{subsection.12.2.2}%
+\contentsline {subsection}{\numberline {12.2.3}PowerCollector}{108}{subsection.12.2.3}%
+\contentsline {subsection}{\numberline {12.2.4}NetworkCollector}{108}{subsection.12.2.4}%
+\contentsline {subsection}{\numberline {12.2.5}MavLinkMetricsCollector}{108}{subsection.12.2.5}%
+\contentsline {subsubsection}{\numberline {12.2.5.1}Architecture}{108}{subsubsection.12.2.5.1}%
+\contentsline {subsubsection}{\numberline {12.2.5.2}Tracked Metrics}{108}{subsubsection.12.2.5.2}%
+\contentsline {subsubsection}{\numberline {12.2.5.3}One-Way Latency Estimation}{108}{subsubsection.12.2.5.3}%
+\contentsline {subsubsection}{\numberline {12.2.5.4}Sequence Gap Detection}{109}{subsubsection.12.2.5.4}%
+\contentsline {section}{\numberline {12.3}The INA219 Power Monitor}{109}{section.12.3}%
+\contentsline {subsection}{\numberline {12.3.1}Register-Level Access}{110}{subsection.12.3.1}%
+\contentsline {subsection}{\numberline {12.3.2}ADC Profiles}{110}{subsection.12.3.2}%
+\contentsline {subsection}{\numberline {12.3.3}Capture and Energy Integration}{110}{subsection.12.3.3}%
+\contentsline {subsection}{\numberline {12.3.4}RPi5 hwmon Backend}{111}{subsection.12.3.4}%
+\contentsline {subsection}{\numberline {12.3.5}Sign Resolution}{111}{subsection.12.3.5}%
+\contentsline {section}{\numberline {12.4}The Metrics Aggregator}{111}{section.12.4}%
+\contentsline {subsection}{\numberline {12.4.1}Lifecycle}{112}{subsection.12.4.1}%
+\contentsline {subsection}{\numberline {12.4.2}Cross-Side Metric Merging}{112}{subsection.12.4.2}%
+\contentsline {subsection}{\numberline {12.4.3}Validation Verdict (Category~R)}{113}{subsection.12.4.3}%
+\contentsline {section}{\numberline {12.5}The RobustLogger}{113}{section.12.5}%
+\contentsline {subsection}{\numberline {12.5.1}Output Files}{114}{subsection.12.5.1}%
+\contentsline {subsection}{\numberline {12.5.2}SyncTracker}{114}{subsection.12.5.2}%
+\contentsline {section}{\numberline {12.6}Failure Mode Taxonomy}{114}{section.12.6}%
+\contentsline {subsection}{\numberline {12.6.1}Class 1: Real Failures}{114}{subsection.12.6.1}%
+\contentsline {subsection}{\numberline {12.6.2}Class 2: Expected Absences}{115}{subsection.12.6.2}%
+\contentsline {subsection}{\numberline {12.6.3}Class 3: Structural Unavailability}{115}{subsection.12.6.3}%
+\contentsline {subsection}{\numberline {12.6.4}Impact on Validation Verdict (Category R)}{116}{subsection.12.6.4}%
+\contentsline {section}{\numberline {12.7}Metrics Data Flow: End to End}{117}{section.12.7}%
+\contentsline {section}{\numberline {12.8}Persistence Formats}{117}{section.12.8}%
+\contentsline {section}{\numberline {12.9}Chapter Summary}{117}{section.12.9}%
+\contentsline {chapter}{\numberline {13}The Forensic Dashboard}{119}{chapter.13}%
+\contentsline {section}{\numberline {13.1}Technology Stack}{119}{section.13.1}%
+\contentsline {section}{\numberline {13.2}Backend Architecture}{120}{section.13.2}%
+\contentsline {subsection}{\numberline {13.2.1}Data Loading: The MetricsStore}{120}{subsection.13.2.1}%
+\contentsline {subsection}{\numberline {13.2.2}Pydantic Models}{121}{subsection.13.2.2}%
+\contentsline {subsection}{\numberline {13.2.3}API Endpoints}{121}{subsection.13.2.3}%
+\contentsline {subsection}{\numberline {13.2.4}Settings Store}{121}{subsection.13.2.4}%
+\contentsline {section}{\numberline {13.3}Frontend Architecture}{122}{section.13.3}%
+\contentsline {subsection}{\numberline {13.3.1}Application Layout}{122}{subsection.13.3.1}%
+\contentsline {subsection}{\numberline {13.3.2}State Management: Zustand Store}{122}{subsection.13.3.2}%
+\contentsline {subsection}{\numberline {13.3.3}TypeScript Type System}{123}{subsection.13.3.3}%
+\contentsline {section}{\numberline {13.4}Dashboard Pages}{123}{section.13.4}%
+\contentsline {subsection}{\numberline {13.4.1}Overview (Dashboard)}{123}{subsection.13.4.1}%
+\contentsline {subsection}{\numberline {13.4.2}Suite Explorer}{123}{subsection.13.4.2}%
+\contentsline {subsection}{\numberline {13.4.3}Suite Detail}{124}{subsection.13.4.3}%
+\contentsline {subsection}{\numberline {13.4.4}Latency Analysis}{124}{subsection.13.4.4}%
+\contentsline {subsection}{\numberline {13.4.5}Security Impact}{124}{subsection.13.4.5}%
+\contentsline {subsection}{\numberline {13.4.6}Power Analysis}{124}{subsection.13.4.6}%
+\contentsline {subsection}{\numberline {13.4.7}Comparison View}{125}{subsection.13.4.7}%
+\contentsline {subsection}{\numberline {13.4.8}Multi-Run Comparison}{125}{subsection.13.4.8}%
+\contentsline {subsection}{\numberline {13.4.9}Integrity Monitor}{125}{subsection.13.4.9}%
+\contentsline {subsection}{\numberline {13.4.10}Metric Semantics}{125}{subsection.13.4.10}%
+\contentsline {subsection}{\numberline {13.4.11}Settings}{126}{subsection.13.4.11}%
+\contentsline {section}{\numberline {13.5}Data Flow: Backend to Frontend}{126}{section.13.5}%
+\contentsline {section}{\numberline {13.6}Interpreting Dashboard Data}{126}{section.13.6}%
+\contentsline {subsection}{\numberline {13.6.1}Null Is Not Zero}{126}{subsection.13.6.1}%
+\contentsline {subsection}{\numberline {13.6.2}Understanding FAIL Verdicts}{127}{subsection.13.6.2}%
+\contentsline {subsection}{\numberline {13.6.3}Comparing Across Scenarios}{127}{subsection.13.6.3}%
+\contentsline {subsection}{\numberline {13.6.4}When Data Is Missing}{127}{subsection.13.6.4}%
+\contentsline {subsection}{\numberline {13.6.5}Heatmap Colour Scale}{128}{subsection.13.6.5}%
+\contentsline {section}{\numberline {13.7}Anomaly Detection}{128}{section.13.7}%
+\contentsline {section}{\numberline {13.8}Chapter Summary}{128}{section.13.8}%
+\contentsline {part}{V\hspace {1em}Engineering and Reflection}{131}{part.5}%
+\contentsline {chapter}{\numberline {14}Engineering Trade-Offs and Security Analysis}{133}{chapter.14}%
+\contentsline {section}{\numberline {14.1}Performance Trade-Offs}{133}{section.14.1}%
+\contentsline {subsection}{\numberline {14.1.1}NIST Level vs.\ Latency}{133}{subsection.14.1.1}%
+\contentsline {subsection}{\numberline {14.1.2}KEM Family Characteristics}{133}{subsection.14.1.2}%
+\contentsline {subsection}{\numberline {14.1.3}AEAD Algorithm Comparison}{134}{subsection.14.1.3}%
+\contentsline {subsection}{\numberline {14.1.4}Power vs.\ Security}{134}{subsection.14.1.4}%
+\contentsline {section}{\numberline {14.2}Design Decisions and Their Rationale}{134}{section.14.2}%
+\contentsline {subsection}{\numberline {14.2.1}Bump-in-the-Wire Architecture}{134}{subsection.14.2.1}%
+\contentsline {subsection}{\numberline {14.2.2}UDP over TCP}{135}{subsection.14.2.2}%
+\contentsline {subsection}{\numberline {14.2.3}Selectors over asyncio}{135}{subsection.14.2.3}%
+\contentsline {subsection}{\numberline {14.2.4}No Key Caching}{135}{subsection.14.2.4}%
+\contentsline {subsection}{\numberline {14.2.5}Two-Phase Commit for Policy}{135}{subsection.14.2.5}%
+\contentsline {section}{\numberline {14.3}Security Analysis}{135}{section.14.3}%
+\contentsline {subsection}{\numberline {14.3.1}Formal Threat Model}{135}{subsection.14.3.1}%
+\contentsline {subsubsection}{\numberline {14.3.1.1}Adversary Capabilities}{135}{subsubsection.14.3.1.1}%
+\contentsline {subsubsection}{\numberline {14.3.1.2}Trust Assumptions}{136}{subsubsection.14.3.1.2}%
+\contentsline {subsubsection}{\numberline {14.3.1.3}Security Goals}{137}{subsubsection.14.3.1.3}%
+\contentsline {subsubsection}{\numberline {14.3.1.4}Explicit Non-Goals}{137}{subsubsection.14.3.1.4}%
+\contentsline {subsubsection}{\numberline {14.3.1.5}Scope of the Data-Plane Security Boundary}{138}{subsubsection.14.3.1.5}%
+\contentsline {subsection}{\numberline {14.3.2}Cryptographic Security Properties}{139}{subsection.14.3.2}%
+\contentsline {subsection}{\numberline {14.3.3}Known Limitations and Residual Risks}{139}{subsection.14.3.3}%
+\contentsline {section}{\numberline {14.4}Cross-Platform Considerations}{140}{section.14.4}%
+\contentsline {section}{\numberline {14.5}Scalability and Resource Usage}{141}{section.14.5}%
+\contentsline {subsection}{\numberline {14.5.1}Memory}{141}{subsection.14.5.1}%
+\contentsline {subsection}{\numberline {14.5.2}CPU}{141}{subsection.14.5.2}%
+\contentsline {subsection}{\numberline {14.5.3}Network Bandwidth}{141}{subsection.14.5.3}%
+\contentsline {section}{\numberline {14.6}Testing Strategy}{141}{section.14.6}%
+\contentsline {section}{\numberline {14.7}Reproducibility and Experimental Constraints}{142}{section.14.7}%
+\contentsline {subsection}{\numberline {14.7.1}Hardware Dependencies}{142}{subsection.14.7.1}%
+\contentsline {subsection}{\numberline {14.7.2}Software Dependencies}{142}{subsection.14.7.2}%
+\contentsline {subsection}{\numberline {14.7.3}Environmental Factors}{143}{subsection.14.7.3}%
+\contentsline {subsection}{\numberline {14.7.4}What Can and Cannot Be Replicated}{143}{subsection.14.7.4}%
+\contentsline {subsection}{\numberline {14.7.5}Reproducibility Checklist}{144}{subsection.14.7.5}%
+\contentsline {section}{\numberline {14.8}Chapter Summary}{144}{section.14.8}%
+\contentsline {chapter}{\numberline {15}Conclusion and Future Work}{145}{chapter.15}%
+\contentsline {section}{\numberline {15.1}Summary of Contributions}{145}{section.15.1}%
+\contentsline {section}{\numberline {15.2}Key Findings}{145}{section.15.2}%
+\contentsline {section}{\numberline {15.3}Lessons Learned}{146}{section.15.3}%
+\contentsline {section}{\numberline {15.4}Future Work}{147}{section.15.4}%
+\contentsline {subsection}{\numberline {15.4.1}Short-Term Improvements}{147}{subsection.15.4.1}%
+\contentsline {subsection}{\numberline {15.4.2}Medium-Term Research Directions}{147}{subsection.15.4.2}%
+\contentsline {subsection}{\numberline {15.4.3}Long-Term Vision}{147}{subsection.15.4.3}%
+\contentsline {section}{\numberline {15.5}Closing Remarks}{148}{section.15.5}%
+\contentsline {part}{VI\hspace {1em}Reference and Deployment}{149}{part.6}%
+\contentsline {chapter}{\numberline {16}Software Dependencies and Environment}{151}{chapter.16}%
+\contentsline {section}{\numberline {16.1}Why Dependencies Matter}{151}{section.16.1}%
+\contentsline {section}{\numberline {16.2}Dependency Architecture Overview}{151}{section.16.2}%
+\contentsline {section}{\numberline {16.3}Python Backend Dependencies}{152}{section.16.3}%
+\contentsline {subsection}{\numberline {16.3.1}The \texttt {cryptography} Package}{152}{subsection.16.3.1}%
+\contentsline {paragraph}{What it provides.}{152}{section*.66}%
+\contentsline {paragraph}{Where it is used.}{153}{section*.67}%
+\contentsline {subsection}{\numberline {16.3.2}The \texttt {oqs-python} Package (liboqs)}{153}{subsection.16.3.2}%
+\contentsline {paragraph}{What it provides.}{153}{section*.68}%
+\contentsline {paragraph}{Import patterns used.}{154}{section*.69}%
+\contentsline {paragraph}{Where it is used.}{154}{section*.70}%
+\contentsline {subsection}{\numberline {16.3.3}The \texttt {pyascon} Package}{154}{subsection.16.3.3}%
+\contentsline {paragraph}{What it provides.}{154}{section*.71}%
+\contentsline {paragraph}{Why it exists alongside the native C extension.}{155}{section*.72}%
+\contentsline {subsection}{\numberline {16.3.4}The \texttt {psutil} Package}{155}{subsection.16.3.4}%
+\contentsline {paragraph}{What it provides.}{155}{section*.73}%
+\contentsline {paragraph}{Where it is used.}{155}{section*.74}%
+\contentsline {subsection}{\numberline {16.3.5}The \texttt {pymavlink} Package}{156}{subsection.16.3.5}%
+\contentsline {paragraph}{What it provides.}{156}{section*.75}%
+\contentsline {paragraph}{Where it is used.}{156}{section*.76}%
+\contentsline {subsection}{\numberline {16.3.6}The \texttt {smbus2} Package}{156}{subsection.16.3.6}%
+\contentsline {paragraph}{What it provides.}{156}{section*.77}%
+\contentsline {paragraph}{Where it is used.}{156}{section*.78}%
+\contentsline {subsection}{\numberline {16.3.7}The \texttt {ina219} (pi-ina219) Package}{157}{subsection.16.3.7}%
+\contentsline {paragraph}{What it provides.}{157}{section*.79}%
+\contentsline {paragraph}{Relationship to \texttt {smbus2}.}{157}{section*.80}%
+\contentsline {subsection}{\numberline {16.3.8}The \texttt {zeroconf} Package}{157}{subsection.16.3.8}%
+\contentsline {paragraph}{What it provides.}{157}{section*.81}%
+\contentsline {paragraph}{Where it is used.}{157}{section*.82}%
+\contentsline {subsection}{\numberline {16.3.9}The \texttt {FastAPI} Framework}{158}{subsection.16.3.9}%
+\contentsline {paragraph}{What it provides.}{158}{section*.83}%
+\contentsline {paragraph}{Where it is used.}{158}{section*.84}%
+\contentsline {subsection}{\numberline {16.3.10}The \texttt {uvicorn} Server}{158}{subsection.16.3.10}%
+\contentsline {paragraph}{What it provides.}{158}{section*.85}%
+\contentsline {paragraph}{Where it is used.}{159}{section*.86}%
+\contentsline {subsection}{\numberline {16.3.11}The \texttt {pydantic} Package}{159}{subsection.16.3.11}%
+\contentsline {paragraph}{What it provides.}{159}{section*.87}%
+\contentsline {paragraph}{Where it is used.}{159}{section*.88}%
+\contentsline {subsection}{\numberline {16.3.12}The \texttt {pandas} Package}{159}{subsection.16.3.12}%
+\contentsline {paragraph}{What it provides.}{159}{section*.89}%
+\contentsline {paragraph}{Where it is used.}{159}{section*.90}%
+\contentsline {subsection}{\numberline {16.3.13}The \texttt {numpy} Package}{160}{subsection.16.3.13}%
+\contentsline {paragraph}{What it provides.}{160}{section*.91}%
+\contentsline {subsection}{\numberline {16.3.14}The \texttt {matplotlib} Package}{160}{subsection.16.3.14}%
+\contentsline {paragraph}{What it provides.}{160}{section*.92}%
+\contentsline {paragraph}{Where it is used.}{160}{section*.93}%
+\contentsline {section}{\numberline {16.4}Python Standard Library: Notable Usage}{161}{section.16.4}%
+\contentsline {subsection}{\numberline {16.4.1}\texttt {selectors} --- I/O Multiplexing}{161}{subsection.16.4.1}%
+\contentsline {subsection}{\numberline {16.4.2}\texttt {struct} --- Binary Protocol Packing}{161}{subsection.16.4.2}%
+\contentsline {subsection}{\numberline {16.4.3}\texttt {ctypes} and \texttt {msvcrt} --- OS-Level Process Control}{161}{subsection.16.4.3}%
+\contentsline {subsection}{\numberline {16.4.4}\texttt {fcntl} / \texttt {msvcrt} --- File Locking}{161}{subsection.16.4.4}%
+\contentsline {subsection}{\numberline {16.4.5}\texttt {hashlib}, \texttt {hmac}, \texttt {secrets}}{161}{subsection.16.4.5}%
+\contentsline {subsection}{\numberline {16.4.6}\texttt {subprocess} --- External Process Management}{162}{subsection.16.4.6}%
+\contentsline {subsection}{\numberline {16.4.7}\texttt {statistics} --- Descriptive Statistics}{162}{subsection.16.4.7}%
+\contentsline {subsection}{\numberline {16.4.8}\texttt {tkinter} --- Devtools GUI}{162}{subsection.16.4.8}%
+\contentsline {subsection}{\numberline {16.4.9}\texttt {platform} --- Cross-Platform Detection}{162}{subsection.16.4.9}%
+\contentsline {section}{\numberline {16.5}The Native ASCON C Extension}{162}{section.16.5}%
+\contentsline {section}{\numberline {16.6}JavaScript / TypeScript Frontend Dependencies}{163}{section.16.6}%
+\contentsline {subsection}{\numberline {16.6.1}Runtime Dependencies}{163}{subsection.16.6.1}%
+\contentsline {subsection}{\numberline {16.6.2}Development Dependencies}{164}{subsection.16.6.2}%
+\contentsline {section}{\numberline {16.7}System-Level Dependencies}{165}{section.16.7}%
+\contentsline {subsection}{\numberline {16.7.1}The \texttt {liboqs} C Library}{165}{subsection.16.7.1}%
+\contentsline {subsection}{\numberline {16.7.2}I\textsuperscript {2}C Kernel Driver}{165}{subsection.16.7.2}%
+\contentsline {subsection}{\numberline {16.7.3}MAVProxy}{165}{subsection.16.7.3}%
+\contentsline {subsection}{\numberline {16.7.4}Node.js Runtime}{165}{subsection.16.7.4}%
+\contentsline {subsection}{\numberline {16.7.5}Python 3.11+ Runtime}{165}{subsection.16.7.5}%
+\contentsline {section}{\numberline {16.8}Dependency Relationships}{166}{section.16.8}%
+\contentsline {section}{\numberline {16.9}Version Pinning and Reproducibility}{166}{section.16.9}%
+\contentsline {section}{\numberline {16.10}Dependency Security Considerations}{167}{section.16.10}%
+\contentsline {section}{\numberline {16.11}Chapter Summary}{168}{section.16.11}%
+\contentsline {chapter}{\numberline {17}Codebase Walkthrough}{169}{chapter.17}%
+\contentsline {section}{\numberline {17.1}Repository Layout}{169}{section.17.1}%
+\contentsline {section}{\numberline {17.2}The \texttt {core/} Package: Module Census}{170}{section.17.2}%
+\contentsline {section}{\numberline {17.3}\texttt {core/exceptions.py}: The Exception Hierarchy}{171}{section.17.3}%
+\contentsline {section}{\numberline {17.4}\texttt {core/env\_loader.py}: Environment File Loading}{172}{section.17.4}%
+\contentsline {section}{\numberline {17.5}\texttt {core/logging\_utils.py}: Structured JSON Logging}{173}{section.17.5}%
+\contentsline {section}{\numberline {17.6}\texttt {core/config.py}: The Global Configuration}{174}{section.17.6}%
+\contentsline {section}{\numberline {17.7}\texttt {core/aead.py}: The AEAD Framing Layer}{175}{section.17.7}%
+\contentsline {subsection}{\numberline {17.7.1}The Import Fallback Chain}{175}{subsection.17.7.1}%
+\contentsline {subsection}{\numberline {17.7.2}The ASCON Adapter}{176}{subsection.17.7.2}%
+\contentsline {subsection}{\numberline {17.7.3}The Sender and Receiver Classes}{176}{subsection.17.7.3}%
+\contentsline {section}{\numberline {17.8}\texttt {core/handshake.py}: The PQC Handshake}{177}{section.17.8}%
+\contentsline {subsection}{\numberline {17.8.1}OQS Import Compatibility}{177}{subsection.17.8.1}%
+\contentsline {subsection}{\numberline {17.8.2}Handshake Metrics Instrumentation}{177}{subsection.17.8.2}%
+\contentsline {section}{\numberline {17.9}\texttt {core/bridge.py}: The Proxy Engine}{178}{section.17.9}%
+\contentsline {subsection}{\numberline {17.9.1}The \texttt {ProxyCounters} Class}{178}{subsection.17.9.1}%
+\contentsline {subsection}{\numberline {17.9.2}The Main Proxy Function Signature}{179}{subsection.17.9.2}%
+\contentsline {subsection}{\numberline {17.9.3}Status File Communication}{179}{subsection.17.9.3}%
+\contentsline {section}{\numberline {17.10}\texttt {core/suites.py}: The Suite Registry}{180}{section.17.10}%
+\contentsline {section}{\numberline {17.11}\texttt {core/process.py}: Cross-Platform Process Management}{180}{section.17.11}%
+\contentsline {subsection}{\numberline {17.11.1}Windows: Win32 Job Objects}{180}{subsection.17.11.1}%
+\contentsline {subsection}{\numberline {17.11.2}Linux: PDEATHSIG}{181}{subsection.17.11.2}%
+\contentsline {section}{\numberline {17.12}\texttt {core/power\_monitor.py}: High-Frequency Power Measurement}{181}{section.17.12}%
+\contentsline {section}{\numberline {17.13}\texttt {core/run.py}: The CLI Entrypoint}{182}{section.17.13}%
+\contentsline {section}{\numberline {17.14}The \texttt {sscheduler/} Package: Module Census}{182}{section.17.14}%
+\contentsline {subsection}{\numberline {17.14.1}Control Channel Authentication}{183}{subsection.17.14.1}%
+\contentsline {section}{\numberline {17.15}The \texttt {devtools/} Package}{184}{section.17.15}%
+\contentsline {section}{\numberline {17.16}The \texttt {scripts/} and \texttt {tools/} Directories}{184}{section.17.16}%
+\contentsline {subsection}{\numberline {17.16.1}Operational Scripts (\texttt {scripts/})}{184}{subsection.17.16.1}%
+\contentsline {subsection}{\numberline {17.16.2}Runtime Tools (\texttt {tools/})}{185}{subsection.17.16.2}%
+\contentsline {section}{\numberline {17.17}The \texttt {bench/} Package: Benchmark Analysis}{185}{section.17.17}%
+\contentsline {section}{\numberline {17.18}Line Count Summary}{186}{section.17.18}%
+\contentsline {section}{\numberline {17.19}Chapter Summary}{187}{section.17.19}%
+\contentsline {chapter}{\numberline {18}Testing and Validation}{189}{chapter.18}%
+\contentsline {section}{\numberline {18.1}Testing Philosophy}{189}{section.18.1}%
+\contentsline {section}{\numberline {18.2}Test Architecture Overview}{190}{section.18.2}%
+\contentsline {section}{\numberline {18.3}Why No \texttt {pytest} or \texttt {unittest}?}{190}{section.18.3}%
+\contentsline {section}{\numberline {18.4}Test File Inventory}{191}{section.18.4}%
+\contentsline {subsection}{\numberline {18.4.1}Category 1: Functional Integration Tests (\texttt {test\_*})}{191}{subsection.18.4.1}%
+\contentsline {subsection}{\numberline {18.4.2}Category 2: Collector Verification Tests (\texttt {verify\_*})}{192}{subsection.18.4.2}%
+\contentsline {subsection}{\numberline {18.4.3}Category 3: Output Validation (\texttt {validate\_*}, \texttt {confirm\_*})}{192}{subsection.18.4.3}%
+\contentsline {section}{\numberline {18.5}Detailed Test Walkthroughs}{192}{section.18.5}%
+\contentsline {subsection}{\numberline {18.5.1}The Simple Loop Test}{192}{subsection.18.5.1}%
+\contentsline {subsection}{\numberline {18.5.2}The All-Suites Loop Test}{194}{subsection.18.5.2}%
+\contentsline {subsection}{\numberline {18.5.3}The Scheduler Pair Test}{194}{subsection.18.5.3}%
+\contentsline {subsection}{\numberline {18.5.4}The Comprehensive Benchmark Test}{195}{subsection.18.5.4}%
+\contentsline {subsection}{\numberline {18.5.5}Metrics Confirmation}{196}{subsection.18.5.5}%
+\contentsline {section}{\numberline {18.6}Common Test Patterns}{196}{section.18.6}%
+\contentsline {subsection}{\numberline {18.6.1}Process Lifecycle Management}{196}{subsection.18.6.1}%
+\contentsline {subsection}{\numberline {18.6.2}Echo Server Pattern}{197}{subsection.18.6.2}%
+\contentsline {subsection}{\numberline {18.6.3}Port Configuration}{197}{subsection.18.6.3}%
+\contentsline {section}{\numberline {18.7}Running the Tests}{198}{section.18.7}%
+\contentsline {subsection}{\numberline {18.7.1}Prerequisites}{198}{subsection.18.7.1}%
+\contentsline {subsection}{\numberline {18.7.2}Quick Smoke Test (2 minutes)}{198}{subsection.18.7.2}%
+\contentsline {subsection}{\numberline {18.7.3}Single-Suite Integration (5 minutes)}{198}{subsection.18.7.3}%
+\contentsline {subsection}{\numberline {18.7.4}Multi-Suite Sweep (30 minutes)}{198}{subsection.18.7.4}%
+\contentsline {subsection}{\numberline {18.7.5}Full Benchmark (4--6 hours)}{199}{subsection.18.7.5}%
+\contentsline {section}{\numberline {18.8}Validation Scripts}{199}{section.18.8}%
+\contentsline {subsection}{\numberline {18.8.1}Schema Validation}{199}{subsection.18.8.1}%
+\contentsline {subsection}{\numberline {18.8.2}Benchmark Result Validation}{199}{subsection.18.8.2}%
+\contentsline {section}{\numberline {18.9}Test Coverage Analysis}{200}{section.18.9}%
+\contentsline {section}{\numberline {18.10}Lessons Learned}{200}{section.18.10}%
+\contentsline {section}{\numberline {18.11}Chapter Summary}{201}{section.18.11}%
+\contentsline {chapter}{\numberline {19}Benchmark Results and Analysis}{203}{chapter.19}%
+\contentsline {section}{\numberline {19.1}Test Environment}{203}{section.19.1}%
+\contentsline {subsection}{\numberline {19.1.1}Methodology}{203}{subsection.19.1.1}%
+\contentsline {subsection}{\numberline {19.1.2}Dataset Scale}{204}{subsection.19.1.2}%
+\contentsline {section}{\numberline {19.2}KEM Performance}{204}{section.19.2}%
+\contentsline {subsection}{\numberline {19.2.1}KEM Key and Ciphertext Sizes}{205}{subsection.19.2.1}%
+\contentsline {section}{\numberline {19.3}Signature Performance}{205}{section.19.3}%
+\contentsline {subsection}{\numberline {19.3.1}Signature Sizes}{206}{subsection.19.3.1}%
+\contentsline {section}{\numberline {19.4}AEAD Cipher Performance}{207}{section.19.4}%
+\contentsline {section}{\numberline {19.5}Power and Energy Consumption}{208}{section.19.5}%
+\contentsline {subsection}{\numberline {19.5.1}KEM Power Profile}{208}{subsection.19.5.1}%
+\contentsline {subsection}{\numberline {19.5.2}Signature Power Profile}{209}{subsection.19.5.2}%
+\contentsline {section}{\numberline {19.6}Full Handshake Suite Timing}{209}{section.19.6}%
+\contentsline {section}{\numberline {19.7}NIST Level Aggregates}{210}{section.19.7}%
+\contentsline {section}{\numberline {19.8}Comparative Analysis}{211}{section.19.8}%
+\contentsline {subsection}{\numberline {19.8.1}Time--Energy Trade-off}{211}{subsection.19.8.1}%
+\contentsline {subsection}{\numberline {19.8.2}Algorithm Family Recommendations}{211}{subsection.19.8.2}%
+\contentsline {section}{\numberline {19.9}Drone Flight-Time Impact}{212}{section.19.9}%
+\contentsline {section}{\numberline {19.10}Statistical Methodology}{212}{section.19.10}%
+\contentsline {section}{\numberline {19.11}Analysis Artifacts}{213}{section.19.11}%
+\contentsline {section}{\numberline {19.12}Chapter Summary}{213}{section.19.12}%
+\contentsline {chapter}{\numberline {20}Deployment and Operations Guide}{215}{chapter.20}%
+\contentsline {section}{\numberline {20.1}Deployment Architecture}{215}{section.20.1}%
+\contentsline {section}{\numberline {20.2}Hardware Requirements}{215}{section.20.2}%
+\contentsline {subsection}{\numberline {20.2.1}Drone Platform}{215}{subsection.20.2.1}%
+\contentsline {subsection}{\numberline {20.2.2}Ground Control Station}{216}{subsection.20.2.2}%
+\contentsline {section}{\numberline {20.3}Software Installation}{216}{section.20.3}%
+\contentsline {subsection}{\numberline {20.3.1}Step 1: Clone the Repository}{216}{subsection.20.3.1}%
+\contentsline {subsection}{\numberline {20.3.2}Step 2: Create Python Virtual Environment}{216}{subsection.20.3.2}%
+\contentsline {paragraph}{On the Drone (Raspberry Pi):}{216}{lstlisting.20.-8}%
+\contentsline {paragraph}{On the GCS (Windows):}{217}{lstlisting.20.-9}%
+\contentsline {subsection}{\numberline {20.3.3}Step 3: Install Dashboard Dependencies}{217}{subsection.20.3.3}%
+\contentsline {subsection}{\numberline {20.3.4}Step 4: Verify Installation}{217}{subsection.20.3.4}%
+\contentsline {section}{\numberline {20.4}Network Configuration}{218}{section.20.4}%
+\contentsline {subsection}{\numberline {20.4.1}IP Address Assignment}{218}{subsection.20.4.1}%
+\contentsline {subsection}{\numberline {20.4.2}Port Allocation}{218}{subsection.20.4.2}%
+\contentsline {subsection}{\numberline {20.4.3}Firewall Configuration}{218}{subsection.20.4.3}%
+\contentsline {paragraph}{Windows:}{218}{lstlisting.20.-12}%
+\contentsline {paragraph}{Linux (drone):}{219}{lstlisting.20.-13}%
+\contentsline {section}{\numberline {20.5}Environment Configuration}{219}{section.20.5}%
+\contentsline {subsection}{\numberline {20.5.1}Drone Environment (\texttt {.denv})}{219}{subsection.20.5.1}%
+\contentsline {subsection}{\numberline {20.5.2}GCS Environment (\texttt {.genv})}{219}{subsection.20.5.2}%
+\contentsline {subsection}{\numberline {20.5.3}Runtime Policy Configuration (\texttt {settings.json})}{220}{subsection.20.5.3}%
+\contentsline {section}{\numberline {20.6}Key Generation}{220}{section.20.6}%
+\contentsline {section}{\numberline {20.7}Hardware Setup}{221}{section.20.7}%
+\contentsline {subsection}{\numberline {20.7.1}INA219 Power Sensor Wiring}{221}{subsection.20.7.1}%
+\contentsline {subsection}{\numberline {20.7.2}Pixhawk Flight Controller}{221}{subsection.20.7.2}%
+\contentsline {section}{\numberline {20.8}Launching the System}{222}{section.20.8}%
+\contentsline {subsection}{\numberline {20.8.1}Manual Launch (Single Suite)}{222}{subsection.20.8.1}%
+\contentsline {paragraph}{Step 1: Start GCS proxy.}{222}{lstlisting.20.-14}%
+\contentsline {paragraph}{Step 2: Start drone proxy.}{222}{lstlisting.20.-15}%
+\contentsline {paragraph}{Step 3: Verify connection.}{222}{lstlisting.20.-16}%
+\contentsline {subsection}{\numberline {20.8.2}Scheduler Launch (Multi-Suite Cycling)}{222}{subsection.20.8.2}%
+\contentsline {paragraph}{Step 1: Start GCS scheduler.}{222}{lstlisting.20.-17}%
+\contentsline {paragraph}{Step 2: Start drone scheduler.}{222}{lstlisting.20.-18}%
+\contentsline {subsection}{\numberline {20.8.3}Automated Benchmark Launch}{222}{subsection.20.8.3}%
+\contentsline {subsection}{\numberline {20.8.4}Dashboard Launch}{223}{subsection.20.8.4}%
+\contentsline {section}{\numberline {20.9}Pre-Benchmark Preparation}{223}{section.20.9}%
+\contentsline {section}{\numberline {20.10}Remote Deployment via SSH}{224}{section.20.10}%
+\contentsline {section}{\numberline {20.11}System Information Collection}{224}{section.20.11}%
+\contentsline {section}{\numberline {20.12}Troubleshooting}{225}{section.20.12}%
+\contentsline {subsection}{\numberline {20.12.1}Common Issues}{225}{subsection.20.12.1}%
+\contentsline {subsection}{\numberline {20.12.2}Diagnostic Commands}{225}{subsection.20.12.2}%
+\contentsline {section}{\numberline {20.13}Production Hardening Checklist}{226}{section.20.13}%
+\contentsline {section}{\numberline {20.14}Chapter Summary}{226}{section.20.14}%
+\contentsline {part}{VII\hspace {1em}Deep Dives and Analysis}{229}{part.7}%
+\contentsline {chapter}{\numberline {21}Related Work and Literature Review}{231}{chapter.21}%
+\contentsline {section}{\numberline {21.1}Drone Communication Security}{231}{section.21.1}%
+\contentsline {subsection}{\numberline {21.1.1}Survey and Taxonomy Papers}{231}{subsection.21.1.1}%
+\contentsline {subsection}{\numberline {21.1.2}Encryption for Drone Data Links}{232}{subsection.21.1.2}%
+\contentsline {subsection}{\numberline {21.1.3}GPS and Sensor Spoofing Defenses}{233}{subsection.21.1.3}%
+\contentsline {subsection}{\numberline {21.1.4}Physical-Layer Security for Drones}{233}{subsection.21.1.4}%
+\contentsline {section}{\numberline {21.2}Post-Quantum Cryptography Implementations}{233}{section.21.2}%
+\contentsline {subsection}{\numberline {21.2.1}Libraries and Frameworks}{233}{subsection.21.2.1}%
+\contentsline {subsection}{\numberline {21.2.2}PQC in Network Protocols}{234}{subsection.21.2.2}%
+\contentsline {subsection}{\numberline {21.2.3}PQC on Embedded and Constrained Devices}{234}{subsection.21.2.3}%
+\contentsline {section}{\numberline {21.3}Lightweight and Embedded Cryptography}{235}{section.21.3}%
+\contentsline {subsection}{\numberline {21.3.1}The NIST Lightweight Cryptography Competition}{235}{subsection.21.3.1}%
+\contentsline {subsection}{\numberline {21.3.2}AES Hardware Acceleration on ARM}{235}{subsection.21.3.2}%
+\contentsline {subsection}{\numberline {21.3.3}Side-Channel Protections in Software}{235}{subsection.21.3.3}%
+\contentsline {section}{\numberline {21.4}MAVLink Security Extensions}{236}{section.21.4}%
+\contentsline {subsection}{\numberline {21.4.1}MAVLink v2 Signing}{236}{subsection.21.4.1}%
+\contentsline {subsection}{\numberline {21.4.2}Academic MAVLink Security Proposals}{236}{subsection.21.4.2}%
+\contentsline {subsection}{\numberline {21.4.3}Commercial GCS Security}{237}{subsection.21.4.3}%
+\contentsline {section}{\numberline {21.5}Benchmarking Methodologies for PQC}{237}{section.21.5}%
+\contentsline {subsection}{\numberline {21.5.1}Micro-Benchmarks}{237}{subsection.21.5.1}%
+\contentsline {subsection}{\numberline {21.5.2}System-Level Benchmarks}{237}{subsection.21.5.2}%
+\contentsline {subsection}{\numberline {21.5.3}Power Measurement in Cryptography}{238}{subsection.21.5.3}%
+\contentsline {section}{\numberline {21.6}Real-Time Encrypted Communication}{238}{section.21.6}%
+\contentsline {subsection}{\numberline {21.6.1}SRTP and RTP Security}{238}{subsection.21.6.1}%
+\contentsline {subsection}{\numberline {21.6.2}VPN and Tunnel Systems}{239}{subsection.21.6.2}%
+\contentsline {subsection}{\numberline {21.6.3}Industrial Control System (ICS) Security}{239}{subsection.21.6.3}%
+\contentsline {section}{\numberline {21.7}Comparative Analysis}{239}{section.21.7}%
+\contentsline {section}{\numberline {21.8}Gaps in the Literature}{240}{section.21.8}%
+\contentsline {section}{\numberline {21.9}Positioning of This Work}{241}{section.21.9}%
+\contentsline {section}{\numberline {21.10}Summary}{241}{section.21.10}%
+\contentsline {chapter}{\numberline {22}Formal Protocol Specification}{243}{chapter.22}%
+\contentsline {section}{\numberline {22.1}Notation and Conventions}{243}{section.22.1}%
+\contentsline {section}{\numberline {22.2}Message Definitions}{244}{section.22.2}%
+\contentsline {subsection}{\numberline {22.2.1}ServerHello Message}{244}{subsection.22.2.1}%
+\contentsline {paragraph}{Transcript Computation.}{244}{section*.105}%
+\contentsline {paragraph}{Size Ranges.}{244}{section*.106}%
+\contentsline {subsection}{\numberline {22.2.2}ClientReply Message}{245}{subsection.22.2.2}%
+\contentsline {paragraph}{HMAC Computation.}{245}{section*.108}%
+\contentsline {paragraph}{ClientReply Sizes.}{246}{section*.109}%
+\contentsline {subsection}{\numberline {22.2.3}EncryptedDatagram (Data Plane)}{246}{subsection.22.2.3}%
+\contentsline {paragraph}{Header as AAD.}{247}{section*.111}%
+\contentsline {paragraph}{Nonce Derivation.}{247}{section*.112}%
+\contentsline {paragraph}{Ciphertext Structure.}{248}{section*.113}%
+\contentsline {paragraph}{Total Packet Size.}{248}{section*.114}%
+\contentsline {section}{\numberline {22.3}Algorithm Identifier Registry}{248}{section.22.3}%
+\contentsline {section}{\numberline {22.4}Key Derivation Specification}{249}{section.22.4}%
+\contentsline {paragraph}{Parameters.}{249}{table.caption.119}%
+\contentsline {paragraph}{Info String.}{249}{section*.120}%
+\contentsline {paragraph}{Key Extraction.}{250}{section*.121}%
+\contentsline {section}{\numberline {22.5}Handshake State Machine}{250}{section.22.5}%
+\contentsline {paragraph}{State Transitions.}{250}{section*.123}%
+\contentsline {section}{\numberline {22.6}Data Plane State Machine}{251}{section.22.6}%
+\contentsline {section}{\numberline {22.7}Replay Window Specification}{251}{section.22.7}%
+\contentsline {paragraph}{Accept/Reject Algorithm.}{252}{section*.126}%
+\contentsline {paragraph}{Window Size Justification.}{252}{section*.127}%
+\contentsline {section}{\numberline {22.8}Scheduler Control Protocol}{252}{section.22.8}%
+\contentsline {subsection}{\numberline {22.8.1}Message Types}{252}{subsection.22.8.1}%
+\contentsline {paragraph}{Example Exchange.}{253}{lstlisting.22.2}%
+\contentsline {section}{\numberline {22.9}Policy Engine Protocol}{254}{section.22.9}%
+\contentsline {subsection}{\numberline {22.9.1}Phase 1: Evaluate (Read-Only)}{254}{subsection.22.9.1}%
+\contentsline {subsection}{\numberline {22.9.2}Phase 2: Confirm (State Mutation)}{254}{subsection.22.9.2}%
+\contentsline {section}{\numberline {22.10}Metrics Output Format}{254}{section.22.10}%
+\contentsline {paragraph}{Top-Level Structure.}{255}{lstlisting.22.5}%
+\contentsline {section}{\numberline {22.11}Error Code Registry}{255}{section.22.11}%
+\contentsline {section}{\numberline {22.12}Configuration Key Specification}{255}{section.22.12}%
+\contentsline {section}{\numberline {22.13}Summary}{256}{section.22.13}%
+\contentsline {chapter}{\numberline {23}Complete API Reference}{259}{chapter.23}%
+\contentsline {section}{\numberline {23.1}\texttt {core} Package Overview}{259}{section.23.1}%
+\contentsline {section}{\numberline {23.2}\texttt {core.errors} --- Exception Hierarchy}{260}{section.23.2}%
+\contentsline {section}{\numberline {23.3}\texttt {core.aead} --- AEAD Framing Layer}{261}{section.23.3}%
+\contentsline {subsection}{\numberline {23.3.1}Constants}{261}{subsection.23.3.1}%
+\contentsline {subsection}{\numberline {23.3.2}Class \texttt {AsconAdapter}}{262}{subsection.23.3.2}%
+\contentsline {subsection}{\numberline {23.3.3}Frozen Dataclass \texttt {AeadMeta}}{263}{subsection.23.3.3}%
+\contentsline {subsection}{\numberline {23.3.4}Dataclass \texttt {Sender}}{263}{subsection.23.3.4}%
+\contentsline {paragraph}{Thread Safety.}{264}{section*.131}%
+\contentsline {subsection}{\numberline {23.3.5}Dataclass \texttt {Receiver}}{264}{subsection.23.3.5}%
+\contentsline {subsection}{\numberline {23.3.6}Module Functions}{265}{subsection.23.3.6}%
+\contentsline {section}{\numberline {23.4}\texttt {core.handshake} --- Wire Format Serialization}{265}{section.23.4}%
+\contentsline {subsection}{\numberline {23.4.1}Frozen Dataclass \texttt {ServerHelloData}}{265}{subsection.23.4.1}%
+\contentsline {subsection}{\numberline {23.4.2}Class \texttt {HandshakeSerializer}}{265}{subsection.23.4.2}%
+\contentsline {subsection}{\numberline {23.4.3}Module Functions}{266}{subsection.23.4.3}%
+\contentsline {section}{\numberline {23.5}\texttt {core.crypto\_utils} --- Cryptographic Primitives}{266}{section.23.5}%
+\contentsline {subsection}{\numberline {23.5.1}Frozen Dataclass \texttt {CryptoResult}}{266}{subsection.23.5.1}%
+\contentsline {subsection}{\numberline {23.5.2}Key Derivation}{267}{subsection.23.5.2}%
+\contentsline {subsection}{\numberline {23.5.3}OQS Wrappers}{267}{subsection.23.5.3}%
+\contentsline {section}{\numberline {23.6}\texttt {core.rate\_limiter} --- Token Bucket Rate Limiter}{268}{section.23.6}%
+\contentsline {paragraph}{Algorithm.}{269}{section*.132}%
+\contentsline {section}{\numberline {23.7}\texttt {core.config} --- Centralised Configuration}{269}{section.23.7}%
+\contentsline {subsection}{\numberline {23.7.1}The \texttt {CONFIG} Dictionary}{269}{subsection.23.7.1}%
+\contentsline {subsection}{\numberline {23.7.2}Environment Variable Override}{270}{subsection.23.7.2}%
+\contentsline {section}{\numberline {23.8}\texttt {core.suites} --- Cipher Suite Management}{271}{section.23.8}%
+\contentsline {subsection}{\numberline {23.8.1}Suite Generation}{271}{subsection.23.8.1}%
+\contentsline {subsection}{\numberline {23.8.2}Suite Identifier Format}{271}{subsection.23.8.2}%
+\contentsline {subsection}{\numberline {23.8.3}Module Functions}{272}{subsection.23.8.3}%
+\contentsline {section}{\numberline {23.9}\texttt {core.keys} --- Key Pair Management}{273}{section.23.9}%
+\contentsline {subsection}{\numberline {23.9.1}Dataclass \texttt {KeyPairInfo}}{273}{subsection.23.9.1}%
+\contentsline {subsection}{\numberline {23.9.2}Dataclass \texttt {KeyBundle}}{273}{subsection.23.9.2}%
+\contentsline {subsection}{\numberline {23.9.3}Module Functions}{273}{subsection.23.9.3}%
+\contentsline {section}{\numberline {23.10}\texttt {core.proxy} --- Proxy Engine}{274}{section.23.10}%
+\contentsline {subsection}{\numberline {23.10.1}Class \texttt {ProxyEngine}}{274}{subsection.23.10.1}%
+\contentsline {paragraph}{Instance Variables (Security-Critical).}{275}{section*.133}%
+\contentsline {subsection}{\numberline {23.10.2}Class \texttt {DatagramProtocol}}{276}{subsection.23.10.2}%
+\contentsline {subsection}{\numberline {23.10.3}Module Functions}{276}{subsection.23.10.3}%
+\contentsline {section}{\numberline {23.11}\texttt {core.metrics\_schema} --- Metrics Dataclasses}{276}{section.23.11}%
+\contentsline {subsection}{\numberline {23.11.1}Aggregator Class \texttt {BenchmarkRecord}}{278}{subsection.23.11.1}%
+\contentsline {section}{\numberline {23.12}\texttt {core.collectors} --- Metric Collectors}{279}{section.23.12}%
+\contentsline {subsection}{\numberline {23.12.1}Class \texttt {SystemCollector}}{279}{subsection.23.12.1}%
+\contentsline {subsection}{\numberline {23.12.2}Class \texttt {ProcessCollector}}{279}{subsection.23.12.2}%
+\contentsline {subsection}{\numberline {23.12.3}Class \texttt {MAVLinkCollector}}{280}{subsection.23.12.3}%
+\contentsline {subsection}{\numberline {23.12.4}Class \texttt {LatencyCollector}}{280}{subsection.23.12.4}%
+\contentsline {subsection}{\numberline {23.12.5}Class \texttt {ThroughputCollector}}{281}{subsection.23.12.5}%
+\contentsline {subsection}{\numberline {23.12.6}Class \texttt {PowerCollector}}{281}{subsection.23.12.6}%
+\contentsline {section}{\numberline {23.13}\texttt {core.runner} --- Proxy Lifecycle Management}{282}{section.23.13}%
+\contentsline {subsection}{\numberline {23.13.1}Class \texttt {ProxyRunner}}{282}{subsection.23.13.1}%
+\contentsline {section}{\numberline {23.14}\texttt {core.process\_mgr} --- Process Manager}{283}{section.23.14}%
+\contentsline {subsection}{\numberline {23.14.1}Dataclasses}{283}{subsection.23.14.1}%
+\contentsline {subsection}{\numberline {23.14.2}Protocol \texttt {HealthChecker}}{283}{subsection.23.14.2}%
+\contentsline {subsection}{\numberline {23.14.3}Factory Function}{284}{subsection.23.14.3}%
+\contentsline {section}{\numberline {23.15}\texttt {core.scheduler} --- Policy Engine}{284}{section.23.15}%
+\contentsline {subsection}{\numberline {23.15.1}Dataclasses}{284}{subsection.23.15.1}%
+\contentsline {subsection}{\numberline {23.15.2}Class \texttt {SuiteScheduler}}{285}{subsection.23.15.2}%
+\contentsline {section}{\numberline {23.16}\texttt {core.system} --- OS Abstraction Layer}{286}{section.23.16}%
+\contentsline {section}{\numberline {23.17}\texttt {core.time\_utils} --- Time Utilities}{287}{section.23.17}%
+\contentsline {section}{\numberline {23.18}\texttt {core.automation} --- Benchmark Orchestration}{287}{section.23.18}%
+\contentsline {subsection}{\numberline {23.18.1}Dataclasses}{287}{subsection.23.18.1}%
+\contentsline {subsection}{\numberline {23.18.2}Class \texttt {BenchmarkOrchestrator}}{288}{subsection.23.18.2}%
+\contentsline {section}{\numberline {23.19}\texttt {core.cli} --- Command-Line Interface}{288}{section.23.19}%
+\contentsline {section}{\numberline {23.20}\texttt {sscheduler} Package --- Drone Scheduler}{288}{section.23.20}%
+\contentsline {subsection}{\numberline {23.20.1}Key Classes}{289}{subsection.23.20.1}%
+\contentsline {paragraph}{\texttt {SuiteConfig} (Frozen Dataclass).}{289}{section*.134}%
+\contentsline {paragraph}{\texttt {BenchmarkConfig} (Dataclass).}{289}{section*.135}%
+\contentsline {paragraph}{\texttt {RemoteGCSClient}.}{289}{section*.136}%
+\contentsline {paragraph}{\texttt {ChronosClient}.}{290}{section*.137}%
+\contentsline {paragraph}{\texttt {GCSHealthMonitor}.}{290}{lstlisting.23.35}%
+\contentsline {paragraph}{\texttt {BenchmarkRunner} (Main Orchestrator).}{290}{lstlisting.23.36}%
+\contentsline {section}{\numberline {23.21}\texttt {scheduler} Package --- GCS Scheduler}{291}{section.23.21}%
+\contentsline {subsection}{\numberline {23.21.1}Class \texttt {GCSSchedulerServer}}{291}{subsection.23.21.1}%
+\contentsline {subsection}{\numberline {23.21.2}GCS Collectors}{292}{subsection.23.21.2}%
+\contentsline {section}{\numberline {23.22}Cross-Package Dependency Graph}{292}{section.23.22}%
+\contentsline {section}{\numberline {23.23}Summary Statistics}{293}{section.23.23}%
+\contentsline {chapter}{\numberline {24}Comprehensive Threat Modeling and Security Analysis}{295}{chapter.24}%
+\contentsline {section}{\numberline {24.1}Methodology}{295}{section.24.1}%
+\contentsline {paragraph}{Adversary Model.}{295}{section*.142}%
+\contentsline {section}{\numberline {24.2}System Decomposition}{296}{section.24.2}%
+\contentsline {subsection}{\numberline {24.2.1}Trust Boundaries}{296}{subsection.24.2.1}%
+\contentsline {subsection}{\numberline {24.2.2}Data Flow Diagram (DFD)}{296}{subsection.24.2.2}%
+\contentsline {subsection}{\numberline {24.2.3}Entry Points}{297}{subsection.24.2.3}%
+\contentsline {section}{\numberline {24.3}STRIDE Analysis}{297}{section.24.3}%
+\contentsline {section}{\numberline {24.4}Attack Trees}{299}{section.24.4}%
+\contentsline {subsection}{\numberline {24.4.1}Attack Tree 1: Decrypt MAVLink Traffic}{299}{subsection.24.4.1}%
+\contentsline {paragraph}{Analysis.}{299}{section*.145}%
+\contentsline {subsection}{\numberline {24.4.2}Attack Tree 2: Inject Malicious Commands}{299}{subsection.24.4.2}%
+\contentsline {subsection}{\numberline {24.4.3}Attack Tree 3: Deny Service}{300}{subsection.24.4.3}%
+\contentsline {section}{\numberline {24.5}DREAD Risk Scoring}{300}{section.24.5}%
+\contentsline {paragraph}{Risk Triage.}{300}{section*.148}%
+\contentsline {section}{\numberline {24.6}Mitigation Mapping}{301}{section.24.6}%
+\contentsline {section}{\numberline {24.7}Detailed Threat Analysis}{303}{section.24.7}%
+\contentsline {subsection}{\numberline {24.7.1}T1: GCS Impersonation}{303}{subsection.24.7.1}%
+\contentsline {paragraph}{Scenario.}{303}{section*.149}%
+\contentsline {paragraph}{Why It Fails.}{303}{section*.150}%
+\contentsline {paragraph}{Residual Risk.}{304}{section*.151}%
+\contentsline {subsection}{\numberline {24.7.2}T9: Harvest Now, Decrypt Later}{304}{subsection.24.7.2}%
+\contentsline {paragraph}{Scenario.}{304}{section*.152}%
+\contentsline {paragraph}{Why It Fails.}{304}{section*.153}%
+\contentsline {paragraph}{Forward Secrecy.}{304}{section*.154}%
+\contentsline {subsection}{\numberline {24.7.3}T13: TCP Handshake Flood}{304}{subsection.24.7.3}%
+\contentsline {paragraph}{Scenario.}{304}{section*.155}%
+\contentsline {paragraph}{Defence Layers.}{304}{section*.156}%
+\contentsline {paragraph}{Cost Analysis.}{305}{section*.157}%
+\contentsline {subsection}{\numberline {24.7.4}T19: Replay Attack}{305}{subsection.24.7.4}%
+\contentsline {paragraph}{Scenario.}{305}{section*.158}%
+\contentsline {paragraph}{Defence.}{305}{section*.159}%
+\contentsline {paragraph}{Window Exhaustion.}{305}{section*.160}%
+\contentsline {section}{\numberline {24.8}Cryptographic Agility Analysis}{305}{section.24.8}%
+\contentsline {subsection}{\numberline {24.8.1}Algorithm Deprecation Path}{305}{subsection.24.8.1}%
+\contentsline {subsection}{\numberline {24.8.2}Agility Risks}{306}{subsection.24.8.2}%
+\contentsline {section}{\numberline {24.9}Side-Channel Considerations}{306}{section.24.9}%
+\contentsline {subsection}{\numberline {24.9.1}Timing Side Channels}{306}{subsection.24.9.1}%
+\contentsline {subsection}{\numberline {24.9.2}Power Side Channels}{307}{subsection.24.9.2}%
+\contentsline {section}{\numberline {24.10}Formal Security Properties}{307}{section.24.10}%
+\contentsline {subsection}{\numberline {24.10.1}Security Goals}{307}{subsection.24.10.1}%
+\contentsline {subsection}{\numberline {24.10.2}Security Argument (Informal)}{308}{subsection.24.10.2}%
+\contentsline {section}{\numberline {24.11}Penetration Testing Scenarios}{308}{section.24.11}%
+\contentsline {subsection}{\numberline {24.11.1}Scenario 1: Handshake Manipulation}{308}{subsection.24.11.1}%
+\contentsline {subsection}{\numberline {24.11.2}Scenario 2: Replay Attack}{309}{subsection.24.11.2}%
+\contentsline {subsection}{\numberline {24.11.3}Scenario 3: Rate Limiter Effectiveness}{309}{subsection.24.11.3}%
+\contentsline {subsection}{\numberline {24.11.4}Scenario 4: Scheduler Command Injection}{309}{subsection.24.11.4}%
+\contentsline {section}{\numberline {24.12}Residual Risks and Recommendations}{310}{section.24.12}%
+\contentsline {section}{\numberline {24.13}Summary}{310}{section.24.13}%
+\contentsline {chapter}{\numberline {25}Deep Performance Analysis}{311}{chapter.25}%
+\contentsline {section}{\numberline {25.1}Statistical Methodology}{311}{section.25.1}%
+\contentsline {subsection}{\numberline {25.1.1}Experimental Design}{311}{subsection.25.1.1}%
+\contentsline {subsection}{\numberline {25.1.2}Data Collection}{312}{subsection.25.1.2}%
+\contentsline {subsection}{\numberline {25.1.3}Statistical Tests Used}{312}{subsection.25.1.3}%
+\contentsline {subsection}{\numberline {25.1.4}Confidence Intervals}{312}{subsection.25.1.4}%
+\contentsline {section}{\numberline {25.2}Handshake Latency Analysis}{313}{section.25.2}%
+\contentsline {subsection}{\numberline {25.2.1}Distribution Characterisation}{313}{subsection.25.2.1}%
+\contentsline {paragraph}{Interpretation.}{313}{section*.162}%
+\contentsline {subsection}{\numberline {25.2.2}Descriptive Statistics}{313}{subsection.25.2.2}%
+\contentsline {subsection}{\numberline {25.2.3}KEM Family Comparison}{314}{subsection.25.2.3}%
+\contentsline {subsection}{\numberline {25.2.4}Effect of Signature Algorithm}{314}{subsection.25.2.4}%
+\contentsline {subsection}{\numberline {25.2.5}Correlation Analysis}{314}{subsection.25.2.5}%
+\contentsline {paragraph}{Public Key Size vs.\ Handshake Time.}{314}{section*.165}%
+\contentsline {paragraph}{Ciphertext Size vs.\ Handshake Time.}{315}{section*.166}%
+\contentsline {section}{\numberline {25.3}Data-Plane Throughput Analysis}{315}{section.25.3}%
+\contentsline {subsection}{\numberline {25.3.1}AEAD Algorithm Comparison}{315}{subsection.25.3.1}%
+\contentsline {subsection}{\numberline {25.3.2}Packet Size Effect}{315}{subsection.25.3.2}%
+\contentsline {paragraph}{Bandwidth Efficiency Curve.}{316}{section*.169}%
+\contentsline {section}{\numberline {25.4}Latency Distribution Analysis}{316}{section.25.4}%
+\contentsline {subsection}{\numberline {25.4.1}End-to-End Latency}{316}{subsection.25.4.1}%
+\contentsline {paragraph}{Tail Latency Analysis.}{316}{section*.171}%
+\contentsline {subsection}{\numberline {25.4.2}Jitter Analysis}{317}{subsection.25.4.2}%
+\contentsline {section}{\numberline {25.5}Resource Consumption Analysis}{317}{section.25.5}%
+\contentsline {subsection}{\numberline {25.5.1}CPU Usage}{317}{subsection.25.5.1}%
+\contentsline {paragraph}{Interpretation.}{317}{section*.174}%
+\contentsline {subsection}{\numberline {25.5.2}Memory Usage}{318}{subsection.25.5.2}%
+\contentsline {subsection}{\numberline {25.5.3}Energy Consumption}{318}{subsection.25.5.3}%
+\contentsline {paragraph}{Battery Impact.}{318}{section*.177}%
+\contentsline {section}{\numberline {25.6}Regression Analysis}{318}{section.25.6}%
+\contentsline {subsection}{\numberline {25.6.1}Handshake Time Predictive Model}{318}{subsection.25.6.1}%
+\contentsline {paragraph}{Interpretation.}{319}{section*.179}%
+\contentsline {subsection}{\numberline {25.6.2}Throughput Predictive Model}{319}{subsection.25.6.2}%
+\contentsline {section}{\numberline {25.7}Comparative Analysis Across Security Levels}{319}{section.25.7}%
+\contentsline {subsection}{\numberline {25.7.1}Cost of Security}{319}{subsection.25.7.1}%
+\contentsline {paragraph}{Security Level Scaling.}{320}{section*.181}%
+\contentsline {subsection}{\numberline {25.7.2}Pareto Frontier}{320}{subsection.25.7.2}%
+\contentsline {section}{\numberline {25.8}Scalability Analysis}{321}{section.25.8}%
+\contentsline {subsection}{\numberline {25.8.1}Rekey Frequency Scaling}{321}{subsection.25.8.1}%
+\contentsline {subsection}{\numberline {25.8.2}Concurrent Session Scaling}{321}{subsection.25.8.2}%
+\contentsline {paragraph}{Scaling Limit.}{321}{section*.185}%
+\contentsline {section}{\numberline {25.9}Anomaly and Outlier Analysis}{321}{section.25.9}%
+\contentsline {subsection}{\numberline {25.9.1}Identified Anomalies}{321}{subsection.25.9.1}%
+\contentsline {subsection}{\numberline {25.9.2}Outlier Treatment}{322}{subsection.25.9.2}%
+\contentsline {section}{\numberline {25.10}Recommendations}{322}{section.25.10}%
+\contentsline {section}{\numberline {25.11}Summary}{323}{section.25.11}%
+\contentsline {chapter}{\numberline {A}Configuration Reference}{325}{appendix.A}%
+\contentsline {section}{\numberline {A.1}Environment Variable Overrides}{325}{section.A.1}%
+\contentsline {section}{\numberline {A.2}Handshake and Data-Plane Ports}{325}{section.A.2}%
+\contentsline {section}{\numberline {A.3}Host Addresses}{326}{section.A.3}%
+\contentsline {section}{\numberline {A.4}Cryptographic and Runtime Parameters}{326}{section.A.4}%
+\contentsline {section}{\numberline {A.5}Security and Hardening}{327}{section.A.5}%
+\contentsline {section}{\numberline {A.6}Control Channel}{327}{section.A.6}%
+\contentsline {section}{\numberline {A.7}MAVProxy and MAVLink}{327}{section.A.7}%
+\contentsline {section}{\numberline {A.8}Bare Scheduler Defaults}{328}{section.A.8}%
+\contentsline {section}{\numberline {A.9}Simple Automation Defaults}{328}{section.A.9}%
+\contentsline {section}{\numberline {A.10}Simulation and Testing}{328}{section.A.10}%
+\contentsline {section}{\numberline {A.11}AUTO\_DRONE Sub-Dictionary}{329}{section.A.11}%
+\contentsline {section}{\numberline {A.12}AUTO\_GCS Sub-Dictionary}{329}{section.A.12}%
+\contentsline {section}{\numberline {A.13}BENCHMARK Sub-Dictionary}{330}{section.A.13}%
+\contentsline {section}{\numberline {A.14}Validation Rules}{330}{section.A.14}%
+\contentsline {chapter}{\numberline {B}Wire Format Specification}{331}{appendix.B}%
+\contentsline {section}{\numberline {B.1}Packet Structure Overview}{331}{section.B.1}%
+\contentsline {section}{\numberline {B.2}Header Format}{331}{section.B.2}%
+\contentsline {subsection}{\numberline {B.2.1}Field Semantics}{331}{subsection.B.2.1}%
+\contentsline {paragraph}{version.}{331}{section*.187}%
+\contentsline {paragraph}{kem\_id and kem\_param.}{332}{section*.188}%
+\contentsline {paragraph}{sig\_id and sig\_param.}{332}{section*.189}%
+\contentsline {paragraph}{session\_id.}{332}{section*.190}%
+\contentsline {paragraph}{seq.}{332}{section*.191}%
+\contentsline {paragraph}{epoch.}{332}{section*.192}%
+\contentsline {section}{\numberline {B.3}Nonce Construction}{333}{section.B.3}%
+\contentsline {section}{\numberline {B.4}Complete Packet Layout}{333}{section.B.4}%
+\contentsline {section}{\numberline {B.5}Packet Size Analysis}{333}{section.B.5}%
+\contentsline {section}{\numberline {B.6}Authentication Tag}{334}{section.B.6}%
+\contentsline {section}{\numberline {B.7}Replay Protection on the Wire}{334}{section.B.7}%
+\contentsline {section}{\numberline {B.8}Session ID Derivation}{335}{section.B.8}%
+\contentsline {chapter}{\numberline {C}Metrics Schema Reference}{337}{appendix.C}%
+\contentsline {section}{\numberline {C.1}Category A: Run Context}{337}{section.C.1}%
+\contentsline {section}{\numberline {C.2}Category B: Suite Crypto Identity}{338}{section.C.2}%
+\contentsline {section}{\numberline {C.3}Category C: Suite Lifecycle Timeline}{338}{section.C.3}%
+\contentsline {section}{\numberline {C.4}Category D: Handshake Metrics}{338}{section.C.4}%
+\contentsline {section}{\numberline {C.5}Category E: Crypto Primitive Breakdown}{339}{section.C.5}%
+\contentsline {section}{\numberline {C.6}Category F: Rekey Metrics}{339}{section.C.6}%
+\contentsline {section}{\numberline {C.7}Category G: Data Plane}{339}{section.C.7}%
+\contentsline {section}{\numberline {C.8}Category H: Latency and Jitter}{340}{section.C.8}%
+\contentsline {section}{\numberline {C.9}Category I: MAVProxy Drone}{340}{section.C.9}%
+\contentsline {section}{\numberline {C.10}Category J: MAVProxy GCS (Pruned)}{341}{section.C.10}%
+\contentsline {section}{\numberline {C.11}Category K: MAVLink Integrity}{341}{section.C.11}%
+\contentsline {section}{\numberline {C.12}Category L: Flight Controller Telemetry}{342}{section.C.12}%
+\contentsline {section}{\numberline {C.13}Category M: Control Plane}{342}{section.C.13}%
+\contentsline {section}{\numberline {C.14}Category N: System Resources (Drone)}{343}{section.C.14}%
+\contentsline {section}{\numberline {C.15}Category O: System Resources (GCS) --- Deprecated}{343}{section.C.15}%
+\contentsline {section}{\numberline {C.16}Category P: Power and Energy}{343}{section.C.16}%
+\contentsline {section}{\numberline {C.17}Category Q: Observability}{343}{section.C.17}%
+\contentsline {section}{\numberline {C.18}Category R: Validation}{344}{section.C.18}%
+\contentsline {section}{\numberline {C.19}Composite Record}{344}{section.C.19}%
+\contentsline {chapter}{Bibliography}{345}{appendix*.194}%
+\contentsline {chapter}{Colophon}{347}{appendix*.195}%

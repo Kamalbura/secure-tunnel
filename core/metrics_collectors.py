@@ -556,21 +556,34 @@ class PowerCollector(BaseCollector):
                 "duration_s": None,
             }
         
+        # Filter out samples with None power_w (e.g., from failed sensor reads)
+        valid_samples = [
+            s for s in samples
+            if isinstance(s.get("power_w"), (int, float))
+        ]
+        if len(valid_samples) < 2:
+            return {
+                "energy_total_j": None,
+                "power_avg_w": None,
+                "power_peak_w": None,
+                "duration_s": None,
+            }
+
         # Calculate energy using trapezoidal integration
         energy_j = 0.0
         powers = []
         voltages = []
         currents = []
         
-        for i in range(1, len(samples)):
-            dt = samples[i]["mono_time"] - samples[i-1]["mono_time"]
-            p_avg = (samples[i]["power_w"] + samples[i-1]["power_w"]) / 2.0
+        for i in range(1, len(valid_samples)):
+            dt = valid_samples[i]["mono_time"] - valid_samples[i-1]["mono_time"]
+            p_avg = (valid_samples[i]["power_w"] + valid_samples[i-1]["power_w"]) / 2.0
             energy_j += p_avg * dt
-            powers.append(samples[i]["power_w"])
-            voltages.append(samples[i].get("voltage_v", 0.0))
-            currents.append(samples[i].get("current_a", 0.0))
+            powers.append(valid_samples[i]["power_w"])
+            voltages.append(valid_samples[i].get("voltage_v", 0.0) or 0.0)
+            currents.append(valid_samples[i].get("current_a", 0.0) or 0.0)
         
-        duration = samples[-1]["mono_time"] - samples[0]["mono_time"]
+        duration = valid_samples[-1]["mono_time"] - valid_samples[0]["mono_time"]
         
         return {
             "energy_total_j": energy_j,

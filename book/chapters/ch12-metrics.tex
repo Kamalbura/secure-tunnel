@@ -543,6 +543,161 @@ The \texttt{SyncTracker} class tracks clock synchronisation quality over time:
 \end{itemize}
 
 % ============================================================
+\section{Failure Mode Taxonomy}
+\label{sec:metrics-failures}
+
+Not every null, zero, or \texttt{FAIL} verdict in the metrics output
+indicates a bug.  This section classifies the failure modes a
+researcher may encounter when analysing benchmark results, and
+explains how each affects the Category~R validation verdict.
+
+\subsection{Class 1: Real Failures}
+
+These represent genuine errors during the benchmark run.  They
+indicate that something went wrong and the affected suite's data is
+unreliable.
+
+\begin{description}
+  \item[Handshake timeout.]
+    The PQC handshake did not complete within 45~seconds.  Common
+    causes: the peer proxy was not started, a firewall blocked
+    TCP port~46000, or a very slow KEM (Classic McEliece at L5)
+    combined with high network latency.  The suite record will show
+    \texttt{handshake\_success = false} and
+    \texttt{handshake\_failure\_reason} will contain the specific
+    error (e.g.\ \texttt{"timeout"}, \texttt{"connection\_refused"}).
+
+  \item[AEAD authentication failure.]
+    A decrypted packet failed tag verification.  This should
+    \textbf{never} occur in normal operation---it indicates
+    either key mismatch (a bug), data corruption, or active
+    tampering.  The proxy silently drops the packet and increments
+    \texttt{drop\_auth} in Category~G.
+
+  \item[Proxy crash.]
+    The proxy subprocess exited unexpectedly (non-zero return code).
+    All data-plane metrics after the crash point are absent.
+    \texttt{ManagedProcess} ensures the scheduler detects this and
+    marks the suite as failed.
+
+  \item[MAVProxy crash.]
+    In MAVPROXY mode, if \texttt{mavproxy\_proc} dies during a
+    suite, the scheduler aborts with
+    \texttt{shutdown\_reason = "error: mavproxy\_died"}.
+    The entire benchmark terminates.
+
+  \item[GCS unreachable.]
+    The TCP control channel times out.  The scheduler logs the error
+    and the current suite is marked with \texttt{status: "error"}.
+\end{description}
+
+\subsection{Class 2: Expected Absences}
+
+These represent \texttt{None} or \texttt{null} values that are
+\textbf{correct} given the platform or configuration.  They are not
+errors.
+
+\begin{description}
+  \item[No power sensor on Windows.]
+    The GCS (Windows) does not have an INA219 sensor or RPi5 hwmon
+    interface.  All power/energy fields in Category~N are
+    \texttt{null} for GCS-side records.  The auto-detection in
+    \classname{PowerMonitor} correctly returns \texttt{None} when no
+    backend is available.
+
+  \item[GCS system metrics pruned.]
+    A policy realignment (2026-01-18) removed most GCS-side MAVProxy
+    metrics (Category~J) to only two validation fields.  Old benchmark
+    runs may have full Category~J data; new runs will show
+    \texttt{null} for the removed fields.  This is by design.
+
+  \item[ASCON disabled by configuration.]
+    If \configkey{ENABLE\_ASCON} is set to \texttt{False}, all
+    ASCON-128a suites are pruned from the registry.  They simply do
+    not appear in the results---not as failures, but as absent.
+
+  \item[Algorithm unavailable in liboqs build.]
+    Runtime probing (Section~\ref{sec:suites-probing}) removes suites
+    whose KEM or SIG algorithms are not compiled into the local
+    \texttt{liboqs} build.  These suites are silently excluded.
+\end{description}
+
+\subsection{Class 3: Structural Unavailability}
+
+These represent metrics that are structurally impossible to collect
+given the benchmark mode or hardware configuration.  The fields are
+present in the schema (not pruned) but are always \texttt{null} or
+marked invalid.
+
+\begin{description}
+  \item[No timestamped MAVLink $\to$ latency invalid.]
+    One-way latency estimation requires the MAVLink collector to
+    observe \texttt{SYSTEM\_TIME} messages with a valid
+    \texttt{time\_boot\_ms} field.  In SYNTHETIC mode (no flight
+    controller), no such messages exist.  The field
+    \texttt{one\_way\_latency\_valid} is \texttt{false} and
+    \texttt{latency\_invalid\_reason} explains why.
+
+  \item[No flight controller $\to$ FC telemetry null.]
+    Without a Pixhawk, MAVLink messages such as
+    \texttt{HEARTBEAT}, \texttt{SYS\_STATUS}, and
+    \texttt{GPS\_RAW\_INT} are never generated.  The MAVLink collector
+    reports zero counts, not failures.  Category~I fields
+    (heartbeat interval, command-ACK latency) are \texttt{null}.
+
+  \item[RTT requires bidirectional MAVLink $\to$ may be null.]
+    Round-trip time measurement requires observing a command and its
+    ACK on the plaintext port.  If no commands are sent during the
+    suite interval, \texttt{rtt\_valid} is \texttt{false}.
+
+  \item[Clock offset requires Chronos $\to$ may be null.]
+    If Operation Chronos did not execute (e.g.\ single-machine
+    testing), \texttt{clock\_offset\_ms} in Category~A is \texttt{null}.
+    This makes one-way latency corrections unreliable.
+\end{description}
+
+\subsection{Impact on Validation Verdict (Category R)}
+
+The validation verdict (Category~R) applies three checks to each
+suite record:
+
+\begin{enumerate}
+  \item \textbf{Handshake success}: Was \texttt{handshake\_success}
+        true?
+  \item \textbf{Non-zero data}: Did at least one data-plane counter
+        (\texttt{packets\_sent} or \texttt{packets\_received}) exceed
+        zero?
+  \item \textbf{Duration sanity}: Was
+        \texttt{suite\_total\_duration\_ms} positive and within
+        bounds?
+\end{enumerate}
+
+\begin{table}[htbp]
+\centering
+\caption{How failure classes affect the validation verdict.}
+\label{tab:failure-verdict}
+\begin{tabular}{@{}l c p{6cm}@{}}
+\toprule
+\textbf{Failure Class} & \textbf{Verdict} & \textbf{Rationale} \\
+\midrule
+Real failure (handshake timeout)  & \textsc{fail} & Check 1 fails \\
+Real failure (proxy crash)        & \textsc{fail} & Check 2 fails (zero packets) \\
+Expected absence (no power)       & \textsc{pass} & Power is optional; all three checks can still pass \\
+Structural unavailability (no FC) & \textsc{pass} & Checks evaluate data-plane counters, not MAVLink presence \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{keyinsight}
+A suite with verdict \textsc{pass} is not necessarily \emph{complete}.
+It means the handshake succeeded, data flowed, and timing was sane.
+Individual metric fields may still be \texttt{null} due to expected
+absences or structural unavailability.  Researchers should check both
+the verdict \textbf{and} the specific fields relevant to their analysis
+before drawing conclusions.
+\end{keyinsight}
+
+% ============================================================
 \section{Metrics Data Flow: End to End}
 \label{sec:metrics-e2e}
 

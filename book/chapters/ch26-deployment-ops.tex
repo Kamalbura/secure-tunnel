@@ -1,0 +1,724 @@
+% ============================================================================
+%  CHAPTER 26 — DEPLOYMENT GUIDE AND OPERATIONS RUNBOOK
+% ============================================================================
+\chapter{Deployment Guide and Operations Runbook}
+\label{ch:deployment-ops}
+
+\epigraph{Plans are useless, but planning is indispensable.}{Dwight D.\ Eisenhower}
+
+This chapter provides a complete operational guide for deploying,
+configuring, monitoring, and troubleshooting the PQC Secure MAVLink
+Tunnel in both laboratory and field environments.
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Prerequisites}
+\label{sec:dep-prerequisites}
+
+\subsection{Hardware Requirements}
+
+\begin{longtable}{l l l l}
+  \caption{Minimum hardware requirements.}
+  \label{tab:dep-hardware} \\
+  \toprule
+  \textbf{Component} & \textbf{Drone} & \textbf{GCS} & \textbf{Notes} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  CPU          & ARMv8-A (Cortex-A53+) & x86-64 or ARM  & AES-NI or ARMv8 CE recommended. \\
+  RAM          & 2\,GB minimum          & 4\,GB minimum  & McEliece-8192128 requires 2\,GB. \\
+  Storage      & 500\,MB free           & 1\,GB free     & For logs and key storage. \\
+  Network      & WiFi or Ethernet       & Same           & $\geq$10\,Mbps recommended. \\
+  OS           & Linux (Raspberry Pi OS) & Linux or Windows & Python 3.10+ required. \\
+\end{longtable}
+
+\subsection{Software Dependencies}
+
+\begin{longtable}{l l l p{4cm}}
+  \caption{Software dependencies and versions.}
+  \label{tab:dep-software} \\
+  \toprule
+  \textbf{Package} & \textbf{Min Version} & \textbf{Tested} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  Python          & 3.10  & 3.11.6 & Runtime. \\
+  liboqs          & 0.9.0 & 0.10.0 & PQC algorithms (KEM + SIG). \\
+  liboqs-python   & 0.9.0 & 0.10.0 & Python bindings for liboqs. \\
+  cryptography    & 41.0  & 42.0.2 & AES-GCM, ChaCha20, HKDF. \\
+  psutil          & 5.9   & 5.9.7  & System/process metrics. \\
+  pymavlink       & 2.4   & 2.4.41 & MAVLink message parsing. \\
+  MAVProxy        & 1.8   & 1.8.70 & MAVLink proxy/router. \\
+  ascon           & 0.1   & 0.1.0  & ASCON-128a (optional, benchmark only). \\
+  \bottomrule
+\end{longtable}
+
+\subsection{Network Requirements}
+
+\begin{longtable}{l l l p{4cm}}
+  \caption{Network port requirements.}
+  \label{tab:dep-ports} \\
+  \toprule
+  \textbf{Port} & \textbf{Protocol} & \textbf{Direction} & \textbf{Purpose} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  46000 & TCP & GCS listens, Drone connects & PQC handshake. \\
+  47001 & UDP & Drone $\to$ GCS              & Encrypted MAVLink (drone-to-GCS). \\
+  47002 & UDP & GCS $\to$ Drone              & Encrypted MAVLink (GCS-to-drone). \\
+  48080 & TCP & GCS listens, Drone connects & Scheduler control (benchmark mode). \\
+  14550 & UDP & Localhost only               & MAVProxy $\leftrightarrow$ GCS GUI. \\
+  5760  & TCP & Localhost only               & SITL $\leftrightarrow$ MAVProxy. \\
+\end{longtable}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Installation}
+\label{sec:dep-installation}
+
+\subsection{Step 1: Install liboqs}
+
+\begin{lstlisting}[style=terminal, caption={Installing liboqs from source}]
+# On both drone and GCS
+sudo apt-get update
+sudo apt-get install -y cmake gcc ninja-build libssl-dev
+
+git clone --branch 0.10.0 https://github.com/open-quantum-safe/liboqs.git
+cd liboqs && mkdir build && cd build
+cmake -GNinja -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DOQS_USE_OPENSSL=ON \
+      -DOQS_DIST_BUILD=ON ..
+ninja && sudo ninja install
+sudo ldconfig
+\end{lstlisting}
+
+\begin{implementationnote}
+On Raspberry Pi, the build takes approximately 15~minutes.
+The \texttt{-DOQS\_DIST\_BUILD=ON} flag enables portable
+binaries that work across different ARM revisions.
+On x86-64, add \texttt{-DOQS\_USE\_AVX2\_INSTRUCTIONS=ON}
+for SIMD acceleration.
+\end{implementationnote}
+
+\subsection{Step 2: Install Python Dependencies}
+
+\begin{lstlisting}[style=terminal, caption={Python environment setup}]
+python3 -m venv venv
+source venv/bin/activate
+
+pip install --upgrade pip
+pip install liboqs-python==0.10.0
+pip install cryptography==42.0.2
+pip install psutil==5.9.7
+pip install pymavlink==2.4.41
+pip install MAVProxy==1.8.70
+pip install ascon==0.1.0  # Optional: benchmark only
+\end{lstlisting}
+
+\subsection{Step 3: Clone the Repository}
+
+\begin{lstlisting}[style=terminal, caption={Repository setup}]
+git clone https://github.com/your-org/secure-tunnel.git
+cd secure-tunnel
+\end{lstlisting}
+
+\subsection{Step 4: Verify Installation}
+
+\begin{lstlisting}[style=terminal, caption={Verification commands}]
+# Check OQS is available
+python3 -c "import oqs; print(oqs.get_enabled_kem_mechanisms())"
+
+# Check supported algorithms
+python3 -c "from core.suites import ALL_SUITES; print(len(ALL_SUITES), 'suites')"
+
+# Expected output: 216 suites
+
+# Run quick self-test
+python3 -m core.cli self-test
+\end{lstlisting}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Key Generation and Distribution}
+\label{sec:dep-keygen}
+
+\subsection{Generate Identity Keys}
+
+\begin{lstlisting}[style=terminal, caption={Key generation}]
+# On the GCS: generate signing keypair
+python3 -m core.cli init-identity \
+    --suite cs-mlkem768-aesgcm-mldsa65 \
+    --key-dir keys/ \
+    --role gcs
+
+# Output:
+# Generated ML-DSA-65 signing keypair:
+#   Public key:  keys/gcs_mldsa65.pub (1952 bytes)
+#   Secret key:  keys/gcs_mldsa65.key (4032 bytes)
+#   Fingerprint: a1b2c3d4e5f6g7h8
+\end{lstlisting}
+
+\subsection{Distribute Public Keys}
+
+\begin{lstlisting}[style=terminal, caption={Secure key distribution}]
+# Copy GCS public key to drone (use SCP or physical media)
+scp keys/gcs_mldsa65.pub pi@drone-ip:~/secure-tunnel/keys/
+
+# Verify on drone
+python3 -c "
+from core.keys import load_public_key, key_info
+info = key_info('keys/gcs_mldsa65.pub')
+print(f'Algorithm: {info.algorithm}')
+print(f'Fingerprint: {info.fingerprint}')
+print(f'Size: {info.pk_bytes} bytes')
+"
+\end{lstlisting}
+
+\subsection{Generate Pre-Shared Key}
+
+\begin{lstlisting}[style=terminal, caption={PSK generation}]
+# Generate a 256-bit PSK
+python3 -c "
+import os, base64
+psk = os.urandom(32)
+print(base64.b64encode(psk).decode())
+" > psk.txt
+
+# The base64 string must be set as DRONE_PSK on BOTH sides
+# Example: SECDRONE_DRONE_PSK=K7x2m9P...==
+\end{lstlisting}
+
+\begin{securitynote}
+The PSK must be transmitted to both endpoints via a secure
+out-of-band channel (e.g.\ physical USB drive, encrypted email).
+Never transmit the PSK over the same network that will be
+protected by the tunnel.
+\end{securitynote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Configuration}
+\label{sec:dep-configuration}
+
+\subsection{Configuration File}
+
+The primary configuration file is \texttt{settings.json} in the
+project root:
+
+\begin{lstlisting}[style=python, caption={Example settings.json}]
+{
+    "TCP_PORT": 46000,
+    "UDP_IN_PORT": 47001,
+    "UDP_OUT_PORT": 47002,
+    "GCS_HOST": "192.168.1.100",
+    "DRONE_HOST": "192.168.1.200",
+    "KEM_ALG": "ML-KEM-768",
+    "SIG_ALG": "ML-DSA-65",
+    "AEAD_ALG": "AES-256-GCM",
+    "DRONE_PSK": "K7x2m9P...==",
+    "GCS_SIG_PRIVATE_KEY": "keys/gcs_mldsa65.key",
+    "GCS_SIG_PUBLIC_KEY": "keys/gcs_mldsa65.pub",
+    "KEY_DIR": "keys/",
+    "STRICT_UDP_PEER_MATCH": true,
+    "REPLAY_WINDOW": 1024,
+    "RATE_LIMIT_CAPACITY": 5,
+    "RATE_LIMIT_REFILL": 3.0,
+    "HANDSHAKE_TIMEOUT": 60.0,
+    "UDP_DSCP_VALUE": 46,
+    "LOG_LEVEL": "INFO"
+}
+\end{lstlisting}
+
+\subsection{Environment Variable Overrides}
+
+Any configuration key can be overridden via environment variables
+prefixed with \texttt{SECDRONE\_}:
+
+\begin{lstlisting}[style=terminal, caption={Environment variable overrides}]
+export SECDRONE_GCS_HOST=10.0.0.1
+export SECDRONE_DRONE_PSK="base64-encoded-psk"
+export SECDRONE_LOG_LEVEL=DEBUG
+export SECDRONE_REPLAY_WINDOW=2048
+\end{lstlisting}
+
+\subsection{Configuration Validation}
+
+\begin{lstlisting}[style=terminal, caption={Validate configuration}]
+python3 -c "
+from core.config import CONFIG, validate_config
+warnings = validate_config()
+if warnings:
+    for w in warnings:
+        print(f'WARNING: {w}')
+else:
+    print('Configuration OK')
+"
+\end{lstlisting}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Running the Tunnel}
+\label{sec:dep-running}
+
+\subsection{GCS Side}
+
+\begin{lstlisting}[style=terminal, caption={Starting the GCS proxy}]
+# Terminal 1: Start GCS proxy
+python3 -m core.cli run \
+    --mode gcs \
+    --suite cs-mlkem768-aesgcm-mldsa65 \
+    --config settings.json
+
+# Expected output:
+# [INFO] GCS proxy starting on 192.168.1.100:46000 (TCP)
+# [INFO] Waiting for drone connection...
+\end{lstlisting}
+
+\subsection{Drone Side}
+
+\begin{lstlisting}[style=terminal, caption={Starting the drone proxy}]
+# Terminal 1: Start drone proxy
+python3 -m core.cli run \
+    --mode drone \
+    --suite cs-mlkem768-aesgcm-mldsa65 \
+    --config settings.json
+
+# Expected output:
+# [INFO] Drone proxy connecting to 192.168.1.100:46000 (TCP)
+# [INFO] Handshake complete in 4.2 ms
+# [INFO] Data plane active: UDP 47001 <-> 47002
+# [INFO] Session ID: a1b2c3d4e5f6g7h8
+# [INFO] AEAD: AES-256-GCM, Replay window: 1024
+\end{lstlisting}
+
+\subsection{Starting MAVProxy}
+
+\begin{lstlisting}[style=terminal, caption={MAVProxy configuration}]
+# On drone: MAVProxy connects to FC and sends through tunnel
+mavproxy.py --master=/dev/ttyACM0 \
+            --out=udp:127.0.0.1:47001
+
+# On GCS: MAVProxy receives from tunnel and forwards to GUI
+mavproxy.py --master=udp:127.0.0.1:47002 \
+            --out=udp:127.0.0.1:14550
+\end{lstlisting}
+
+\subsection{Verification}
+
+\begin{lstlisting}[style=terminal, caption={Verify tunnel operation}]
+# Check proxy status
+python3 -c "
+from core.proxy import ProxyEngine
+# ... or check log output for:
+# [INFO] Encrypted 1000 packets (42.0 KB)
+# [INFO] Decrypted 1000 packets (42.0 KB)
+# [INFO] Replay rejects: 0
+"
+
+# Check MAVLink messages flowing
+# On GCS MAVProxy console:
+> status
+# Should show heartbeat, GPS, attitude messages arriving
+\end{lstlisting}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Benchmark Mode}
+\label{sec:dep-benchmark}
+
+\subsection{Full Benchmark Pipeline}
+
+\begin{lstlisting}[style=terminal, caption={Running the full benchmark}]
+# On GCS: Start scheduler server
+python3 -m scheduler.gcs_scheduler --port 48080
+
+# On Drone: Run benchmark
+python3 -m sscheduler.benchmark_runner \
+    --suites "cs-mlkem768-aesgcm-mldsa65,cs-mlkem1024-aesgcm-mldsa87" \
+    --iterations 100 \
+    --time-per-suite 110 \
+    --output-dir bench_results/ \
+    --warmup 10
+
+# Expected runtime: 2 suites x 100 iterations x 120s = ~6.7 hours
+\end{lstlisting}
+
+\subsection{Quick Smoke Test}
+
+\begin{lstlisting}[style=terminal, caption={Quick benchmark smoke test}]
+# Single suite, 3 iterations, 30 seconds each
+python3 -m sscheduler.benchmark_runner \
+    --suites cs-mlkem768-aesgcm-mldsa65 \
+    --iterations 3 \
+    --time-per-suite 30 \
+    --output-dir _tmp_run/
+
+# Expected runtime: ~2 minutes
+\end{lstlisting}
+
+\subsection{Analysing Results}
+
+\begin{lstlisting}[style=terminal, caption={Result analysis commands}]
+# Parse JSONL results
+python3 analyze_metrics.py bench_results/results.jsonl
+
+# Generate plots
+python3 bench/generate_benchmark_book.py \
+    --input bench_results/ \
+    --output bench_analysis/
+
+# Generate IEEE-format report
+python3 bench/generate_ieee_report.py \
+    --input bench_results/ \
+    --output thesis/figures/
+\end{lstlisting}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Monitoring and Observability}
+\label{sec:dep-monitoring}
+
+\subsection{Log Levels}
+
+\begin{longtable}{l p{8cm}}
+  \caption{Log levels and their content.}
+  \label{tab:dep-log-levels} \\
+  \toprule
+  \textbf{Level} & \textbf{Content} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  DEBUG   & Every packet encrypt/decrypt, nonce values, sequence numbers, timing breakdowns.  \textbf{Very verbose}: generates $\sim$50\,KB/s at 50~pps. \\
+  INFO    & Handshake events, session start/stop, rekey events, periodic statistics (every 30\,s).  \textbf{Recommended for production.} \\
+  WARNING & Rate limit triggers, replay rejects, config validation warnings, non-fatal errors. \\
+  ERROR   & Handshake failures, AEAD authentication failures, process crashes, unrecoverable errors. \\
+\end{longtable}
+
+\subsection{Structured Log Format}
+
+All logs use JSON format for machine parsing:
+
+\begin{lstlisting}[style=terminal, caption={Example structured log output}]
+{"ts":"2024-12-15T14:30:00.123Z","level":"INFO","msg":"handshake_complete",
+ "suite":"cs-mlkem768-aesgcm-mldsa65","elapsed_ms":4.2,
+ "session_id":"a1b2c3d4","peer":"192.168.1.200"}
+{"ts":"2024-12-15T14:30:30.456Z","level":"INFO","msg":"stats",
+ "tx_packets":1500,"rx_packets":1480,"tx_bytes":63000,
+ "rx_bytes":62160,"replay_rejects":0,"aead_errors":0}
+\end{lstlisting}
+
+\subsection{Health Checks}
+
+\begin{lstlisting}[style=python, caption={Health check configuration}]
+# The process manager performs periodic health checks:
+health_config = {
+    "interval_s": 5.0,        # Check every 5 seconds
+    "healthy_threshold": 3,    # 3 consecutive passes = healthy
+    "unhealthy_threshold": 2,  # 2 consecutive fails = unhealthy
+    "checks": [
+        "pid_alive",           # Process exists
+        "log_pattern",         # Recent log activity
+        "tcp_connect",         # Handshake port responsive
+    ]
+}
+\end{lstlisting}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Troubleshooting Guide}
+\label{sec:dep-troubleshooting}
+
+\subsection{Common Issues}
+
+\begin{longtable}{l p{4cm} p{5cm}}
+  \caption{Common issues and solutions.}
+  \label{tab:dep-troubleshooting} \\
+  \toprule
+  \textbf{Symptom} & \textbf{Likely Cause} & \textbf{Solution} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Symptom} & \textbf{Likely Cause} & \textbf{Solution} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+
+  ``Connection refused'' on port 46000 & GCS proxy not running or wrong IP. & Verify GCS proxy is started and \texttt{GCS\_HOST} matches. \\
+  
+  ``HandshakeVerifyError: signature invalid'' & Wrong public key on drone. & Re-copy \texttt{gcs\_mldsa65.pub} from GCS to drone.  Verify fingerprints match. \\
+  
+  ``HandshakeVerifyError: HMAC mismatch'' & PSK mismatch between sides. & Verify \texttt{DRONE\_PSK} is identical on both drone and GCS (base64, no trailing newline). \\
+  
+  ``HandshakeError: timeout'' & Network connectivity or firewall. & Check \texttt{ping} between hosts.  Verify port 46000 is open. \\
+  
+  ``AeadAuthError'' on every packet & Session ID mismatch (stale state). & Restart both proxies.  Ensure no old proxy instances running. \\
+  
+  ``ReplayError'' bursts & UDP packet reordering exceeding window. & Increase \texttt{REPLAY\_WINDOW} to 2048 or 4096. \\
+  
+  ``SequenceOverflow'' & Seq counter reached $2^{64}$. & Should never happen in practice.  If seen, indicates a bug. \\
+  
+  ``ImportError: cannot import oqs'' & liboqs not installed or not in LD path. & Run \texttt{sudo ldconfig}.  Verify \texttt{/usr/local/lib/liboqs.so} exists. \\
+  
+  ``MemoryError'' during McEliece keygen & Insufficient RAM for McEliece-8192128. & Use a platform with $\geq$2\,GB RAM, or choose a different KEM. \\
+  
+  High CPU usage ($>$50\%) & Ascon-128a pure-Python AEAD. & Switch to AES-256-GCM or ChaCha20-Poly1305. \\
+  
+  No MAVLink messages after handshake & MAVProxy not connected to correct UDP ports. & Verify MAVProxy \texttt{--out} matches proxy's local UDP ports. \\
+  
+  ``Rate limited'' in logs & Too many handshake attempts. & Normal if rekeying frequently.  Increase \texttt{RATE\_LIMIT\_CAPACITY} if needed. \\
+  
+  Benchmark JSONL file empty & Scheduler TCP connection failed. & Verify GCS scheduler is running on port 48080.  Check firewall. \\
+\end{longtable}
+
+\subsection{Diagnostic Commands}
+
+\begin{lstlisting}[style=terminal, caption={Diagnostic commands}]
+# Check OQS algorithm support
+python3 -c "import oqs; print(oqs.get_enabled_kem_mechanisms())"
+python3 -c "import oqs; print(oqs.get_enabled_sig_mechanisms())"
+
+# Check network connectivity
+nc -zv <gcs-ip> 46000  # TCP handshake port
+nc -zuv <gcs-ip> 47002  # UDP data port
+
+# Check key file integrity
+python3 -c "
+from core.keys import verify_key_integrity
+print(verify_key_integrity('keys/gcs_mldsa65.pub'))
+"
+
+# Monitor proxy in real time
+tail -f logs/proxy.log | python3 -m json.tool
+
+# Check CPU frequency governor
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+# Should be 'performance' for benchmarks
+
+# Check temperature (RPi)
+vcgencmd measure_temp
+\end{lstlisting}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Security Hardening Checklist}
+\label{sec:dep-hardening}
+
+\begin{longtable}{c p{6cm} l l}
+  \caption{Security hardening checklist.}
+  \label{tab:dep-hardening} \\
+  \toprule
+  \textbf{\#} & \textbf{Item} & \textbf{Status} & \textbf{Priority} \\
+  \midrule
+  \endfirsthead
+  \bottomrule
+  \endfoot
+
+  1 & Set key file permissions to 0600 (owner only). & Required & Critical \\
+  2 & Generate unique PSK ($\geq$256 bits) per deployment. & Required & Critical \\
+  3 & Use NIST Level~3+ suites for production. & Required & High \\
+  4 & Enable \texttt{STRICT\_UDP\_PEER\_MATCH}. & Default On & High \\
+  5 & Configure host firewall (block external access to localhost ports). & Manual & High \\
+  6 & Set CPU governor to ``performance'' (benchmarks) or ``ondemand'' (production). & Manual & Medium \\
+  7 & Enable disk encryption for key storage volume. & Manual & Medium \\
+  8 & Rotate signing keys every 90~days. & Manual & Medium \\
+  9 & Rotate PSK every 30~days. & Manual & Medium \\
+  10 & Monitor for \texttt{AeadAuthError} in logs (indicates active attack). & Manual & High \\
+  11 & Set \texttt{LOG\_LEVEL=WARNING} in production (reduce info leakage). & Manual & Low \\
+  12 & Disable scheduler port (48080) in non-benchmark deployments. & Manual & High \\
+  13 & Use dedicated network interface for drone link (not shared). & Manual & Medium \\
+  14 & Apply OS security updates regularly. & Manual & High \\
+  15 & Verify liboqs version matches known-good hash. & Manual & Medium \\
+\end{longtable}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Field Deployment Procedures}
+\label{sec:dep-field}
+
+\subsection{Pre-Flight Checklist}
+
+\begin{enumerate}
+  \item \textbf{Power:} Verify drone battery $\geq$ 80\%.  GCS laptop
+    plugged in or $\geq$ 50\% battery.
+  \item \textbf{Network:} Verify WiFi/Ethernet link between drone and GCS.
+    Measure RTT with \texttt{ping} (should be $< 10$\,ms for WiFi,
+    $< 1$\,ms for Ethernet).
+  \item \textbf{Keys:} Verify public key fingerprints match on both sides:
+    \begin{lstlisting}[style=terminal]
+    python3 -c "from core.keys import key_info; print(key_info('keys/gcs_mldsa65.pub').fingerprint)"
+    \end{lstlisting}
+  \item \textbf{Configuration:} Run \texttt{validate\_config()} on both sides.
+  \item \textbf{Clock:} If using benchmarks, run clock sync:
+    \begin{lstlisting}[style=terminal]
+    python3 -m sscheduler.chronos --sync --rounds 10
+    \end{lstlisting}
+  \item \textbf{Start Proxy:} Start GCS proxy first, then drone proxy.
+    Verify ``Handshake complete'' log message.
+  \item \textbf{Start MAVProxy:} On both sides.  Verify heartbeat messages.
+  \item \textbf{Test Command:} Send a test command from GCS GUI and verify
+    drone responds (e.g.\ request parameters).
+\end{enumerate}
+
+\subsection{In-Flight Monitoring}
+
+\begin{itemize}
+  \item Monitor proxy log for \texttt{AeadAuthError} or \texttt{ReplayError}
+    (indicates potential attack or severe packet loss).
+  \item Monitor MAVLink heartbeat rate (should be $\geq$ 1\,Hz).
+  \item Monitor latency (periodic stats log shows P95 latency).
+  \item If latency exceeds 100\,ms or heartbeat drops below 0.5\,Hz,
+    consider aborting the mission.
+\end{itemize}
+
+\subsection{Post-Flight}
+
+\begin{enumerate}
+  \item Stop proxy on both sides.
+  \item Collect logs: \texttt{cp logs/*.log /mnt/usb/flight-YYYYMMDD/}
+  \item If benchmarking: verify JSONL output integrity.
+  \item Review logs for any security warnings.
+  \item Securely erase session keys (they are in-memory only; process
+    termination handles this).
+\end{enumerate}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Automated Deployment with Scripts}
+\label{sec:dep-scripts}
+
+\subsection{Deploy Script}
+
+\begin{lstlisting}[style=terminal, caption={Automated deployment script}]
+#!/bin/bash
+# deploy_and_run.sh - Deploy to remote drone via SSH
+
+DRONE_IP="192.168.1.200"
+DRONE_USER="pi"
+PROJECT_DIR="/home/pi/secure-tunnel"
+
+# Sync code
+rsync -avz --exclude='.git' --exclude='__pycache__' \
+    ./ ${DRONE_USER}@${DRONE_IP}:${PROJECT_DIR}/
+
+# Sync keys (only public keys to drone)
+scp keys/gcs_mldsa65.pub ${DRONE_USER}@${DRONE_IP}:${PROJECT_DIR}/keys/
+
+# Set permissions
+ssh ${DRONE_USER}@${DRONE_IP} "chmod 600 ${PROJECT_DIR}/keys/*.key 2>/dev/null; \
+    chmod 644 ${PROJECT_DIR}/keys/*.pub"
+
+# Verify installation
+ssh ${DRONE_USER}@${DRONE_IP} "cd ${PROJECT_DIR} && \
+    python3 -c 'from core.config import validate_config; print(validate_config())'"
+
+echo "Deployment complete. Start proxies manually or use systemd."
+\end{lstlisting}
+
+\subsection{Systemd Service Files}
+
+\begin{lstlisting}[style=terminal, caption={Systemd service file for GCS proxy}]
+# /etc/systemd/system/pqc-proxy-gcs.service
+[Unit]
+Description=PQC Secure MAVLink Tunnel - GCS Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=gcs-user
+WorkingDirectory=/opt/secure-tunnel
+Environment="SECDRONE_LOG_LEVEL=INFO"
+ExecStart=/opt/secure-tunnel/venv/bin/python3 -m core.cli run \
+    --mode gcs --suite cs-mlkem768-aesgcm-mldsa65
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/pqc-proxy.log
+StandardError=append:/var/log/pqc-proxy-error.log
+
+[Install]
+WantedBy=multi-user.target
+\end{lstlisting}
+
+\begin{lstlisting}[style=terminal, caption={Enable and start the service}]
+sudo systemctl daemon-reload
+sudo systemctl enable pqc-proxy-gcs
+sudo systemctl start pqc-proxy-gcs
+sudo systemctl status pqc-proxy-gcs
+\end{lstlisting}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Upgrade Procedures}
+\label{sec:dep-upgrade}
+
+\subsection{Software Update}
+
+\begin{enumerate}
+  \item \textbf{Stage:} Pull new code to a staging directory.
+  \item \textbf{Test:} Run self-test with the new code against existing keys.
+  \item \textbf{Backup:} Backup current keys and configuration.
+  \item \textbf{Deploy:} Replace production code with staged version.
+  \item \textbf{Restart:} Restart proxy services.
+  \item \textbf{Verify:} Confirm handshake success and data flow.
+\end{enumerate}
+
+\subsection{Algorithm Migration}
+
+When migrating from one cipher suite to another (e.g.\ ML-DSA-65 to
+ML-DSA-87):
+
+\begin{enumerate}
+  \item Generate new keys for the target suite on the GCS.
+  \item Distribute the new public key to the drone.
+  \item Update \texttt{settings.json} on both sides.
+  \item Restart both proxies.
+  \item Verify handshake with new suite succeeds.
+  \item Remove old key files after confirming the new suite works.
+\end{enumerate}
+
+\subsection{liboqs Version Upgrade}
+
+\begin{lstlisting}[style=terminal, caption={liboqs upgrade procedure}]
+# 1. Build new version
+cd liboqs && git checkout 0.11.0
+cd build && cmake .. && ninja && sudo ninja install && sudo ldconfig
+
+# 2. Verify algorithm compatibility
+python3 -c "
+import oqs
+kems = oqs.get_enabled_kem_mechanisms()
+sigs = oqs.get_enabled_sig_mechanisms()
+print(f'KEMs: {len(kems)}, SIGs: {len(sigs)}')
+# Verify required algorithms are present
+for alg in ['ML-KEM-768', 'ML-DSA-65']:
+    assert alg in kems or alg in sigs, f'{alg} missing!'
+print('All required algorithms available')
+"
+
+# 3. Test handshake with existing keys
+python3 -m core.cli self-test --suite cs-mlkem768-aesgcm-mldsa65
+\end{lstlisting}
+
+\begin{securitynote}
+After a liboqs upgrade, \textbf{regenerate all keys} if the
+algorithm implementations have changed (check the liboqs changelog).
+Key formats may be incompatible between major versions.
+\end{securitynote}
+
+% ────────────────────────────────────────────────────────────────────────────
+\section{Summary}
+\label{sec:dep-summary}
+
+This chapter covered:
+
+\begin{itemize}
+  \item \textbf{Prerequisites}: hardware, software, and network requirements.
+  \item \textbf{Installation}: liboqs build, Python dependencies, verification.
+  \item \textbf{Key management}: generation, distribution, PSK creation.
+  \item \textbf{Configuration}: settings.json, environment overrides, validation.
+  \item \textbf{Running}: GCS proxy, drone proxy, MAVProxy integration.
+  \item \textbf{Benchmark mode}: full pipeline and smoke tests.
+  \item \textbf{Monitoring}: log levels, structured logging, health checks.
+  \item \textbf{Troubleshooting}: 12~common issues with solutions,
+    diagnostic commands.
+  \item \textbf{Security hardening}: 15-point checklist.
+  \item \textbf{Field procedures}: pre-flight, in-flight, post-flight checklists.
+  \item \textbf{Automation}: deploy scripts, systemd services.
+  \item \textbf{Upgrades}: software, algorithm, and liboqs update procedures.
+\end{itemize}

@@ -35,7 +35,7 @@
 \usepackage[dvipsnames,svgnames,x11names]{xcolor}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,fit,
-                 decorations.pathreplacing,backgrounds,matrix}
+                 decorations.pathreplacing,decorations.pathmorphing,backgrounds,matrix}
 
 % ── Tables ──────────────────────────────────────────────────────────────────
 \usepackage{booktabs}
@@ -100,6 +100,18 @@
 \lstdefinestyle{bash}{
   language=bash,
   morekeywords={sudo,ssh,cd,source,python,conda,activate,git,pip},
+}
+
+\lstdefinestyle{terminal}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  breaklines=true,
+  showstringspaces=false,
+  xleftmargin=2em,
+  framexleftmargin=1.5em,
+  numbers=none,
 }
 
 % ── Algorithms / Pseudocode ────────────────────────────────────────────────
@@ -205,6 +217,13 @@
 \usepackage{pdfpages}
 \usepackage{epigraph}
 \usepackage{etoolbox}
+\usepackage{pifont}             % for \ding checkmarks
+\usepackage{caption}            % for \captionof in TikZ figures
+\usepackage{pgfplots}           % for data-driven charts
+\pgfplotsset{compat=1.18}
+
+% Checkmark for tables
+\newcommand{\cmark}{\ding{51}}
 
 % Depth of table of contents
 \setcounter{tocdepth}{3}
@@ -258,6 +277,7 @@
 
 % Part III: The Implementation
 \part{The Implementation}
+\label{part:implementation}
 \input{chapters/ch07-handshake}
 \input{chapters/ch08-aead-framing}
 \input{chapters/ch09-proxy-engine}
@@ -273,6 +293,22 @@
 \part{Engineering and Reflection}
 \input{chapters/ch14-engineering}
 \input{chapters/ch15-conclusion}
+
+% Part VI: Reference and Deployment
+\part{Reference and Deployment}
+\input{chapters/ch16-dependencies}
+\input{chapters/ch17-codebase}
+\input{chapters/ch18-testing}
+\input{chapters/ch19-benchmarks}
+\input{chapters/ch20-deployment}
+
+% Part VII: Deep Dives and Analysis
+\part{Deep Dives and Analysis}
+\input{chapters/ch21-related-work}
+\input{chapters/ch22-protocol-specification}
+\input{chapters/ch23-api-reference}
+\input{chapters/ch24-threat-modeling}
+\input{chapters/ch25-performance-analysis}
 
 % ── Appendices ─────────────────────────────────────────────────────────────
 \appendix

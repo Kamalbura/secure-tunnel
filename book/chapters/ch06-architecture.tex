@@ -48,7 +48,7 @@ The system consists of two physical nodes connected by a WiFi network:
     
     % Connections
     \draw[link] (pixhawk) -- node[right, font=\footnotesize] {USB Serial} (pi);
-    \draw[link] (pi) -- node[right, font=\footnotesize] {MAVProxy\\UDP} (droneproxy);
+    \draw[link] (pi) -- node[right, font=\footnotesize, align=center] {MAVProxy\\UDP} (droneproxy);
     \draw[link] (laptop) -- node[right, font=\footnotesize] {UDP} (mp);
     \draw[link] (mp) -- node[right, font=\footnotesize] {UDP} (gcsproxy);
     

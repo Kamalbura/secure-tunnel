@@ -92,4 +92,34 @@
 
 \item[Wire Format] The exact byte layout of data as it appears ``on the wire'' (transmitted over the network). This system's wire format is: Header (22 bytes) $\|$ Ciphertext $\|$ Authentication Tag.
 
+% ── Concept-Level Entries ──────────────────────────────────────────────────
+
+\item[Blackout Period] The interval during a rekey operation when no encrypted data is transmitted. While the old proxy is shutting down and the new proxy is performing its handshake, MAVLink packets are queued or dropped. Minimising this interval is a key engineering goal.
+
+\item[Bump-in-the-Wire] A network security architecture where a transparent proxy is inserted into the communication path without modifying the endpoints. In this system, the PQC tunnel sits between MAVProxy and the network interface, encrypting traffic without changes to the flight controller firmware or GCS application.
+
+\item[Controller--Follower] The benchmark scheduler's architecture pattern where one side (the drone, or ``controller'') makes all scheduling decisions and the other side (the GCS, or ``follower'') executes commands. This eliminates distributed consensus and simplifies error handling.
+
+\item[CRQC] \textbf{Cryptographically Relevant Quantum Computer.} A quantum computer large enough to run Shor's algorithm against production-sized cryptographic keys (e.g.\ factoring 2048-bit RSA). No CRQC exists as of 2025, but the ``harvest now, decrypt later'' threat motivates PQC deployment today.
+
+\item[Dolev--Yao Model] A formal adversary model for cryptographic protocol analysis where the attacker controls the entire communication channel: observing, injecting, modifying, replaying, delaying, and dropping messages. The attacker cannot break the cryptographic primitives themselves. This system's threat model (Section~\ref{sec:eng-threat-model}) is based on Dolev--Yao.
+
+\item[Domain Separation] A cryptographic design principle where different uses of the same primitive are given distinct context strings, preventing cross-protocol attacks. In this system, HKDF key derivation includes the session ID, KEM name, and SIG name in the \texttt{info} parameter, ensuring that keys derived in different sessions or with different algorithms are cryptographically independent.
+
+\item[Forward Secrecy] A property of a key agreement protocol where compromise of long-term keys does not reveal past session keys. In this system, each handshake uses ephemeral KEM keypairs; compromising the GCS signing key does not help decrypt previously recorded sessions.
+
+\item[Harvest Now, Decrypt Later] An attack strategy where an adversary records encrypted traffic today and stores it until a quantum computer capable of breaking the encryption becomes available. Abbreviated HNDL. This is the primary threat motivating the use of post-quantum cryptography in this system.
+
+\item[Hysteresis] A control-theory concept applied to the scheduling policy. The policy requires a telemetry condition to persist for a minimum duration (5 seconds for upgrades, 30 seconds for downgrades) before triggering a suite change, preventing rapid oscillation between suites due to transient sensor fluctuations.
+
+\item[ManagedProcess] A cross-platform subprocess wrapper (\filename{core/process.py}) that ensures child processes are terminated when the parent exits. Uses Win32 Job Objects on Windows and \texttt{PR\_SET\_PDEATHSIG} on Linux.
+
+\item[Operation Chronos] The system's clock synchronisation protocol: a 3-message NTP-lite handshake over the TCP control channel that estimates the clock offset between drone and GCS. Named for the Greek god of time. Used to correct one-way latency measurements.
+
+\item[Trust Boundary] The logical perimeter between trusted and untrusted components. In this system, the trust boundary is the network interface: plaintext exists only on localhost (trusted), while encrypted traffic crosses the WiFi LAN (untrusted). See Section~\ref{sec:eng-trust-boundary}.
+
+\item[Two-Phase Commit] A design pattern used by the \texttt{BenchmarkPolicy} class. Phase~1 (\texttt{evaluate()}) makes a decision (advance to the next suite or stay) without modifying state. Phase~2 (\texttt{confirm\_advance()}) commits the state change only after metrics have been safely recorded. This prevents metric mis-attribution.
+
+\item[Validation Verdict] A pass/fail classification (Category~R in the metrics schema) applied to each suite record. A suite passes if the handshake succeeded, data-plane counters are non-zero, and the duration is within bounds. See Section~\ref{sec:metrics-failures} for how different failure classes affect the verdict.
+
 \end{description}

@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """
-Simplified Drone Scheduler (CONTROLLER) - sscheduler/sdrone.py
+Drone Scheduler – MAV-to-MAV PQC Tunnel Controller
+sscheduler/sdrone.py
 
 REVERSED CONTROL: Drone is the controller, GCS follows.
-- Drone decides suite order, timing, rekey
-- Drone sends commands to GCS
-- Drone runs echo server (receives traffic from GCS)
-- Drone starts its proxy first, then tells GCS to start
+
+Data flow (bidirectional MAVLink):
+  FC (serial) → MAVProxy → plaintext UDP → PQC Proxy → encrypted UDP → GCS
+  FC (serial) ← MAVProxy ← plaintext UDP ← PQC Proxy ← encrypted UDP ← GCS
+
+Two scheduling policies:
+  deterministic  – Fixed-interval cycling through filtered suites (benchmark)
+  intelligent    – Adaptive selection driven by battery, thermal, link quality,
+                   mission criticality, and AEAD / NIST-level constraints (flight)
+
+The drone never generates synthetic traffic.  All data flowing through
+the tunnel is real MAVLink produced by MAVProxy ↔ flight-controller.
 
 Usage:
-    python -m sscheduler.sdrone [options]
-
-Environment:
-    DRONE_HOST          Drone IP (default: from config)
-    GCS_HOST            GCS IP (default: from config)
-    GCS_CONTROL_HOST    GCS control server IP (default: GCS_HOST)
+  python -m sscheduler.sdrone --policy intelligent
+  python -m sscheduler.sdrone --policy deterministic --duration 10
 """
 
 import os
@@ -24,564 +29,827 @@ import json
 import socket
 import signal
 import argparse
-import threading
+import logging
 import subprocess
+import threading
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
-# Add parent to path for imports
+# Ensure parent on sys.path for core imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.config import CONFIG
 from core.suites import get_suite, list_suites
+from core.process import ManagedProcess
+from sscheduler.policy import (
+    TelemetryAwarePolicyV2,
+    PolicyAction,
+    PolicyOutput,
+    DecisionInput,
+)
+from sscheduler.benchmark_policy import BenchmarkPolicy, BenchmarkAction
+from sscheduler.telemetry_window import TelemetryWindow
+from sscheduler.local_mon import LocalMonitor
 
-# Extract config values (use CONFIG as single source of truth)
-DRONE_HOST = str(CONFIG.get("DRONE_HOST"))
-GCS_HOST = str(CONFIG.get("GCS_HOST"))
-DRONE_PLAIN_RX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_RX", 47004))
-DRONE_PLAIN_TX_PORT = int(CONFIG.get("DRONE_PLAINTEXT_TX", 47003))
+try:
+    from core.clock_sync import ClockSync
+except ImportError:
+    ClockSync = None  # type: ignore
 
-# Control endpoint for GCS: use configured GCS_HOST and GCS_CONTROL_PORT
+# ---------------------------------------------------------------------------
+# Configuration – single source of truth from core.config
+# ---------------------------------------------------------------------------
+
+DRONE_HOST = str(CONFIG["DRONE_HOST"])
+GCS_HOST = str(CONFIG["GCS_HOST"])
+DRONE_PLAIN_RX = int(CONFIG["DRONE_PLAINTEXT_RX"])
+DRONE_PLAIN_TX = int(CONFIG["DRONE_PLAINTEXT_TX"])
 GCS_CONTROL_HOST = str(CONFIG.get("GCS_HOST"))
 GCS_CONTROL_PORT = int(CONFIG.get("GCS_CONTROL_PORT", 48080))
+GCS_TELEMETRY_PORT = int(CONFIG.get("GCS_TELEMETRY_PORT", 52080))
 
-# Derived internal proxy control port to avoid collisions
-PROXY_INTERNAL_CONTROL_PORT = GCS_CONTROL_PORT + 100
-
-DEFAULT_SUITE = "cs-mlkem768-aesgcm-mldsa65"
 SECRETS_DIR = Path(__file__).parent.parent / "secrets" / "matrix"
-
-# Traffic settings (for telling GCS how long to run)
-DEFAULT_DURATION = 10.0  # seconds per suite
-DEFAULT_RATE_MBPS = 110.0
-PAYLOAD_SIZE = 1200
-
-# --------------------
-# Local editable configuration (edit here, no CLI args needed)
-# --------------------
-LOCAL_DURATION = None  # override DEFAULT_DURATION if set, e.g. 10.0
-LOCAL_RATE_MBPS = None  # override DEFAULT_RATE_MBPS if set, e.g. 110.0
-LOCAL_MAX_SUITES = None  # limit suites run, e.g. 2
-LOCAL_SUITES = None  # list of suite names to run, or None
-
-# Get all suites (list_suites returns dict, convert to list of dicts)
-_suites_dict = list_suites()
-SUITES = [{"name": k, **v} for k, v in _suites_dict.items()]
-
 ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = ROOT / "logs" / "sscheduler" / "drone"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-# =============================================================================
-# Mode Resolution (identical logic across schedulers)
-# =============================================================================
+# Scheduler tick interval (seconds)
+EVAL_INTERVAL_S = 1.0
+# Cooldown after a suite switch to prevent rapid thrashing
+SWITCH_COOLDOWN_S = 5.0
 
-def resolve_benchmark_mode(cli_value: Optional[str], default_mode: str) -> str:
-    def _norm(value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        text = str(value).strip().upper()
-        return text or None
+_suites_dict = list_suites()
+ALL_SUITES = [{"name": k, **v} for k, v in _suites_dict.items()]
 
-    cli_mode = _norm(cli_value)
-    env_mode = _norm(os.getenv("BENCHMARK_MODE"))
-    allowed = {"MAVPROXY", "SYNTHETIC"}
 
-    if cli_mode and cli_mode not in allowed:
-        raise ValueError(f"Invalid --mode '{cli_mode}', must be MAVPROXY or SYNTHETIC")
-    if env_mode and env_mode not in allowed:
-        raise ValueError(f"Invalid BENCHMARK_MODE '{env_mode}', must be MAVPROXY or SYNTHETIC")
-    if cli_mode and env_mode and cli_mode != env_mode:
-        raise RuntimeError(f"BENCHMARK_MODE conflict: cli={cli_mode} env={env_mode}")
-
-    return cli_mode or env_mode or default_mode
-
-# ============================================================
+# ---------------------------------------------------------------------------
 # Logging
-# ============================================================
+# ---------------------------------------------------------------------------
 
 def log(msg: str):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    print(f"[{ts}] [sdrone-ctrl] {msg}", flush=True)
+    print(f"[{ts}] [sdrone] {msg}", flush=True)
 
-# ============================================================
-# UDP Echo Server (drone receives traffic from GCS)
-# ============================================================
 
-class UdpEchoServer:
-    """Echoes UDP packets: receives on DRONE_PLAIN_RX, sends back on DRONE_PLAIN_TX"""
-    
-    def __init__(self):
-        self.rx_sock = None
-        self.tx_sock = None
-        self.running = False
-        self.thread = None
-        self.rx_count = 0
-        self.tx_count = 0
-        self.rx_bytes = 0
-        self.tx_bytes = 0
-        self.lock = threading.Lock()
-    
-    def start(self):
-        if self.running:
-            return
-        
-        self.rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
-        self.rx_sock.bind((DRONE_HOST, DRONE_PLAIN_RX_PORT))
-        self.rx_sock.settimeout(1.0)
-        
-        self.tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.tx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
-        
-        self.running = True
-        self.thread = threading.Thread(target=self._echo_loop, daemon=True)
-        self.thread.start()
-        
-        log(f"Echo server listening on {DRONE_HOST}:{DRONE_PLAIN_RX_PORT}")
-    
-    def _echo_loop(self):
-        while self.running:
-            try:
-                data, addr = self.rx_sock.recvfrom(65535)
-                with self.lock:
-                    self.rx_count += 1
-                    self.rx_bytes += len(data)
-                
-                self.tx_sock.sendto(data, (DRONE_HOST, DRONE_PLAIN_TX_PORT))
-                with self.lock:
-                    self.tx_count += 1
-                    self.tx_bytes += len(data)
-            except socket.timeout:
-                continue
-            except Exception as e:
-                if self.running:
-                    log(f"Echo error: {e}")
-    
-    def get_stats(self):
-        with self.lock:
-            return {
-                "rx_count": self.rx_count,
-                "tx_count": self.tx_count,
-                "rx_bytes": self.rx_bytes,
-                "tx_bytes": self.tx_bytes,
-            }
-    
-    def reset_stats(self):
-        with self.lock:
-            self.rx_count = 0
-            self.tx_count = 0
-            self.rx_bytes = 0
-            self.tx_bytes = 0
-    
-    def stop(self):
-        self.running = False
-        if self.thread:
-            self.thread.join(timeout=2.0)
-        if self.rx_sock:
-            self.rx_sock.close()
-        if self.tx_sock:
-            self.tx_sock.close()
-
-# ============================================================
-# GCS Control Client (drone sends commands to GCS)
-# ============================================================
+# ---------------------------------------------------------------------------
+# GCS Control Client (TCP JSON-RPC)
+# ---------------------------------------------------------------------------
 
 def send_gcs_command(cmd: str, **params) -> dict:
-    """Send command to GCS control server"""
+    """Send a JSON command to the GCS control server over TCP."""
     sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(30.0)
         sock.connect((GCS_CONTROL_HOST, GCS_CONTROL_PORT))
-        
         request = {"cmd": cmd, **params}
         sock.sendall(json.dumps(request).encode() + b"\n")
-        
-        response = b""
-        while True:
+        buf = b""
+        while b"\n" not in buf:
             chunk = sock.recv(4096)
             if not chunk:
                 break
-            response += chunk
-            if b"\n" in response:
-                break
-        
-        return json.loads(response.decode().strip())
+            buf += chunk
+        return json.loads(buf.decode().strip())
     except Exception as e:
         return {"status": "error", "message": str(e)}
     finally:
-        if sock is not None:
+        if sock:
             try:
                 sock.close()
             except Exception:
                 pass
 
-def wait_for_gcs(timeout: float = 30.0) -> bool:
-    """Wait for GCS control server to be ready"""
-    start = time.time()
-    while time.time() - start < timeout:
-        result = send_gcs_command("ping")
-        if result.get("status") == "ok":
+
+def wait_for_gcs(timeout: float = 120.0) -> bool:
+    """Block until GCS control server responds to ping."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if send_gcs_command("ping").get("status") == "ok":
             return True
         time.sleep(0.5)
     return False
 
-# ============================================================
-# Drone Proxy Management
-# ============================================================
+
+# ---------------------------------------------------------------------------
+# Drone Proxy Manager
+# ---------------------------------------------------------------------------
 
 class DroneProxyManager:
-    """Manages drone proxy subprocess"""
-    
+    """Manages the drone-side PQC proxy subprocess (core.run_proxy drone)."""
+
     def __init__(self):
-        self.process = None
-        self.current_suite = None
-    
+        self.proc: Optional[ManagedProcess] = None
+        self.current_suite: Optional[str] = None
+        self._last_log: Optional[Path] = None
+
     def start(self, suite_name: str) -> bool:
-        """Start drone proxy with given suite"""
-        if self.process and self.process.poll() is None:
+        if self.proc and self.proc.is_running():
             self.stop()
-        
+
         suite = get_suite(suite_name)
         if not suite:
             log(f"Unknown suite: {suite_name}")
             return False
-        
-        secret_dir = SECRETS_DIR / suite_name
-        peer_pubkey = secret_dir / "gcs_signing.pub"
-        
+
+        peer_pubkey = SECRETS_DIR / suite_name / "gcs_signing.pub"
         if not peer_pubkey.exists():
-            log(f"Missing key: {peer_pubkey}")
+            log(f"Missing public key: {peer_pubkey}")
             return False
-        
+
         cmd = [
             sys.executable, "-m", "core.run_proxy", "drone",
             "--suite", suite_name,
             "--peer-pubkey-file", str(peer_pubkey),
-            "--quiet"
+            "--quiet",
+            "--status-file", str(LOGS_DIR / "drone_status.json"),
         ]
 
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        log_path = LOGS_DIR / f"drone_{suite_name}_{timestamp}.log"
-        log(f"Launching: {' '.join(cmd)} (log: {log_path})")
-        log_handle = open(log_path, "w", encoding="utf-8")
-        self.process = subprocess.Popen(
-            cmd,
-            stdout=log_handle,
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        log_path = LOGS_DIR / f"proxy_{suite_name}_{ts}.log"
+        log(f"Starting proxy: {suite_name}")
+
+        try:
+            fh = open(log_path, "w", encoding="utf-8")
+        except Exception:
+            fh = subprocess.DEVNULL
+
+        self.proc = ManagedProcess(
+            cmd=cmd,
+            name=f"proxy-{suite_name}",
+            stdout=fh,
             stderr=subprocess.STDOUT,
-            bufsize=1,
-            universal_newlines=True,
         )
+        if not self.proc.start():
+            return False
+
         self._last_log = log_path
         self.current_suite = suite_name
-        
-        # Wait for proxy to initialize
+
+        # Wait for proxy startup + handshake
         time.sleep(3.0)
-
-        if self.process.poll() is not None:
-            log(f"Proxy exited early with code {self.process.returncode}")
-            # Print tail of log for diagnosis
-            try:
-                with open(self._last_log, "r", encoding="utf-8") as fh:
-                    lines = fh.read().splitlines()[-30:]
-                    log("--- proxy log tail ---")
-                    for l in lines:
-                        log(l)
-                    log("--- end log tail ---")
-            except Exception:
-                pass
+        if not self.proc.is_running():
+            log(f"Proxy exited early for {suite_name}")
+            self._dump_log_tail()
             return False
-        
         return True
-    
+
     def stop(self):
-        """Stop drone proxy"""
-        if self.process:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-            self.process = None
+        if self.proc:
+            self.proc.stop()
+            self.proc = None
             self.current_suite = None
+
+    def is_running(self) -> bool:
+        return self.proc is not None and self.proc.is_running()
+
+    def _dump_log_tail(self, n: int = 20):
+        if not self._last_log or not self._last_log.exists():
+            return
+        try:
+            lines = self._last_log.read_text(encoding="utf-8").splitlines()[-n:]
+            for ln in lines:
+                log(f"  | {ln}")
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Telemetry Receiver  (GCS → Drone, UDP)
+# ---------------------------------------------------------------------------
+
+class TelemetryReceiver:
+    """Listens for GCS telemetry packets and feeds them into TelemetryWindow.
+
+    Accepts both individual packets and batched envelopes
+    (schema ``uav.pqc.telemetry.batch.v1``).
+    """
+
+    def __init__(self, port: int, window: TelemetryWindow):
+        self.port = port
+        self.window = window
+        self._sock: Optional[socket.socket] = None
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self):
+        if self._running:
+            return
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind(("0.0.0.0", self.port))
+        self._sock.settimeout(1.0)
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        log(f"Telemetry receiver listening on :{self.port}")
+
+    def _loop(self):
+        while self._running:
             try:
-                # close last log handle if exists by leaving file closed (we opened in start)
-                pass
+                data, _ = self._sock.recvfrom(65535)
+                packet = json.loads(data.decode("utf-8"))
+                now = time.monotonic()
+
+                # Handle batched envelope
+                schema = packet.get("schema", "")
+                if schema.startswith("uav.pqc.telemetry.batch"):
+                    for sample in packet.get("samples", []):
+                        self.window.add(now, sample)
+                else:
+                    # Single-sample packet (legacy / fallback)
+                    self.window.add(now, packet)
+            except socket.timeout:
+                continue
             except Exception:
                 pass
-    
-    def is_running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
 
-# ============================================================
-# Suite Runner
-# ============================================================
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        if self._sock:
+            self._sock.close()
 
-def run_suite(proxy: DroneProxyManager, echo: UdpEchoServer, 
-              suite_name: str, duration: float, is_first: bool = False) -> dict:
-    """Run a single suite test - drone controls the flow.
-    
-    NOTE: Even though drone is the controller, GCS proxy must start first
-    because the TCP handshake requires GCS to listen and drone to connect.
-    Drone controls WHEN to start, but GCS proxy goes up first.
+
+# ---------------------------------------------------------------------------
+# Telemetry Reporter  (Drone → logfile, periodic status dump)
+# ---------------------------------------------------------------------------
+
+class TelemetryReporter:
+    """Periodically logs a combined snapshot of local + GCS telemetry
+    to a JSONL file for post-flight analysis."""
+
+    def __init__(
+        self,
+        local_mon: LocalMonitor,
+        telem_window: TelemetryWindow,
+        log_dir: Path,
+    ):
+        self._local = local_mon
+        self._window = telem_window
+        self._log_path = log_dir / "drone_telemetry.jsonl"
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self):
+        while self._running:
+            try:
+                lm = self._local.get_metrics()
+                gs = self._window.summarize(time.monotonic())
+                record = {
+                    "ts_ns": time.time_ns(),
+                    "local": {
+                        "battery_mv": lm.battery_mv,
+                        "battery_roc": round(lm.battery_roc, 2),
+                        "temp_c": round(lm.temp_c, 1),
+                        "temp_roc": round(lm.temp_roc, 2),
+                        "armed": lm.armed,
+                        "cpu_pct": round(lm.cpu_pct, 1),
+                    },
+                    "gcs": {
+                        "sample_count": gs["sample_count"],
+                        "rx_pps_median": gs["rx_pps_median"],
+                        "gap_p95_ms": gs["gap_p95_ms"],
+                        "silence_max_ms": gs["silence_max_ms"],
+                        "jitter_ms": gs["jitter_ms"],
+                        "confidence": gs["confidence"],
+                    },
+                }
+                with open(self._log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(record) + "\n")
+            except Exception:
+                pass
+            time.sleep(2.0)
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=2.0)
+
+
+# ===========================================================================
+# MAV Tunnel Scheduler
+# ===========================================================================
+
+class MavTunnelScheduler:
+    """Orchestrates a MAV-to-MAV PQC tunnel with policy-driven suite selection.
+
+    Architecture
+    ~~~~~~~~~~~~
+    * **MAVProxy** (persistent): bridges FC serial ↔ plaintext UDP ports.
+    * **PQC Proxy** (per-suite): encrypts plaintext UDP ↔ encrypted UDP.
+    * **LocalMonitor**: battery, thermal, armed state from Pixhawk.
+    * **TelemetryReceiver**: GCS link-quality metrics via UDP.
+    * **Policy Engine**: deterministic (benchmark) *or* intelligent (flight).
+
+    Intelligent Policy Inputs (from settings.json)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    * mission_criticality  – low / medium / high
+    * max_nist_level       – L1 / L3 / L5 ceiling
+    * allowed_aead         – aesgcm / chacha20poly1305 / ascon128a
+    * battery thresholds   – critical_mv, low_mv, warn_mv, rate_warn_mv_per_min
+    * thermal thresholds   – critical_c, warn_c, rate_warn_c_per_min
+    * link thresholds      – min_pps, max_gap_ms, max_blackout_count
+    * rekey limits         – min_stable_s, max_per_window, window_s, blacklist_ttl_s
+    * hysteresis timers    – downgrade_s (fast), upgrade_s (slow)
+
+    Decision Flow
+    ~~~~~~~~~~~~~
+    1. Collect local metrics  (battery_mv, temp_c, armed, rates-of-change)
+    2. Collect GCS telemetry  (rx_pps, gap_p95, silence, jitter, blackouts)
+    3. Build immutable DecisionInput snapshot
+    4. policy.evaluate(inp) → PolicyOutput  (HOLD / UPGRADE / DOWNGRADE /
+       REKEY / ROLLBACK)
+    5. Execute: coordinate GCS prepare_rekey → stop proxy → start new suite
     """
-    
-    result = {
-        "suite": suite_name,
-        "status": "unknown",
-        "echo_rx": 0,
-        "echo_tx": 0,
-    }
-    
-    # Reset echo stats
-    echo.reset_stats()
-    
-    if not is_first:
-        # Rekey: tell GCS to prepare (stop its proxy)
-        log("Preparing GCS for rekey...")
+
+    def __init__(self, args):
+        self.args = args
+        self.running = True
+
+        # --- sub-components ---
+        self.proxy = DroneProxyManager()
+        self.local_mon = LocalMonitor(
+            mav_port=int(CONFIG.get("MAV_LOCAL_OUT_PORT_2", 14551)),
+        )
+        self.telem_window = TelemetryWindow(window_s=5.0)
+        self.telem_rx = TelemetryReceiver(GCS_TELEMETRY_PORT, self.telem_window)
+        self.reporter = TelemetryReporter(self.local_mon, self.telem_window, LOGS_DIR)
+        self.mavproxy_proc: Optional[ManagedProcess] = None
+        self.clock_sync = ClockSync() if ClockSync else None
+
+        # --- state ---
+        self.current_suite: Optional[str] = None
+        self.last_switch_mono: float = 0.0
+        self.cooldown_until_mono: float = 0.0
+        self.local_epoch: int = 0
+
+        # --- resolve suites ---
+        self.suites_to_run = self._resolve_suites()
+        if not self.suites_to_run:
+            raise RuntimeError("No suites available to run")
+
+        # --- policy ---
+        if args.policy == "deterministic":
+            self.policy_mode = "deterministic"
+            self.bench_policy = BenchmarkPolicy(
+                cycle_interval_s=float(args.duration),
+                suite_list=self.suites_to_run,
+            )
+            self.intel_policy = None
+        else:
+            self.policy_mode = "intelligent"
+            self.bench_policy = None
+            self.intel_policy = TelemetryAwarePolicyV2()
+            # Ensure at least one suite survives the filter
+            if not self.intel_policy.filtered_suites:
+                raise RuntimeError(
+                    "Intelligent policy filtered all suites – check "
+                    "settings.json (allowed_aead, max_nist_level)"
+                )
+
+        log(f"Policy: {self.policy_mode}  |  suites: {len(self.suites_to_run)}")
+
+    # ------------------------------------------------------------------ #
+    # Suite resolution
+    # ------------------------------------------------------------------ #
+
+    def _resolve_suites(self) -> List[str]:
+        if self.args.suite:
+            return [self.args.suite]
+        names = [s["name"] for s in ALL_SUITES]
+        if self.args.nist_level:
+            names = [
+                s["name"]
+                for s in ALL_SUITES
+                if s.get("nist_level") == self.args.nist_level
+            ]
+        if self.args.max_suites:
+            names = names[: self.args.max_suites]
+        return names
+
+    # ------------------------------------------------------------------ #
+    # MAVProxy (persistent)
+    # ------------------------------------------------------------------ #
+
+    def _start_mavproxy(self) -> bool:
+        """Start persistent MAVProxy bridging FC serial ↔ plaintext UDP."""
+        master = self.args.mav_master
+        out_port = DRONE_PLAIN_TX
+
+        cmd = [
+            sys.executable, "-m", "MAVProxy.mavproxy",
+            f"--master={master}",
+            f"--out=udp:127.0.0.1:{out_port}",
+            "--dialect=ardupilotmega",
+            "--nowait",
+            "--daemon",
+        ]
+
+        ts_str = time.strftime("%Y%m%d-%H%M%S")
+        log_path = LOGS_DIR / f"mavproxy_{ts_str}.log"
+        try:
+            fh = open(log_path, "w", encoding="utf-8")
+        except Exception:
+            fh = subprocess.DEVNULL
+
+        log(f"Starting MAVProxy: master={master}  out=127.0.0.1:{out_port}")
+        self.mavproxy_proc = ManagedProcess(
+            cmd=cmd,
+            name="mavproxy-drone",
+            stdout=fh,
+            stderr=subprocess.STDOUT,
+            new_console=False,
+        )
+        if not self.mavproxy_proc.start():
+            return False
+        time.sleep(1.0)
+        return self.mavproxy_proc.is_running()
+
+    # ------------------------------------------------------------------ #
+    # Clock synchronisation (Chronos)
+    # ------------------------------------------------------------------ #
+
+    def _sync_clock(self):
+        if not self.clock_sync:
+            return
+        try:
+            t1 = time.time()
+            resp = send_gcs_command("chronos_sync", t1=t1)
+            t4 = time.time()
+            if resp.get("status") == "ok":
+                offset = self.clock_sync.update_from_rpc(t1, t4, resp)
+                log(f"Clock-sync offset (GCS − Drone): {offset:.6f} s")
+        except Exception as e:
+            log(f"Clock-sync error: {e}")
+
+    # ------------------------------------------------------------------ #
+    # Suite life-cycle helpers
+    # ------------------------------------------------------------------ #
+
+    def _coordinate_suite_start(self, suite_name: str) -> bool:
+        """Tell GCS to start its proxy, then start local proxy.
+
+        GCS proxy must start first because the TCP handshake requires
+        GCS to listen and drone to connect.
+        """
+        log(f"Requesting GCS proxy for {suite_name} …")
+        resp = send_gcs_command("start_proxy", suite=suite_name)
+        if resp.get("status") != "ok":
+            log(f"GCS start_proxy failed: {resp}")
+            return False
+
+        # Poll until GCS proxy is ready
+        deadline = time.time() + 20.0
+        while time.time() < deadline:
+            time.sleep(0.5)
+            st = send_gcs_command("status")
+            if st.get("proxy_running"):
+                break
+        else:
+            log("GCS proxy did not become ready in time")
+            return False
+
+        # Start local proxy (connects to GCS)
+        if not self.proxy.start(suite_name):
+            log(f"Local proxy start failed for {suite_name}")
+            return False
+
+        # Handshake settling
+        time.sleep(1.0)
+
+        self.current_suite = suite_name
+        self.last_switch_mono = time.monotonic()
+        self.cooldown_until_mono = self.last_switch_mono + SWITCH_COOLDOWN_S
+        self.local_epoch += 1
+        log(f"Suite ACTIVE: {suite_name}  (epoch {self.local_epoch})")
+        return True
+
+    def _switch_suite(self, target_suite: str) -> bool:
+        """Full suite switch: stop current → coordinate new."""
+        log(f"Suite switch: {self.current_suite} → {target_suite}")
+
+        # 1. Tell GCS to tear down its side
         resp = send_gcs_command("prepare_rekey")
         if resp.get("status") != "ok":
             log(f"GCS prepare_rekey failed: {resp}")
-            result["status"] = "gcs_prepare_failed"
-            return result
-        
-        # Stop our proxy too
-        proxy.stop()
-        time.sleep(0.5)
-    
-    # Tell GCS to start its proxy first (GCS listens, drone connects)
-    log(f"Telling GCS to start proxy for {suite_name}...")
-    resp = send_gcs_command("start_proxy", suite=suite_name)
-    log(f"GCS start_proxy response: {resp}")
-    if resp.get("status") != "ok":
-        log(f"GCS start_proxy failed: {resp}")
-        result["status"] = "gcs_start_failed"
-        return result
+            return False
 
-    # Wait for GCS proxy to be ready by polling status
-    log("Waiting for GCS proxy to report ready...")
-    start_wait = time.time()
-    ready = False
-    while time.time() - start_wait < 20.0:
+        # 2. Stop local proxy
+        self.proxy.stop()
         time.sleep(0.5)
-        try:
-            st = send_gcs_command("status")
-            if st.get("proxy_running"):
-                ready = True
+
+        # 3. Stand up the new suite
+        return self._coordinate_suite_start(target_suite)
+
+    # ------------------------------------------------------------------ #
+    # Decision-input builder
+    # ------------------------------------------------------------------ #
+
+    def _build_decision_input(self) -> DecisionInput:
+        """Assemble a DecisionInput from LocalMonitor + TelemetryWindow."""
+        now_s = time.monotonic()
+        now_ms = now_s * 1000.0
+
+        lm = self.local_mon.get_metrics()
+        gs = self.telem_window.summarize(now_s)
+        flight = self.telem_window.get_flight_state()
+
+        telemetry_valid = gs["sample_count"] > 0
+        telemetry_age_ms = gs.get("telemetry_age_ms", -1.0)
+        if telemetry_age_ms < 0:
+            telemetry_valid = False
+
+        synced = 0.0
+        if self.clock_sync:
+            try:
+                synced = self.clock_sync.now()
+            except Exception:
+                synced = time.time()
+
+        # Derive blackout count from silence duration
+        silence_ms = max(gs.get("silence_max_ms", 0.0), 0.0)
+        blackout_count = 0
+        if silence_ms > 1000.0:
+            blackout_count = int(silence_ms / 1000.0)
+
+        return DecisionInput(
+            mono_ms=now_ms,
+            telemetry_valid=telemetry_valid,
+            telemetry_age_ms=max(telemetry_age_ms, 0.0),
+            sample_count=gs["sample_count"],
+            rx_pps_median=gs["rx_pps_median"],
+            gap_p95_ms=gs["gap_p95_ms"],
+            silence_max_ms=silence_ms,
+            jitter_ms=gs["jitter_ms"],
+            blackout_count=blackout_count,
+            battery_mv=lm.battery_mv,
+            battery_roc=lm.battery_roc,
+            temp_c=lm.temp_c,
+            temp_roc=lm.temp_roc,
+            armed=lm.armed or flight.get("armed", False),
+            current_suite=self.current_suite or "",
+            local_epoch=self.local_epoch,
+            last_switch_mono_ms=self.last_switch_mono * 1000.0,
+            cooldown_until_mono_ms=self.cooldown_until_mono * 1000.0,
+            synced_time=synced,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Scheduler loops
+    # ------------------------------------------------------------------ #
+
+    def _run_deterministic(self):
+        """Fixed-interval cycling through all suites (benchmark mode).
+
+        Uses BenchmarkPolicy which evaluates elapsed time per suite and
+        proposes NEXT_SUITE / COMPLETE actions.
+        """
+        policy = self.bench_policy
+        first_suite = policy.start_benchmark(time.monotonic())
+
+        if not self._coordinate_suite_start(first_suite):
+            log("Failed to start first suite – aborting deterministic run")
+            return
+
+        while self.running:
+            now = time.monotonic()
+            out = policy.evaluate(now)
+
+            if out.action == BenchmarkAction.NEXT_SUITE:
+                target = out.target_suite
+                pct = out.progress_pct
+                log(
+                    f"[deterministic] → {target}  "
+                    f"({out.current_index}/{out.total_suites}  {pct:.0f}%)"
+                )
+                if self._switch_suite(target):
+                    policy.confirm_advance(time.monotonic())
+                else:
+                    log(f"Suite switch to {target} FAILED – skipping")
+                    policy.confirm_advance(time.monotonic())
+
+            elif out.action == BenchmarkAction.COMPLETE:
+                log("Deterministic benchmark run COMPLETE")
                 break
-        except Exception:
-            pass
 
-    if not ready:
-        log("GCS proxy did not become ready in time")
-        result["status"] = "gcs_not_ready"
-        return result
-    
-    # Now start drone proxy (it will connect to GCS)
-    log(f"Starting drone proxy for {suite_name}...")
-    if not proxy.start(suite_name):
-        result["status"] = "proxy_start_failed"
-        # include last log path if available
+            # Health check
+            if self.current_suite and not self.proxy.is_running():
+                log("Proxy died – attempting restart on current suite")
+                self._coordinate_suite_start(self.current_suite)
+
+            time.sleep(EVAL_INTERVAL_S)
+
+    def _run_intelligent(self):
+        """Adaptive suite selection driven by telemetry (flight mode).
+
+        Uses TelemetryAwarePolicyV2 which considers battery, thermal,
+        link quality, mission criticality, and hysteresis timers.
+
+        Decision priority (highest → lowest):
+          1. Safety gate        – stale telemetry → HOLD
+          2. Emergency safety   – battery critical / temp critical → DOWNGRADE
+                                  to lightest suite immediately
+          3. Link failure       – blackouts after recent switch → ROLLBACK +
+                                  blacklist the failing suite
+          4. Cooldown gate      – just switched → HOLD
+          5. Link degradation   – persistent high gap / low pps → DOWNGRADE
+                                  (with hysteresis timer)
+          6. Thermal / battery  – rising temp or falling voltage → DOWNGRADE
+                                  (with hysteresis timer)
+          7. Proactive rekey    – stable for min_stable_s → REKEY same suite
+                                  (bounded by max_per_window)
+          8. Upgrade            – disarmed, stable, no stress → UPGRADE to
+                                  next heavier suite (very conservative)
+        """
+        policy = self.intel_policy
+
+        # Start with the lightest-tier suite from the filtered pool
+        initial = policy.filtered_suites[0]
+        if not self._coordinate_suite_start(initial):
+            log("Failed to start initial suite – aborting intelligent run")
+            return
+
+        while self.running:
+            inp = self._build_decision_input()
+            out = policy.evaluate(inp)
+
+            if out.action == PolicyAction.HOLD:
+                pass  # Nominal – stay on current suite
+
+            elif out.action in (
+                PolicyAction.UPGRADE,
+                PolicyAction.DOWNGRADE,
+                PolicyAction.ROLLBACK,
+            ):
+                target = out.target_suite
+                if target and target != self.current_suite:
+                    log(
+                        f"[intelligent] {out.action.value} → {target}  "
+                        f"(reasons: {', '.join(out.reasons)})"
+                    )
+                    if self._switch_suite(target):
+                        policy.record_rekey(time.monotonic())
+                    else:
+                        log(f"Suite switch to {target} FAILED")
+
+            elif out.action == PolicyAction.REKEY:
+                target = out.target_suite or self.current_suite
+                log(
+                    f"[intelligent] REKEY → {target}  "
+                    f"(reasons: {', '.join(out.reasons)})"
+                )
+                if self._switch_suite(target):
+                    policy.record_rekey(time.monotonic())
+
+            # Health check
+            if self.current_suite and not self.proxy.is_running():
+                log("Proxy died – restarting current suite")
+                self._coordinate_suite_start(self.current_suite)
+
+            time.sleep(EVAL_INTERVAL_S)
+
+    # ------------------------------------------------------------------ #
+    # Entrypoint
+    # ------------------------------------------------------------------ #
+
+    def start(self) -> int:
+        """Initialise all components and run the selected scheduler loop."""
+
+        def _sighandler(sig, frame):
+            log("Interrupted – shutting down")
+            self.running = False
+
+        signal.signal(signal.SIGINT, _sighandler)
+        signal.signal(signal.SIGTERM, _sighandler)
+
+        # 1. Local monitor (battery / thermal / armed)
+        self.local_mon.start()
+        log("Local monitor started")
+
+        # 2. GCS telemetry receiver
+        self.telem_rx.start()
+
+        # 3. Telemetry reporter (JSONL log)
+        self.reporter.start()
+
+        # 4. Wait for GCS scheduler
+        log("Waiting for GCS scheduler …")
+        if not wait_for_gcs(timeout=120.0):
+            log("ERROR: GCS scheduler not responding")
+            self.cleanup()
+            return 1
+
+        # 5. Clock synchronisation
+        self._sync_clock()
+
+        # 6. Inform GCS of parameters
+        send_gcs_command("configure", duration=self.args.duration)
+
+        # 7. Start persistent MAVProxy (FC serial ↔ plaintext UDP)
+        if not self._start_mavproxy():
+            log("WARNING: MAVProxy failed to start – tunnel still works "
+                "for testing but no MAVLink will flow")
+
+        # 8. Run the chosen policy loop
         try:
-            tail = getattr(proxy, "_last_log", None)
-            if tail:
-                result["log"] = str(tail)
+            if self.policy_mode == "deterministic":
+                self._run_deterministic()
+            else:
+                self._run_intelligent()
+        except Exception as e:
+            log(f"Scheduler error: {e}")
+        finally:
+            self.cleanup()
+
+        return 0
+
+    def cleanup(self):
+        log("Cleaning up …")
+        self.running = False
+        for component in [
+            self.proxy,
+            self.telem_rx,
+            self.reporter,
+            self.local_mon,
+        ]:
+            try:
+                component.stop()
+            except Exception:
+                pass
+        try:
+            if self.mavproxy_proc:
+                self.mavproxy_proc.stop()
         except Exception:
             pass
-        return result
-    
-    # Wait for handshake
-    time.sleep(1.0)
-    
-    # Tell GCS to start traffic
-    log("Telling GCS to start traffic...")
-    resp = send_gcs_command("start_traffic", duration=duration)
-    if resp.get("status") != "ok":
-        log(f"GCS start_traffic failed: {resp}")
-        result["status"] = "gcs_traffic_failed"
-        return result
-    
-    log("Traffic started, waiting for completion...")
-    
-    # Wait for GCS to finish traffic generation
-    # Poll GCS status
-    traffic_done = False
-    start_time = time.time()
-    max_wait = duration + 30  # Extra buffer
-    
-    while time.time() - start_time < max_wait:
-        time.sleep(2.0)
-        
-        # Log echo stats periodically
-        stats = echo.get_stats()
-        log(f"Echo stats: RX={stats['rx_count']}, TX={stats['tx_count']}, "
-            f"RX_bytes={stats['rx_bytes']:,}, TX_bytes={stats['tx_bytes']:,}")
-        
-        # Check GCS status
-        status = send_gcs_command("status")
-        if status.get("traffic_complete"):
-            traffic_done = True
-            break
-        
-        # Check if proxy died
-        if not proxy.is_running():
-            log("Proxy exited unexpectedly")
-            result["status"] = "proxy_exited"
-            return result
-    
-    if not traffic_done:
-        log("Traffic did not complete in time")
-        result["status"] = "timeout"
-        return result
-    
-    # Get final stats
-    stats = echo.get_stats()
-    result["echo_rx"] = stats["rx_count"]
-    result["echo_tx"] = stats["tx_count"]
-    result["status"] = "pass"
-    
-    return result
+        try:
+            send_gcs_command("stop")
+        except Exception:
+            pass
+        log("Cleanup complete")
 
-# ============================================================
-# Main
-# ============================================================
+
+# ===========================================================================
+# CLI
+# ===========================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Drone Scheduler (Controller)")
-    parser.add_argument("--suite", default=None, help="Single suite to run")
-    parser.add_argument("--nist-level", choices=["L1", "L3", "L5"], help="Run suites for NIST level")
-    parser.add_argument("--all", action="store_true", help="Run all suites")
-    parser.add_argument("--duration", type=float, default=DEFAULT_DURATION, help="Seconds per suite")
-    parser.add_argument("--rate", type=float, default=DEFAULT_RATE_MBPS, help="Traffic rate Mbps")
-    parser.add_argument("--max-suites", type=int, default=None, help="Max suites to run")
-    parser.add_argument("--mode", type=str, help="Benchmark mode: MAVPROXY or SYNTHETIC")
+    parser = argparse.ArgumentParser(
+        description="Drone MAV-to-MAV PQC Tunnel Scheduler",
+    )
+    parser.add_argument(
+        "--policy",
+        choices=["deterministic", "intelligent"],
+        default="intelligent",
+        help="Scheduling policy (default: intelligent)",
+    )
+    parser.add_argument(
+        "--duration",
+        type=float,
+        default=10.0,
+        help="Seconds per suite (deterministic mode)",
+    )
+    parser.add_argument(
+        "--mav-master",
+        default=str(CONFIG.get("MAV_FC_DEVICE", "/dev/ttyACM0")),
+        help="MAVLink master (serial device or tcp:host:port)",
+    )
+    parser.add_argument("--suite", help="Run a single suite only")
+    parser.add_argument(
+        "--nist-level",
+        choices=["L1", "L3", "L5"],
+        help="Filter suites by NIST level",
+    )
+    parser.add_argument("--max-suites", type=int, help="Limit number of suites")
+
     args = parser.parse_args()
 
-    args.mode_resolved = resolve_benchmark_mode(args.mode, default_mode="MAVPROXY")
-    log(f"BENCHMARK_MODE resolved to {args.mode_resolved}")
-    
     print("=" * 60)
-    print("Simplified Drone Scheduler (CONTROLLER) - sscheduler")
+    print("  Drone MAV-to-MAV PQC Tunnel Scheduler")
+    print(f"  Policy: {args.policy}  |  Duration: {args.duration}s")
     print("=" * 60)
-    # Configuration dump for debugging
-    cfg = {
-        "DRONE_HOST": DRONE_HOST,
-        "GCS_HOST": GCS_HOST,
-        "GCS_CONTROL": f"{GCS_CONTROL_HOST}:{GCS_CONTROL_PORT}",
-        "PROXY_INTERNAL_CONTROL_PORT": PROXY_INTERNAL_CONTROL_PORT,
-        "DRONE_PLAINTEXT_RX": DRONE_PLAIN_RX_PORT,
-        "DRONE_PLAINTEXT_TX": DRONE_PLAIN_TX_PORT,
-    }
-    log("Configuration Dump:")
-    for k, v in cfg.items():
-        log(f"  {k}: {v}")
-    log(f"Duration: {args.duration}s per suite, Rate: {args.rate} Mbps")
 
-    if args.mode_resolved == "MAVPROXY":
-        log("ERROR: MAVProxy-only mode is not supported by sdrone.py; use sdrone_mav.py")
-        return 2
-    
-    # Determine suites to run
-    if args.suite:
-        suites_to_run = [args.suite]
-    elif args.nist_level:
-        suites_to_run = [s["name"] for s in SUITES if s.get("nist_level") == args.nist_level]
-    elif args.all:
-        suites_to_run = [s["name"] for s in SUITES]
-    else:
-        # Default: run all available suites
-        suites_to_run = [s["name"] for s in SUITES]
-    
-    if args.max_suites:
-        suites_to_run = suites_to_run[:args.max_suites]
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(name)-12s  %(levelname)-7s  %(message)s",
+    )
 
-    # Apply local in-file overrides
-    if LOCAL_RATE_MBPS is not None:
-        args.rate = float(LOCAL_RATE_MBPS)
-    if LOCAL_DURATION is not None:
-        args.duration = float(LOCAL_DURATION)
-    if LOCAL_SUITES:
-        suites_to_run = [s for s in LOCAL_SUITES if s in [x["name"] for x in SUITES]]
-    if LOCAL_MAX_SUITES:
-        suites_to_run = suites_to_run[: int(LOCAL_MAX_SUITES)]
-    
-    log(f"Suites to run: {len(suites_to_run)}")
-    
-    # Initialize components
-    echo = UdpEchoServer()
-    echo.start()
-    
-    proxy = DroneProxyManager()
-    
-    # Wait for GCS
-    log("Waiting for GCS scheduler...")
-    if not wait_for_gcs(timeout=60.0):
-        log("ERROR: GCS scheduler not responding")
-        echo.stop()
-        return 1
-    log("GCS scheduler is ready")
-    
-    # Tell GCS the test parameters
-    send_gcs_command("configure", rate_mbps=args.rate, duration=args.duration)
-    
-    # Run suites
-    results = []
-    
-    def signal_handler(sig, frame):
-        log("Interrupted, cleaning up...")
-        proxy.stop()
-        echo.stop()
-        send_gcs_command("stop")
-        sys.exit(1)
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
     try:
-        for i, suite_name in enumerate(suites_to_run):
-            log("=" * 60)
-            log(f"Running suite {i+1}/{len(suites_to_run)}: {suite_name}")
-            log("=" * 60)
-            
-            result = run_suite(proxy, echo, suite_name, args.duration, is_first=(i == 0))
-            results.append(result)
-            
-            if result["status"] == "pass":
-                log(f"Suite PASSED: echo RX={result['echo_rx']}, TX={result['echo_tx']}")
-            else:
-                log(f"Suite FAILED: {result['status']}")
-            
-            # Wait between suites
-            if i < len(suites_to_run) - 1:
-                log("Waiting 2s before next suite...")
-                time.sleep(2.0)
-    
-    finally:
-        proxy.stop()
-        echo.stop()
-        send_gcs_command("stop")
-    
-    # Summary
-    print()
-    print("=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
-    
-    passed = sum(1 for r in results if r["status"] == "pass")
-    failed = len(results) - passed
-    
-    for r in results:
-        status = "[PASS]" if r["status"] == "pass" else "[FAIL]"
-        print(f"  {status} {r['suite']}: {r['status']}, echo={r['echo_rx']}/{r['echo_tx']}")
-    
-    print("-" * 60)
-    print(f"Total: {len(results)}, Passed: {passed}, Failed: {failed}")
-    print("=" * 60)
-    
-    return 0 if failed == 0 else 1
+        scheduler = MavTunnelScheduler(args)
+        return scheduler.start()
+    except Exception as e:
+        log(f"Fatal: {e}")
+        return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -651,11 +651,16 @@ def build_store() -> MetricsStore:
         all_suites.update(scenario_suites)
 
     if not all_suites:
-        raise RuntimeError(
-            f"No benchmark data found. Place JSON files in:\n"
-            f"  {RUNS_DIR / 'no-ddos'}/\n"
-            f"  {RUNS_DIR / 'ddos-xgboost'}/\n"
-            f"  {RUNS_DIR / 'ddos-txt'}/"
+        logger.warning(
+            "No benchmark data found. Place JSON files in:\n"
+            "  %s/\n  %s/\n  %s/",
+            RUNS_DIR / 'no-ddos', RUNS_DIR / 'ddos-xgboost', RUNS_DIR / 'ddos-txt',
+        )
+        return MetricsStore(
+            suites={},
+            runs={},
+            load_errors=load_errors,
+            run_types={},
         )
 
     _post_process_suites(all_suites)

@@ -20,9 +20,9 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$ROOT   = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$BACKEND  = Join-Path $ROOT "dashboard\backend"
-$FRONTEND = Join-Path $ROOT "dashboard\frontend"
+$ROOT      = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$BACKEND   = Join-Path $ROOT "dashboard\backend"
+$FRONTEND  = Join-Path $ROOT "dashboard\frontend"
 
 $BACKEND_PORT  = 8000
 $FRONTEND_PORT = 5173
@@ -37,17 +37,17 @@ function Write-Banner($msg) {
 }
 
 function Kill-PortProcess($port) {
-    $pids = netstat -ano | Select-String ":$port\s" |
+    $items = netstat -ano | Select-String ":$port\s" |
         ForEach-Object { ($_ -replace '.*\s(\d+)$','$1').Trim() } |
         Sort-Object -Unique |
         Where-Object { $_ -ne '0' -and $_ -ne '' }
 
-    foreach ($pItem in $pids) {
+    foreach ($procId in $items) {
         try {
-            $proc = Get-Process -Id $pItem -ErrorAction SilentlyContinue
-            if ($proc) {
-                Write-Host "  Killing PID $pItem ($($proc.ProcessName)) on port $port" -ForegroundColor Yellow
-                Stop-Process -Id $pItem -Force -ErrorAction SilentlyContinue
+            $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
+            if ($p) {
+                Write-Host "  Killing PID $procId ($($p.ProcessName)) on port $port" -ForegroundColor Yellow
+                Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
             }
         } catch { }
     }
@@ -61,7 +61,7 @@ function Wait-ForPort($port, $label, $timeoutSec = 30) {
             $tcp = New-Object System.Net.Sockets.TcpClient
             $tcp.Connect("127.0.0.1", $port)
             $tcp.Close()
-            Write-Host " Ready! OK" -ForegroundColor Green
+            Write-Host " Ready!" -ForegroundColor Green
             return $true
         } catch {
             Start-Sleep -Milliseconds 500
@@ -69,7 +69,7 @@ function Wait-ForPort($port, $label, $timeoutSec = 30) {
             Write-Host "." -NoNewline -ForegroundColor Gray
         }
     }
-    Write-Host " Timeout ❌" -ForegroundColor Red
+    Write-Host " TIMEOUT" -ForegroundColor Red
     return $false
 }
 
@@ -77,43 +77,59 @@ function Wait-ForPort($port, $label, $timeoutSec = 30) {
 
 Write-Banner "PQC Forensic Dashboard Launcher"
 
-Write-Host "`nClearing ports $BACKEND_PORT and $FRONTEND_PORT..." -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Clearing ports $BACKEND_PORT and $FRONTEND_PORT..." -ForegroundColor Cyan
 Kill-PortProcess $BACKEND_PORT
 Kill-PortProcess $FRONTEND_PORT
 Start-Sleep -Seconds 1
 
 if ($Kill) {
-    Write-Host "`n✅ Ports cleared. Exiting (-Kill mode)." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Ports cleared. Exiting (-Kill mode)." -ForegroundColor Green
     exit 0
 }
 
-# ── Step 2: Start Backend ────────────────────────────────────────────────────
+# ── Step 2: Write temp launcher scripts (avoids all quoting issues) ──────────
 
-Write-Host "`nStarting Backend (FastAPI + uvicorn) on port $BACKEND_PORT..." -ForegroundColor Cyan
+$tmpDir = Join-Path $env:TEMP "pqc-dashboard"
+if (-not (Test-Path $tmpDir)) { New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null }
 
-$backendCmd = "& { Set-Location '$BACKEND'; conda activate oqs-dev 2>`$null; Write-Host '--- Backend starting on port $BACKEND_PORT ---' -ForegroundColor Cyan; python -m uvicorn main:app --host 0.0.0.0 --port $BACKEND_PORT }"
+$backendScript = Join-Path $tmpDir "start-backend.ps1"
+$backendContent = "Set-Location -LiteralPath '$BACKEND'" + "`r`n"
+$backendContent += "conda activate oqs-dev" + "`r`n"
+$backendContent += "Write-Host '--- Backend starting on port $BACKEND_PORT ---' -ForegroundColor Cyan" + "`r`n"
+$backendContent += "python -m uvicorn main:app --host 0.0.0.0 --port $BACKEND_PORT" + "`r`n"
+Set-Content -Path $backendScript -Value $backendContent -Encoding ASCII
 
-Start-Process powershell -ArgumentList '-NoExit', '-Command', $backendCmd -WindowStyle Normal
+$frontendScript = Join-Path $tmpDir "start-frontend.ps1"
+$frontendContent = "Set-Location -LiteralPath '$FRONTEND'" + "`r`n"
+$frontendContent += "Write-Host '--- Frontend dev server starting on port $FRONTEND_PORT ---' -ForegroundColor Cyan" + "`r`n"
+$frontendContent += "npm run dev" + "`r`n"
+Set-Content -Path $frontendScript -Value $frontendContent -Encoding ASCII
 
-# ── Step 3: Start Frontend ───────────────────────────────────────────────────
+# ── Step 3: Start Backend ────────────────────────────────────────────────────
+
+Write-Host ""
+Write-Host "Starting Backend (FastAPI + uvicorn) on port $BACKEND_PORT..." -ForegroundColor Cyan
+Start-Process powershell -ArgumentList "-NoExit", "-File", $backendScript -WindowStyle Normal
+
+# ── Step 4: Start Frontend ───────────────────────────────────────────────────
 
 Write-Host "Starting Frontend (Vite + React) on port $FRONTEND_PORT..." -ForegroundColor Cyan
+Start-Process powershell -ArgumentList "-NoExit", "-File", $frontendScript -WindowStyle Normal
 
-$frontendCmd = "& { Set-Location '$FRONTEND'; Write-Host '--- Frontend dev server starting on port $FRONTEND_PORT ---' -ForegroundColor Cyan; npm run dev }"
+# ── Step 5: Wait for both servers ────────────────────────────────────────────
 
-Start-Process powershell -ArgumentList '-NoExit', '-Command', $frontendCmd -WindowStyle Normal
+Write-Host ""
+Write-Host "Waiting for servers to become ready..." -ForegroundColor Cyan
 
-# ── Step 4: Wait for both servers ────────────────────────────────────────────
+$backendOk  = Wait-ForPort $BACKEND_PORT  "Backend"  45
+$frontendOk = Wait-ForPort $FRONTEND_PORT "Frontend" 60
 
-Write-Host "`nWaiting for servers to become ready..." -ForegroundColor Cyan
-
-$backendOk  = Wait-ForPort $BACKEND_PORT  "Backend"  30
-$frontendOk = Wait-ForPort $FRONTEND_PORT "Frontend" 30
-
-# ── Step 5: Open browser ────────────────────────────────────────────────────
+# ── Step 6: Open browser ────────────────────────────────────────────────────
 
 if ($backendOk -and $frontendOk) {
-    Write-Host "`n" -NoNewline
+    Write-Host ""
     Write-Banner "Dashboard Ready!"
     Write-Host ""
     Write-Host "  Frontend : http://localhost:$FRONTEND_PORT" -ForegroundColor White
@@ -126,7 +142,8 @@ if ($backendOk -and $frontendOk) {
 
     Write-Host "  Browser opened. Both terminals are running - close them to stop." -ForegroundColor Gray
 } else {
-    Write-Host "`nNot all servers started successfully." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Not all servers started successfully." -ForegroundColor Yellow
     if (-not $backendOk)  { Write-Host "  Backend failed to start"  -ForegroundColor Red }
     if (-not $frontendOk) { Write-Host "  Frontend failed to start" -ForegroundColor Red }
     Write-Host "  Check the terminal windows for errors." -ForegroundColor Gray

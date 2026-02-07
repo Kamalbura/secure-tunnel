@@ -277,6 +277,7 @@ class UdpEchoServer:
 
 def send_gcs_command(cmd: str, **params) -> dict:
     """Send command to GCS control server"""
+    sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(30.0)
@@ -294,10 +295,15 @@ def send_gcs_command(cmd: str, **params) -> dict:
             if b"\n" in response:
                 break
         
-        sock.close()
         return json.loads(response.decode().strip())
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 def wait_for_gcs(timeout: float = 30.0) -> bool:
     """Wait for GCS control server to be ready"""
@@ -741,7 +747,7 @@ def cleanup_environment(mode: Optional[str] = None):
 
 def main():
     parser = argparse.ArgumentParser(description="Drone Scheduler (Controller)")
-    parser.add_argument("--mav-master", default=str(CONFIG.get("MAV_MASTER", "/dev/ttyACM0")), help="Primary MAVLink master (e.g. /dev/ttyACM0 or tcp:host:port)")
+    parser.add_argument("--mav-master", default=str(CONFIG.get("MAV_FC_DEVICE", "/dev/ttyACM0")), help="Primary MAVLink master (e.g. /dev/ttyACM0 or tcp:host:port)")
     parser.add_argument("--suite", default=None, help="Single suite to run")
     parser.add_argument("--nist-level", choices=["L1", "L3", "L5"], help="Run suites for NIST level")
     parser.add_argument("--all", action="store_true", help="Run all suites")

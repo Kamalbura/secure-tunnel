@@ -262,17 +262,6 @@ class BenchmarkPolicy:
         # Energy metrics (if available from power monitor)
         m.energy_mj = handshake_metrics.get("handshake_energy_mJ", 0.0)
     
-    def record_runtime_metrics(self, throughput_mbps: float = 0.0, 
-                               latency_ms: float = 0.0,
-                               power_w: float = 0.0):
-        """Record runtime metrics for current suite."""
-        if not self.current_metrics:
-            return
-        
-        self.current_metrics.throughput_mbps = throughput_mbps
-        self.current_metrics.latency_ms = latency_ms
-        self.current_metrics.power_w = power_w
-    
     def finalize_suite_metrics(self, success: bool = True, error_message: str = ""):
         """Finalize and store metrics for current suite."""
         if not self.current_metrics:
@@ -295,6 +284,9 @@ class BenchmarkPolicy:
         Evaluate whether to move to next suite.
         
         Returns BenchmarkOutput with action to take.
+        IMPORTANT: This method no longer has side effects (index increment).
+        The caller MUST call confirm_advance() after accepting a NEXT_SUITE
+        or COMPLETE action to actually commit the state change.
         """
         if self.benchmark_complete:
             return BenchmarkOutput(
@@ -315,19 +307,13 @@ class BenchmarkPolicy:
         total_elapsed = now_mono - self.start_time_mono
         progress_pct = (self.current_index / len(self.suite_list)) * 100.0
         
-        # Check if time to switch
+        # Check if time to switch — PROPOSAL ONLY, no state mutation.
+        # The caller must call confirm_advance() to commit.
         if elapsed_on_suite >= self.cycle_interval_s:
-            # Finalize current suite
-            self.finalize_suite_metrics(success=True)
+            next_index = self.current_index + 1
             
-            # Move to next suite
-            self.current_index += 1
-            self.iteration += 1
-            
-            # Check if complete
-            if self.current_index >= len(self.suite_list):
-                self.benchmark_complete = True
-                self._save_results()
+            # Check if this would complete the benchmark
+            if next_index >= len(self.suite_list):
                 return BenchmarkOutput(
                     action=BenchmarkAction.COMPLETE,
                     current_index=self.current_index,
@@ -337,18 +323,15 @@ class BenchmarkPolicy:
                     reasons=["all_suites_tested"]
                 )
             
-            # Start next suite
-            next_suite = self.suite_list[self.current_index]
-            self.last_switch_mono = now_mono
-            self._start_suite_metrics(next_suite)
-            
+            # Propose advancing to next suite
+            next_suite = self.suite_list[next_index]
             return BenchmarkOutput(
                 action=BenchmarkAction.NEXT_SUITE,
                 target_suite=next_suite,
-                current_index=self.current_index,
+                current_index=next_index,
                 total_suites=len(self.suite_list),
                 elapsed_s=total_elapsed,
-                progress_pct=(self.current_index / len(self.suite_list)) * 100.0,
+                progress_pct=(next_index / len(self.suite_list)) * 100.0,
                 reasons=["cycle_interval_elapsed"]
             )
         
@@ -363,6 +346,23 @@ class BenchmarkPolicy:
             progress_pct=progress_pct,
             reasons=[f"remaining_{remaining:.1f}s"]
         )
+    
+    def confirm_advance(self, now_mono: float) -> None:
+        """Commit the state change after caller accepts a NEXT_SUITE/COMPLETE.
+        
+        Must be called exactly once per accepted evaluate() proposal.
+        This is the ONLY place that mutates current_index / last_switch_mono.
+        """
+        self.current_index += 1
+        self.iteration += 1
+        
+        if self.current_index >= len(self.suite_list):
+            self.benchmark_complete = True
+            self._save_results()
+            return
+        
+        self.last_switch_mono = now_mono
+        self._start_suite_metrics(self.suite_list[self.current_index])
     
     def _save_results(self):
         """Save benchmark results to JSON and CSV."""
@@ -414,7 +414,8 @@ class BenchmarkPolicy:
         
         # Save CSV
         try:
-            with open(csv_path, "w") as f:
+            import csv as _csv
+            with open(csv_path, "w", newline="") as f:
                 headers = [
                     "suite_id", "nist_level", "kem_name", "sig_name", "aead",
                     "handshake_ms", "throughput_mbps", "latency_ms", "power_w", "energy_mj",
@@ -423,27 +424,28 @@ class BenchmarkPolicy:
                     "pub_key_size_bytes", "ciphertext_size_bytes", "sig_size_bytes",
                     "success"
                 ]
-                f.write(",".join(headers) + "\n")
+                writer = _csv.writer(f)
+                writer.writerow(headers)
                 
                 for m in self.collected_metrics:
                     row = [
                         m.suite_id, m.nist_level, m.kem_name, m.sig_name, m.aead,
-                        str(round(m.handshake_ms, 3)),
-                        str(round(m.throughput_mbps, 3)),
-                        str(round(m.latency_ms, 3)),
-                        str(round(m.power_w, 3)),
-                        str(round(m.energy_mj, 3)),
-                        str(round(m.kem_keygen_ms, 3)),
-                        str(round(m.kem_encaps_ms, 3)),
-                        str(round(m.kem_decaps_ms, 3)),
-                        str(round(m.sig_sign_ms, 3)),
-                        str(round(m.sig_verify_ms, 3)),
-                        str(m.pub_key_size_bytes),
-                        str(m.ciphertext_size_bytes),
-                        str(m.sig_size_bytes),
-                        str(m.success)
+                        round(m.handshake_ms, 3),
+                        round(m.throughput_mbps, 3),
+                        round(m.latency_ms, 3),
+                        round(m.power_w, 3),
+                        round(m.energy_mj, 3),
+                        round(m.kem_keygen_ms, 3),
+                        round(m.kem_encaps_ms, 3),
+                        round(m.kem_decaps_ms, 3),
+                        round(m.sig_sign_ms, 3),
+                        round(m.sig_verify_ms, 3),
+                        m.pub_key_size_bytes,
+                        m.ciphertext_size_bytes,
+                        m.sig_size_bytes,
+                        m.success
                     ]
-                    f.write(",".join(row) + "\n")
+                    writer.writerow(row)
             logging.info(f"Saved benchmark CSV to {csv_path}")
         except Exception as e:
             logging.error(f"Failed to save results CSV: {e}")

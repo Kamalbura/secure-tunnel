@@ -67,9 +67,9 @@ except ImportError:
 # Configuration
 # =============================================================================
 
-DRONE_HOST = str(CONFIG.get("DRONE_HOST", "192.168.0.105"))
+DRONE_HOST = str(CONFIG.get("DRONE_HOST", "192.168.0.100"))
 GCS_HOST = str(CONFIG.get("GCS_HOST", "192.168.0.100"))
-GCS_CONTROL_HOST = str(CONFIG.get("GCS_CONTROL_BIND_HOST", "0.0.0.0"))
+GCS_CONTROL_HOST = str(CONFIG.get("GCS_CONTROL_HOST", "0.0.0.0"))
 GCS_CONTROL_PORT = int(CONFIG.get("GCS_CONTROL_PORT", 48080))
 
 GCS_PLAIN_TX_PORT = int(CONFIG.get("GCS_PLAINTEXT_TX", 47001))
@@ -181,15 +181,12 @@ class GcsMavProxyManager:
     def __init__(self, logs_dir: Path, enable_gui: bool = MAVPROXY_ENABLE_GUI):
         self.logs_dir = logs_dir
         self.enable_gui = enable_gui
-        self.logs_dir = logs_dir
-        self.enable_gui = enable_gui
         self.process: Optional[ManagedProcess] = None
-        self._log_handle = None
         self._log_handle = None
     
     def start(self) -> bool:
         """Start MAVProxy with map and console if enabled."""
-        if self.process and self.process.poll() is None:
+        if self.process and self.process.is_running():  # BUG-08 fix: was poll()
             log("[MAVPROXY] Already running")
             return True
         
@@ -223,6 +220,13 @@ class GcsMavProxyManager:
             # Log file for MAVProxy output (only used in headless mode)
             timestamp = time.strftime("%Y%m%d-%H%M%S")
             log_path = self.logs_dir / f"mavproxy_gcs_{timestamp}.log"
+            
+            # BUG-09 fix: actually open the log file for headless mode
+            if not self.enable_gui:
+                try:
+                    self._log_handle = open(log_path, "w", encoding="utf-8")
+                except Exception:
+                    self._log_handle = subprocess.DEVNULL
             
             # Start MAVProxy - don't redirect stdout when GUI enabled
             # (prompt_toolkit requires a real Windows console)
@@ -540,12 +544,13 @@ class GcsBenchmarkServer:
     def __init__(self, logs_dir: Path, run_id: str, enable_gui: bool = True, mode: str = "MAVPROXY"):
         global LOGS_DIR
         
-        self.logs_dir = logs_dir
         self.run_id = run_id
         self.mode = mode
         self._active_run_id = run_id  # Track the active run_id from drone
         
-        # Set LOGS_DIR based on run_id
+        # BUG-16 fix: use consistent LOGS_DIR — the run-specific path takes precedence
+        # The logs_dir parameter from main() is already run-specific, but the
+        # global LOGS_DIR must also be updated so other code sees the same path.
         LOGS_DIR = _LOGS_DIR_BASE / f"live_run_{run_id}"
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
         self.logs_dir = LOGS_DIR
@@ -611,6 +616,12 @@ class GcsBenchmarkServer:
         self.logs_dir = LOGS_DIR
         
         # Reinitialize components with new directory
+        # BUG-03 fix: stop old proxy before creating a new one
+        if self.proxy:
+            try:
+                self.proxy.stop()
+            except Exception:
+                pass
         self.proxy = GcsProxyManager(self.logs_dir)
         self.suite_log = self.logs_dir / "gcs_suite_metrics.jsonl"
         
@@ -781,14 +792,24 @@ class GcsBenchmarkServer:
             self.current_suite = suite
 
             # Record handshake end asynchronously to avoid blocking start_proxy.
-            def _await_handshake() -> None:
+            # C4 fix: Capture the current aggregator reference at launch time so
+            # that _update_run_id replacing self.metrics_aggregator won't cause
+            # the thread to write to a stale or wrong-suite aggregator.
+            _launch_aggregator = self.metrics_aggregator
+            _launch_suite = suite
+
+            def _await_handshake(agg=_launch_aggregator, s=_launch_suite) -> None:
+                if self.current_suite != s:
+                    return  # Suite changed; this thread is stale
                 if self._wait_for_handshake_ok(timeout_s=self._handshake_timeout_s):
-                    self.metrics_aggregator.record_handshake_end(success=True)
+                    if self.current_suite == s:  # Double-check after wait
+                        agg.record_handshake_end(success=True)
                 else:
-                    self.metrics_aggregator.record_handshake_end(
-                        success=False,
-                        failure_reason="handshake_timeout"
-                    )
+                    if self.current_suite == s:
+                        agg.record_handshake_end(
+                            success=False,
+                            failure_reason="handshake_timeout"
+                        )
 
             threading.Thread(target=_await_handshake, daemon=True).start()
             
@@ -836,10 +857,9 @@ class GcsBenchmarkServer:
             # Stop proxy
             self.proxy.stop()
             
-            # Restart MAVLink monitor for next suite
-            if self.mavlink_available:
-                self.mavlink_monitor = MavLinkMetricsCollector(role="gcs")
-                self.mavlink_monitor.start_sniffing(port=MAVLINK_SNIFF_PORT)
+            # BUG-14 fix: don't restart MavLink monitor between suites.
+            # The monitor will be started fresh by start_suite.
+            # Starting it here captures irrelevant inter-suite packets.
 
             proxy_status = self._read_proxy_status()
             mavlink_validation = None
@@ -866,6 +886,7 @@ class GcsBenchmarkServer:
             payload = {
                 "status": "ok",
                 "suite": self.current_suite,
+                "run_id": self._active_run_id or "",
                 "mavlink_validation": mavlink_validation,
                 "latency_jitter": latency_metrics,
                 "system_gcs": system_gcs,
@@ -898,8 +919,7 @@ class GcsBenchmarkServer:
                     with open(self.suite_log, "a", encoding="utf-8") as fh:
                         fh.write(json.dumps(payload) + "\n")
                         fh.flush()
-                        import os
-                        os.fsync(fh.fileno())
+                        os.fsync(fh.fileno())  # BUG-23 fix: use module-level os
                     break
                 except Exception as e:
                     if attempt < 2:

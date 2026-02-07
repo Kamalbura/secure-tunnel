@@ -123,12 +123,14 @@ class _AsconAdapter:
             self._enc = _native_encrypt
             self._dec = _native_decrypt
         elif _pyascon_module is not None:
+            # pyascon uses legacy variant names ("Ascon-128a"), not NIST names
+            fallback_name = self._fallback_variant
             def _py_encrypt(
                 key_bytes: bytes,
                 nonce_bytes: bytes,
                 aad_bytes: bytes,
                 plaintext_bytes: bytes,
-                algo: str = variant_name,
+                algo: str = fallback_name,
             ) -> bytes:
                 return _pyascon_module.ascon_encrypt(key_bytes, nonce_bytes, aad_bytes, plaintext_bytes, algo)
 
@@ -137,7 +139,7 @@ class _AsconAdapter:
                 nonce_bytes: bytes,
                 aad_bytes: bytes,
                 ciphertext_bytes: bytes,
-                algo: str = variant_name,
+                algo: str = fallback_name,
             ) -> bytes:
                 result = _pyascon_module.ascon_decrypt(key_bytes, nonce_bytes, aad_bytes, ciphertext_bytes, algo)
                 if result is None:
@@ -378,7 +380,7 @@ class Receiver:
             # Too old - outside window
             raise ReplayError(f"packet too old seq={seq}, high={self._high}, window={self.window}")
 
-    def decrypt(self, wire: bytes) -> bytes:
+    def decrypt(self, wire: bytes) -> Optional[bytes]:
         """Validate header, perform anti-replay, reconstruct IV, decrypt.
 
         Returns plaintext bytes or None (silent mode) on failure.

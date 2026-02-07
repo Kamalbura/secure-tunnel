@@ -56,7 +56,7 @@ TCP_CTRL_PORT = CONFIG.get("TCP_HANDSHAKE_PORT")
 # ============================================================
 
 # Bind control server to 0.0.0.0 so Drone can connect in diverse networks
-GCS_CONTROL_HOST = str(CONFIG.get("GCS_CONTROL_BIND_HOST", "0.0.0.0"))
+GCS_CONTROL_HOST = str(CONFIG.get("GCS_CONTROL_HOST", "0.0.0.0"))
 # Use configured GCS control port (default 48080)
 GCS_CONTROL_PORT = int(CONFIG.get("GCS_CONTROL_PORT", 48080))
 
@@ -447,7 +447,7 @@ class ControlServer:
             # Do NOT spawn a new mavproxy here. MAVProxy should be persistent.
             log("Traffic start requested (MAVProxy is already running)")
             # Check persistent mavproxy health
-            if not (self.mavproxy_proc and self.mavproxy_proc.poll() is None):
+            if not (self.mavproxy_proc and self.mavproxy_proc.is_running()):
                 return {"status": "error", "message": "mavproxy_not_running"}
             return {"status": "ok", "message": "started"}
         
@@ -490,7 +490,7 @@ class ControlServer:
             # Stop mavproxy and any traffic generator wrapper
             if self.mavproxy_proc:
                 try:
-                    self.mavproxy_proc.terminate()
+                    self.mavproxy_proc.stop()
                 except Exception:
                     pass
                 self.mavproxy_proc = None

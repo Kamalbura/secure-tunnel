@@ -191,6 +191,7 @@ class UdpEchoServer:
 
 def send_gcs_command(cmd: str, **params) -> dict:
     """Send command to GCS control server"""
+    sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(30.0)
@@ -208,10 +209,15 @@ def send_gcs_command(cmd: str, **params) -> dict:
             if b"\n" in response:
                 break
         
-        sock.close()
         return json.loads(response.decode().strip())
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 def wait_for_gcs(timeout: float = 30.0) -> bool:
     """Wait for GCS control server to be ready"""

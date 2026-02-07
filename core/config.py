@@ -9,17 +9,36 @@ from ipaddress import ip_address
 from typing import Dict, Any
 from core.exceptions import ConfigError
 
+# Load .denv / .genv files (if present) before reading env vars.
+# Import is guarded so config.py still works if env_loader isn't available.
+try:
+    from core.env_loader import load_env_files
+    load_env_files()
+except ImportError:
+    pass
 
-# Baseline host defaults reused throughout the configuration payload.
-# Keep both LAN and Tailscale addresses handy so schedulers can pin the
-# appropriate interface per testbed. Defaults target the LAN endpoints.
-# Localhost-only topology override for smoke/local tests can be applied
-# by temporarily pointing *_HOST_LAN values at 127.0.0.1. For normal
-# lab runs, keep these set to the actual LAN-facing addresses.
-_DRONE_HOST_LAN = "192.168.0.100"   # uavpi drone LAN IP (wlan0 from `ip addr`)
-_DRONE_HOST_TAILSCALE = "100.101.93.23"  # Tailscale: SSH/maintenance ONLY
-_GCS_HOST_LAN = "192.168.0.101"    # GCS Windows LAN IP (from ipconfig)
-_GCS_HOST_TAILSCALE = "100.106.181.122"  # Tailscale: SSH/maintenance ONLY
+# Baseline host defaults — read from environment (populated by .denv/.genv)
+# with hardcoded fallbacks for backward compatibility.
+_DRONE_HOST_LAN = os.getenv("DRONE_HOST_LAN", "192.168.0.100")
+_DRONE_HOST_TAILSCALE = os.getenv("DRONE_HOST_TAILSCALE", "100.101.93.23")
+_GCS_HOST_LAN = os.getenv("GCS_HOST_LAN", "192.168.0.101")
+_GCS_HOST_TAILSCALE = os.getenv("GCS_HOST_TAILSCALE", "100.106.181.122")
+
+# ── Optional mDNS resolution ────────────────────────────────────────────────
+# When ENABLE_MDNS=1, resolve drone.local/gcs.local on the LAN via mDNS
+# instead of using static IPs.  Falls back to the env/hardcoded IPs if
+# mDNS resolution fails or the zeroconf library is not installed.
+if os.getenv("ENABLE_MDNS", "").strip() in ("1", "true", "yes"):
+    try:
+        from core.mdns import resolve_drone, resolve_gcs
+        _mdns_drone = resolve_drone(timeout=2.0, fallback=_DRONE_HOST_LAN)
+        _mdns_gcs = resolve_gcs(timeout=2.0, fallback=_GCS_HOST_LAN)
+        if _mdns_drone:
+            _DRONE_HOST_LAN = _mdns_drone
+        if _mdns_gcs:
+            _GCS_HOST_LAN = _mdns_gcs
+    except Exception:
+        pass  # mDNS unavailable — use static IPs
 
 # Default to LAN hosts for local/router runs.
 # CRITICAL: Tailscale (100.x.x.x) is for SSH/Git/maintenance ONLY.
@@ -27,8 +46,9 @@ _GCS_HOST_TAILSCALE = "100.106.181.122"  # Tailscale: SSH/maintenance ONLY
 _DEFAULT_DRONE_HOST = _DRONE_HOST_LAN
 _DEFAULT_GCS_HOST = _GCS_HOST_LAN
 
-# Environment-sourced default credential to avoid embedding lab passwords in source control.
-_LAB_PASSWORD_DEFAULT = os.getenv("PQC_LAB_PASSWORD", "uavpi")
+# Environment-sourced default credential — no fallback in source control.
+# Set PQC_LAB_PASSWORD in .genv or the environment before running.
+_LAB_PASSWORD_DEFAULT = os.getenv("PQC_LAB_PASSWORD", "")
 
 
 # Default configuration - all required keys with correct types
@@ -166,10 +186,10 @@ CONFIG = {
     "GCS_CONTROL_PORT": 48080,
     # Telemetry port for GCS -> Drone feedback channel (UDP)
     "GCS_TELEMETRY_PORT": 52080,
-        # Encrypted-plane control channel used by certain schedulers to route
-        # drone-originated control/status back to the GCS when ENABLE_PACKET_TYPE is set.
-        # Keep distinct from the plaintext follower RPC port to avoid conflicts.
-     "DRONE_TO_GCS_CTL_PORT": 48181,
+    # Encrypted-plane control channel used by certain schedulers to route
+    # drone-originated control/status back to the GCS when ENABLE_PACKET_TYPE is set.
+    # Keep distinct from the plaintext follower RPC port to avoid conflicts.
+    "DRONE_TO_GCS_CTL_PORT": 48181,
     "SIMPLE_VERIFY_TIMEOUT_S": 5.0,
     "SIMPLE_PACKETS_PER_SUITE": 1,
     "SIMPLE_PACKET_DELAY_S": 0.0,
@@ -239,7 +259,7 @@ CONFIG = {
         # Traffic profile: "blast", "constant", "mavproxy", or "saturation"
         "traffic": "constant",  # modes: constant|blast|mavproxy|saturation
         # Traffic engine: "native" (built-in blaster) or "iperf3" (external client)
-    "traffic_engine": "native",  # generator: native|iperf3
+        "traffic_engine": "native",  # generator: native|iperf3
         # Duration for active traffic window per suite (seconds)
         # For cores+DVFS sweeps we default to short, aggressive 10s windows.
         "duration_s": 10.0,  # positive float seconds
@@ -266,7 +286,7 @@ CONFIG = {
         "max_rate_mbps": 200.0,  # saturation upper bound Mbps (>0)
         # Optional ordered suite subset (None -> all suites from core.suites, including ChaCha20-Poly1305 and ASCON variants)
         # Set to None to run the full suite matrix
-    "suites": None,
+        "suites": None,
         # Launch local GCS proxy under scheduler control
         "launch_proxy": True,  # bool controls local proxy launch
         # Enable local proxy monitors (perf/pidstat/psutil)
@@ -286,24 +306,23 @@ CONFIG = {
             "extra_args": [],  # additional CLI args list
             "force_cli": False,  # bool to force CLI output mode
         },
-    # Blocklist of AEAD tokens to exclude from automation runs (case-insensitive)
-    "aead_exclude_tokens": [],
-            # Optional post-run fetch of drone artifacts (logs, power captures)
-            "post_fetch": {
-                # Legacy remote-fetch pipeline is disabled; artifacts must be synced via Git.
-                "enabled": False,
-                "host": _DEFAULT_DRONE_HOST,
-                "username": "dev",
-                "password": os.getenv("AUTO_GCS_POST_FETCH_PASSWORD", _LAB_PASSWORD_DEFAULT),
-                "key": None,
-                "strategy": "disabled",
-                "port": 22,
-                "logs_remote": "~/research/logs/auto/drone",
-                "logs_local": "logs/auto",
-                "output_remote": "~/research/output/drone",
-                "output_local": "output/drone",
-            },
-            # Enable remote power fetch and set the SCP/SFTP target
+        # Blocklist of AEAD tokens to exclude from automation runs (case-insensitive)
+        "aead_exclude_tokens": [],
+        # Optional post-run fetch of drone artifacts (logs, power captures)
+        "post_fetch": {
+            # Legacy remote-fetch pipeline is disabled; artifacts must be synced via Git.
+            "enabled": False,
+            "host": _DEFAULT_DRONE_HOST,
+            "username": "dev",
+            "password": os.getenv("AUTO_GCS_POST_FETCH_PASSWORD", _LAB_PASSWORD_DEFAULT),
+            "key": None,
+            "strategy": "disabled",
+            "port": 22,
+            "logs_remote": "~/research/logs/auto/drone",
+            "logs_local": "logs/auto",
+            "output_remote": "~/research/output/drone",
+            "output_local": "output/drone",
+        },
         # Power fetch now relies on locally synced artifacts instead of remote copy.
         "power_fetch_enabled": False,
         "power_fetch_target": f"dev@{_DEFAULT_DRONE_HOST}",
@@ -318,7 +337,7 @@ CONFIG = {
         # Non-interactive SFTP password for POWER fetch (used by gcs_scheduler._sftp_fetch)
         # Set to None to prefer key/agent-based auth. For development convenience we
         # populate it here; in production prefer using an SSH agent or per-run env var.
-    "power_fetch_password": os.getenv("AUTO_GCS_POWER_FETCH_PASSWORD", _LAB_PASSWORD_DEFAULT),
+        "power_fetch_password": os.getenv("AUTO_GCS_POWER_FETCH_PASSWORD", _LAB_PASSWORD_DEFAULT),
         # Optional explicit private key for power fetch operations (overrides agent lookup)
         "power_fetch_key": None,
     },

@@ -67,7 +67,7 @@ class BenchmarkAnalyzer:
         # Group by suite
         by_suite = defaultdict(list)
         for r in self.records:
-            suite_id = r.get("suite_id", r.get("category_b", {}).get("kem_algorithm", "unknown"))
+            suite_id = r.get("suite_id", r.get("crypto_identity", {}).get("kem_algorithm", "unknown"))
             by_suite[suite_id].append(r)
         
         print(f"\nFound {len(by_suite)} unique suites")
@@ -99,34 +99,34 @@ class BenchmarkAnalyzer:
         mem_means = []
         
         for r in records:
-            # Handshake (Category D)
-            cat_d = r.get("category_d", {})
-            if "total_handshake_ms" in cat_d:
-                hs_times.append(cat_d["total_handshake_ms"])
+            # Handshake
+            hs = r.get("handshake", {})
+            if "handshake_total_duration_ms" in hs:
+                hs_times.append(hs["handshake_total_duration_ms"])
             
-            # Latency (Category H)
-            cat_h = r.get("category_h", {})
-            if "rtt_mean_us" in cat_h:
-                rtt_means.append(cat_h["rtt_mean_us"])
-            if "jitter_mean_us" in cat_h:
-                jitter_means.append(cat_h["jitter_mean_us"])
+            # Latency & Jitter
+            lj = r.get("latency_jitter", {})
+            if "rtt_avg_ms" in lj:
+                rtt_means.append(lj["rtt_avg_ms"])
+            if "jitter_avg_ms" in lj:
+                jitter_means.append(lj["jitter_avg_ms"])
             
-            # Throughput (Category G)
-            cat_g = r.get("category_g", {})
-            if "throughput_kbps" in cat_g:
-                throughputs.append(cat_g["throughput_kbps"])
+            # Data Plane / Throughput
+            dp = r.get("data_plane", {})
+            if "goodput_mbps" in dp:
+                throughputs.append(dp["goodput_mbps"])
             
-            # Power (Category N)
-            cat_n = r.get("category_n", {})
-            if "mean_power_mw" in cat_n:
-                power_means.append(cat_n["mean_power_mw"])
+            # Power & Energy
+            pe = r.get("power_energy", {})
+            if "power_avg_w" in pe:
+                power_means.append(pe["power_avg_w"])
             
-            # System (Category M)
-            cat_m = r.get("category_m", {})
-            if "cpu_percent_mean" in cat_m:
-                cpu_means.append(cat_m["cpu_percent_mean"])
-            if "memory_percent_mean" in cat_m:
-                mem_means.append(cat_m["memory_percent_mean"])
+            # System Resources (Drone)
+            sd = r.get("system_drone", {})
+            if "cpu_usage_avg_percent" in sd:
+                cpu_means.append(sd["cpu_usage_avg_percent"])
+            if "memory_rss_mb" in sd:
+                mem_means.append(sd["memory_rss_mb"])
         
         # Calculate statistics
         if hs_times:

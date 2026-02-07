@@ -358,10 +358,10 @@ export interface SuiteSummary {
     suite_id: string;
     run_id: string;
     suite_index: number;
-    kem_algorithm: string;
-    sig_algorithm: string;
-    aead_algorithm: string;
-    suite_security_level: string;
+    kem_algorithm: string | null;
+    sig_algorithm: string | null;
+    aead_algorithm: string | null;
+    suite_security_level: string | null;
     handshake_success: boolean | null;
     handshake_total_duration_ms: number | null;
     power_sensor_type?: string | null;

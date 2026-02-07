@@ -27,20 +27,20 @@ from datetime import datetime, timezone
 ROOT = Path(__file__).resolve().parents[1]
 
 # =============================================================================
-# Network Configuration
+# Network Configuration — read from environment (.denv/.genv)
 # =============================================================================
 
 # Tailscale - SSH/Git management ONLY
-DRONE_TAILSCALE_IP = "100.101.93.23"
-DRONE_SSH_USER = "dev"
+DRONE_TAILSCALE_IP = os.environ.get("DRONE_HOST_TAILSCALE", "100.101.93.23")
+DRONE_SSH_USER = os.environ.get("DRONE_SSH_USER", "dev")
 
 # LAN - Benchmark traffic ONLY
-GCS_LAN_IP = "192.168.0.101"
-DRONE_LAN_IP = "192.168.0.105"
+GCS_LAN_IP = os.environ.get("GCS_HOST_LAN", "192.168.0.101")
+DRONE_LAN_IP = os.environ.get("DRONE_HOST_LAN", "192.168.0.105")
 
 # Paths
-DRONE_PROJECT_PATH = "~/secure-tunnel"
-DRONE_VENV = "cenv"
+DRONE_PROJECT_PATH = os.environ.get("DRONE_PROJECT_PATH", "~/secure-tunnel")
+DRONE_VENV = os.environ.get("DRONE_VENV_PATH", "cenv").rstrip("/").split("/")[-1]
 
 # =============================================================================
 # Helpers

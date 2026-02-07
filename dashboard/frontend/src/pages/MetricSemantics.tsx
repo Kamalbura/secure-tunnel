@@ -23,7 +23,7 @@ export default function MetricSemantics() {
 
     useEffect(() => {
         fetch('/api/metrics/semantics')
-            .then(res => res.json())
+            .then(res => { if (!res.ok) throw new Error(`${res.status}`); return res.json(); })
             .then(setSemantics)
             .catch(() => setSemantics([]))
             .finally(() => setIsLoading(false));

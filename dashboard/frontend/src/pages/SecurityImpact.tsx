@@ -70,7 +70,7 @@ export default function SecurityImpact() {
                 </div>
                 <div className="card border-l-4 border-l-green-500">
                     <div className="text-xs text-gray-400 uppercase tracking-wider">Clean Suites</div>
-                    <div className="text-3xl font-bold text-green-400 mt-1">{suites.length - anomalies.length}</div>
+                    <div className="text-3xl font-bold text-green-400 mt-1">{Math.max(0, suites.length - new Set(anomalies.map(a => a.suite_id)).size)}</div>
                 </div>
                 <div className="card border-l-4 border-l-blue-500">
                     <div className="text-xs text-gray-400 uppercase tracking-wider">Total Suites</div>

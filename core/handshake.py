@@ -276,7 +276,7 @@ def parse_and_verify_server_hello(
     except HandshakeVerifyError:
         raise
     except Exception as exc:
-        raise HandshakeVerifyError(f"signature verification failed: {exc}")
+        raise HandshakeVerifyError(f"signature verification failed: {exc}") from exc
     finally:
         if sig is not None and hasattr(sig, "free"):
             try:
@@ -301,6 +301,11 @@ def _drone_psk_bytes() -> bytes:
         raise RuntimeError("DRONE_PSK must be provided via environment in non-dev environment")
     if not psk_hex:
         # Allow empty during dev/testing but callers will likely fail to authenticate.
+        import logging as _logging
+        _logging.getLogger("pqc").warning(
+            "DRONE_PSK is empty — HMAC authentication uses a zero-length key. "
+            "Set DRONE_PSK env var or config for production use."
+        )
         return b""
     try:
         psk = bytes.fromhex(psk_hex)
@@ -333,7 +338,7 @@ def client_encapsulate(server_hello: ServerHello, *, metrics: Optional[Dict[str,
             kem_metrics.setdefault("shared_secret_bytes", len(shared_secret))
         return kem_ct, shared_secret
     except Exception as exc:
-        raise HandshakeError(f"client_encapsulate failed: {exc}")
+        raise HandshakeError(f"client_encapsulate failed: {exc}") from exc
     finally:
         if kem is not None and hasattr(kem, "free"):
             try:
@@ -367,8 +372,8 @@ def server_decapsulate(
             kem_metrics.setdefault("ciphertext_bytes", len(kem_ct))
             kem_metrics.setdefault("shared_secret_bytes", len(shared_secret))
         return shared_secret
-    except Exception:
-        raise HandshakeError("server_decapsulate failed")
+    except Exception as exc:
+        raise HandshakeError("server_decapsulate failed") from exc
     finally:
         if kem_obj is not None and hasattr(kem_obj, "free"):
             try:

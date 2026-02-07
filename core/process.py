@@ -8,6 +8,7 @@ Provides a robust `ManagedProcess` class that guarantees:
 4. Cross-platform consistency (Windows Job Objects / Linux PDEATHSIG).
 """
 
+import ctypes
 import sys
 import os
 import time
@@ -26,14 +27,13 @@ _use_job_objects = False
 _libc = None
 
 if sys.platform.startswith("win"):
-    import ctypes
     from ctypes import wintypes
     
     _kernel32 = ctypes.windll.kernel32
     
     # Job Object Constants
     _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
-    _JobObjectBasicLimitInformation = 2
+    _JobObjectExtendedLimitInformation = 9  # Was incorrectly 2 (Basic); must be 9 for Extended
     
     class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
         _fields_ = [
@@ -48,10 +48,21 @@ if sys.platform.startswith("win"):
             ("SchedulingClass", wintypes.DWORD),
         ]
 
+    class _IO_COUNTERS(ctypes.Structure):
+        """Windows IO_COUNTERS — 6 × ULONGLONG = 48 bytes."""
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
     class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
         _fields_ = [
             ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
-            ("IoInfo", ctypes.c_void_p), # IO_COUNTERS
+            ("IoInfo", _IO_COUNTERS),  # Was ctypes.c_void_p (8B); actual IO_COUNTERS is 48B
             ("ProcessMemoryLimit", ctypes.c_size_t),
             ("JobMemoryLimit", ctypes.c_size_t),
             ("PeakProcessMemoryUsed", ctypes.c_size_t),
@@ -69,7 +80,7 @@ if sys.platform.startswith("win"):
         
         ret = _kernel32.SetInformationJobObject(
             job,
-            _JobObjectBasicLimitInformation,
+            _JobObjectExtendedLimitInformation,
             ctypes.byref(info),
             ctypes.sizeof(info)
         )
@@ -231,13 +242,22 @@ class ManagedProcess:
 
             # Polite termination
             if sys.platform.startswith("win"):
-                # Windows: Send Ctrl+Break to group if possible, else terminate
-                # Since we used CREATE_NEW_PROCESS_GROUP, we can send signal to PID
-                # But Python's os.kill on Windows is limited.
-                # subprocess.terminate() calls TerminateProcess.
-                # We want to kill the tree.
-                subprocess.run(f"taskkill /F /T /PID {self.process.pid}", 
-                               shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # BUG-25 fix: Try graceful CTRL_BREAK_EVENT first.
+                # CREATE_NEW_PROCESS_GROUP means the process has its own
+                # console group — CTRL_BREAK_EVENT targets that group.
+                try:
+                    _kernel32.GenerateConsoleCtrlEvent(1, self.process.pid)  # CTRL_BREAK_EVENT=1
+                except Exception:
+                    pass
+                try:
+                    self.process.wait(timeout=min(2.0, timeout))
+                except subprocess.TimeoutExpired:
+                    pass  # Graceful failed; fall through to force kill
+                
+                if self.process.poll() is None:
+                    # Force kill the process tree
+                    subprocess.run(f"taskkill /F /T /PID {self.process.pid}", 
+                                   shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
                 # Linux: Kill group
                 try:

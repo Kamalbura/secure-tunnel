@@ -36,7 +36,7 @@ except Exception:
     header_ids_from_names = None  # type: ignore
 
 from core.handshake import client_drone_handshake, server_gcs_handshake
-from core.exceptions import HandshakeVerifyError, AeadError
+from core.exceptions import HandshakeVerifyError, HandshakeError, HandshakeFormatError, AeadError
 from core.logging_utils import get_logger
 
 from core.aead import (
@@ -512,6 +512,17 @@ def _perform_handshake(
                                 extra={"role": role, "expected": cfg["DRONE_HOST"], "received": ip},
                             )
                             continue
+                        except (HandshakeError, HandshakeFormatError, OSError, socket.timeout, ConnectionResetError) as exc:
+                            logger.warning(
+                                "Handshake failed (non-auth): %s",
+                                exc,
+                                extra={"role": role, "ip": ip},
+                            )
+                            try:
+                                conn.close()
+                            except OSError:
+                                pass
+                            continue
                         # Support either 5-tuple or 7-tuple
                         metrics_payload: Dict[str, object] = {}
                         if len(result) >= 7:
@@ -540,8 +551,6 @@ def _perform_handshake(
                             conn.close()
                         except OSError:
                             pass
-            finally:
-                pass
         finally:
             server_sock.close()
 
@@ -983,6 +992,8 @@ def run_proxy(
 
     active_rekeys: set[str] = set()
     rekey_guard = threading.Lock()
+    # BUG-13 fix: track rekey threads at run_proxy scope for cleanup on shutdown
+    _rekey_threads: list[threading.Thread] = []
 
     if manual_control and is_coordinator(role=role, coordinator_role=coordinator_role) and not cfg.get("ENABLE_PACKET_TYPE"):
         logger.warning("ENABLE_PACKET_TYPE is disabled; control-plane packets may not be processed correctly.")
@@ -1076,6 +1087,7 @@ def run_proxy(
                             current_suite = active_context["suite"]
                         with counters_lock:
                             counters.rekeys_fail += 1
+                        _finalize_rekey()
                         record_rekey_result(control_state, rid, current_suite, success=False)
                         logger.warning(
                             "Control rekey rejected: signing secret load failed",
@@ -1094,6 +1106,7 @@ def run_proxy(
                     current_suite = active_context["suite"]
                 with counters_lock:
                     counters.rekeys_fail += 1
+                _finalize_rekey()
                 record_rekey_result(control_state, rid, current_suite, success=False)
                 logger.warning(
                     "Control rekey rejected: unknown suite",
@@ -1264,7 +1277,9 @@ def run_proxy(
                 with rekey_guard:
                     active_rekeys.discard(rid)
 
-        threading.Thread(target=worker, daemon=True).start()
+        _rk_thread = threading.Thread(target=worker, daemon=True)
+        _rk_thread.start()
+        _rekey_threads.append(_rk_thread)
 
     with _setup_sockets(role, cfg, encrypted_peer=peer_addr) as sockets:
         selector = selectors.DefaultSelector()
@@ -1281,23 +1296,27 @@ def run_proxy(
             frame = b"\x02" + body
             with context_lock:
                 current_sender = active_context["sender"]
+                encrypted_peer = sockets["encrypted_peer"]  # BUG-18 fix
             try:
                 wire = current_sender.encrypt(frame)
             except Exception as exc:
-                counters.drops += 1
-                counters.drop_other += 1
+                with counters_lock:
+                    counters.drops += 1
+                    counters.drop_other += 1
                 logger.warning("Failed to encrypt control payload", extra={"role": role, "error": str(exc)})
                 return
             try:
-                sockets["encrypted"].sendto(wire, sockets["encrypted_peer"])
-                counters.enc_out += 1
-                counters.enc_bytes_out += len(wire)
-                counters._last_packet_mono = time.monotonic()
-                if counters._rekey_active and counters._rekey_blackout_end_mono is None:
-                    counters._rekey_blackout_end_mono = counters._last_packet_mono
+                sockets["encrypted"].sendto(wire, encrypted_peer)
+                with counters_lock:
+                    counters.enc_out += 1
+                    counters.enc_bytes_out += len(wire)
+                    counters._last_packet_mono = time.monotonic()
+                    if counters._rekey_active and counters._rekey_blackout_end_mono is None:
+                        counters._rekey_blackout_end_mono = counters._last_packet_mono
             except socket.error as exc:
-                counters.drops += 1
-                counters.drop_other += 1
+                with counters_lock:
+                    counters.drops += 1
+                    counters.drop_other += 1
                 logger.warning("Failed to send control payload", extra={"role": role, "error": str(exc)})
 
         try:
@@ -1387,7 +1406,9 @@ def run_proxy(
                                 counters.record_encrypt(encrypt_elapsed_ns, plaintext_len, ciphertext_len)
 
                             try:
-                                sockets["encrypted"].sendto(wire, sockets["encrypted_peer"])
+                                with context_lock:
+                                    encrypted_peer = sockets["encrypted_peer"]  # BUG-18 fix
+                                sockets["encrypted"].sendto(wire, encrypted_peer)
                                 with counters_lock:
                                     counters.enc_out += 1
                                     counters.enc_bytes_out += len(wire)
@@ -1402,7 +1423,7 @@ def run_proxy(
 
                     elif data_type == "encrypted":
                         try:
-                            wire, addr = sock.recvfrom(16384)
+                            wire, addr = sock.recvfrom(65535)
                             if not wire:
                                 continue
 
@@ -1607,6 +1628,12 @@ def run_proxy(
                     control_server.stop()
                 except Exception:
                     pass
+            # BUG-13 fix: join rekey threads to avoid mid-rekey teardown
+            for rk_t in _rekey_threads:
+                try:
+                    rk_t.join(timeout=2.0)
+                except Exception:
+                    pass
 
         # Final status write and stop the status writer thread if running
         try:
@@ -1620,12 +1647,13 @@ def run_proxy(
         except Exception:
             pass
 
-        if 'stop_status_writer' in locals() and stop_status_writer is not None:
-            try:
-                stop_status_writer.set()
-            except Exception:
-                pass
-        if 'status_thread' in locals() and status_thread is not None and status_thread.is_alive():
+        # BUG-17 fix: stop_status_writer and status_thread are always defined
+        # above (no need for fragile 'in locals()' check)
+        try:
+            stop_status_writer.set()
+        except Exception:
+            pass
+        if status_thread is not None and status_thread.is_alive():
             try:
                 status_thread.join(timeout=1.0)
             except Exception:

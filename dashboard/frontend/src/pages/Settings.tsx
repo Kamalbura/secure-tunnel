@@ -239,7 +239,10 @@ export default function Settings() {
                                 type="number"
                                 step="any"
                                 value={localThresholds[item.key] ?? ''}
-                                onChange={e => setLocalThresholds(p => ({ ...p, [item.key]: parseFloat(e.target.value) || 0 }))}
+                                onChange={e => {
+                                    const v = parseFloat(e.target.value);
+                                    if (!Number.isNaN(v)) setLocalThresholds(p => ({ ...p, [item.key]: v }));
+                                }}
                                 className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
                             />
                         </div>

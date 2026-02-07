@@ -10,6 +10,7 @@ Everything else (old runs, broken logs) stays where it is and is ignored.
 
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
@@ -30,7 +31,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # ─── DATA DIRECTORIES ────────────────────────────────────────────────────────
-LOGS_DIR = Path("logs/benchmarks")
+# Resolve relative to repo root (two levels up from dashboard/backend/)
+_BACKEND_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _BACKEND_DIR.parent.parent
+LOGS_DIR = _REPO_ROOT / "logs" / "benchmarks"
 RUNS_DIR = LOGS_DIR / "runs"
 
 # Exactly 3 scenario folders.  folder_name → run_type
@@ -421,10 +425,20 @@ def _merge_gcs_metrics(
     for entry in entries:
         run_id = entry.get("run_id") or ""
         suite_id = entry.get("suite") or entry.get("suite_id") or ""
-        if not run_id or not suite_id:
+        if not suite_id:
             continue
-        key = f"{run_id}:{suite_id}"
-        suite = suites.get(key)
+
+        key = f"{run_id}:{suite_id}" if run_id else ""
+        suite = suites.get(key) if key else None
+
+        # C5 fix: If run_id was missing, try matching by suite_id across all keys
+        if suite is None and suite_id:
+            for k, s in suites.items():
+                if k.endswith(f":{suite_id}"):
+                    suite = s
+                    key = k
+                    break
+
         if suite is None:
             continue
 
@@ -530,8 +544,8 @@ def _apply_proxy_counters_to_data_plane(
     else:
         dp.packets_dropped = None
 
-    if dp.packets_sent is not None and dp.packets_dropped is not None and dp.packets_sent > 0:
-        dp.packet_loss_ratio = dp.packets_dropped / dp.packets_sent
+    if dp.packets_received is not None and dp.packets_dropped is not None and dp.packets_received > 0:
+        dp.packet_loss_ratio = dp.packets_dropped / dp.packets_received
         dp.packet_delivery_ratio = 1.0 - dp.packet_loss_ratio
     else:
         dp.packet_loss_ratio = None
@@ -687,10 +701,13 @@ def build_store() -> MetricsStore:
 
 
 _STORE: Optional[MetricsStore] = None
+_STORE_LOCK = threading.Lock()
 
 
 def get_store() -> MetricsStore:
     global _STORE
     if _STORE is None:
-        _STORE = build_store()
+        with _STORE_LOCK:
+            if _STORE is None:
+                _STORE = build_store()
     return _STORE

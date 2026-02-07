@@ -28,10 +28,15 @@ app = FastAPI(
 # Register API routes
 app.include_router(suites_router)
 
-# CORS
+# CORS — use explicit origins for credentialed requests, wildcard for non-credentialed
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -264,3 +269,61 @@ def detect_anomalies(run_id: Optional[str] = None):
 
     anomalies.sort(key=lambda a: (0 if a["severity"] == "critical" else 1, a["suite_id"]))
     return {"anomalies": anomalies, "total": len(anomalies), "thresholds": thresholds}
+
+
+@app.get("/api/latency-summary")
+def latency_summary(run_id: Optional[str] = None):
+    """
+    Return per-suite latency & transport metrics for the LatencyAnalysis page.
+    Includes handshake timing, RTT, jitter, one-way latency, and goodput.
+    """
+    store = get_store()
+    items = []
+    for key, suite in store._suites.items():
+        if run_id and suite.run_context.run_id != run_id:
+            continue
+        lj = suite.latency_jitter
+        dp = suite.data_plane
+        hs = suite.handshake
+        ci = suite.crypto_identity
+        pe = suite.power_energy
+        items.append({
+            "suite_id": suite.run_context.suite_id,
+            "run_id": suite.run_context.run_id,
+            "key": key,
+            "kem_algorithm": ci.kem_algorithm,
+            "sig_algorithm": ci.sig_algorithm,
+            "aead_algorithm": ci.aead_algorithm,
+            "suite_security_level": ci.suite_security_level,
+            "kem_family": ci.kem_family,
+            # Handshake
+            "handshake_total_duration_ms": hs.handshake_total_duration_ms,
+            "handshake_success": hs.handshake_success,
+            "protocol_handshake_duration_ms": hs.protocol_handshake_duration_ms,
+            "end_to_end_handshake_duration_ms": hs.end_to_end_handshake_duration_ms,
+            # Latency & Jitter
+            "rtt_avg_ms": lj.rtt_avg_ms,
+            "rtt_p95_ms": lj.rtt_p95_ms,
+            "rtt_sample_count": lj.rtt_sample_count,
+            "rtt_valid": lj.rtt_valid,
+            "one_way_latency_avg_ms": lj.one_way_latency_avg_ms,
+            "one_way_latency_p95_ms": lj.one_way_latency_p95_ms,
+            "one_way_latency_valid": lj.one_way_latency_valid,
+            "jitter_avg_ms": lj.jitter_avg_ms,
+            "jitter_p95_ms": lj.jitter_p95_ms,
+            "latency_sample_count": lj.latency_sample_count,
+            # Transport
+            "goodput_mbps": dp.goodput_mbps,
+            "achieved_throughput_mbps": dp.achieved_throughput_mbps,
+            "packets_sent": dp.packets_sent,
+            "packets_received": dp.packets_received,
+            "packets_dropped": dp.packets_dropped,
+            "packet_loss_ratio": dp.packet_loss_ratio,
+            "packet_delivery_ratio": dp.packet_delivery_ratio,
+            # Power
+            "power_avg_w": pe.power_avg_w,
+            "energy_total_j": pe.energy_total_j,
+            # Validation
+            "benchmark_pass_fail": suite.validation.benchmark_pass_fail,
+        })
+    return {"suites": items, "count": len(items)}

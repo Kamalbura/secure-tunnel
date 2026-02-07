@@ -27,7 +27,7 @@ export default function ComparisonView() {
     useEffect(() => {
         if (!suiteAKey) return;
         fetch(`/api/suite/${encodeURIComponent(suiteAKey)}/inventory`)
-            .then(res => res.json())
+            .then(res => { if (!res.ok) throw new Error(`${res.status}`); return res.json(); })
             .then(setInventoryA)
             .catch(() => setInventoryA(null));
     }, [suiteAKey]);
@@ -35,7 +35,7 @@ export default function ComparisonView() {
     useEffect(() => {
         if (!suiteBKey) return;
         fetch(`/api/suite/${encodeURIComponent(suiteBKey)}/inventory`)
-            .then(res => res.json())
+            .then(res => { if (!res.ok) throw new Error(`${res.status}`); return res.json(); })
             .then(setInventoryB)
             .catch(() => setInventoryB(null));
     }, [suiteBKey]);

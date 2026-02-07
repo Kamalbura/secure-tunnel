@@ -11,6 +11,11 @@ venv/
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Environment files — .denv/.genv are tracked templates,
+# .local overrides contain site-specific secrets and must NOT be committed.
+.denv.local
+.genv.local
+
 # Bytecode & caches (explicit)
 **/__pycache__/
 **/*.py[cod]

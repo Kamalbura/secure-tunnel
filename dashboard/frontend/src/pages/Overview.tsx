@@ -22,8 +22,8 @@ function fmt(v: number | null | undefined, digits = 2): string {
 
 function percentile(arr: number[], p: number): number {
     const sorted = [...arr].sort((a, b) => a - b);
-    const i = Math.floor(sorted.length * p);
-    return sorted[Math.min(i, sorted.length - 1)] || 0;
+    const i = Math.max(0, Math.ceil(sorted.length * p) - 1);
+    return sorted[Math.min(i, sorted.length - 1)] ?? 0;
 }
 
 function stdDev(arr: number[]): number {
@@ -39,7 +39,7 @@ const SIG_COLORS: Record<string, string> = { 'ML-DSA': '#8b5cf6', 'Falcon': '#ec
 export default function Overview() {
     const {
         runs, suites, isLoading, fetchSuites, fetchRuns, clearFilters,
-        multiRunOverview, fetchMultiRunOverview, anomalies, fetchSettings, settings,
+        multiRunOverview, fetchMultiRunOverview, anomalies, fetchAnomalies, fetchSettings, settings,
     } = useDashboardStore();
     const [health, setHealth] = useState<HealthResponse | null>(null);
     const [kemFamilyData, setKemFamilyData] = useState<AggregateRow[]>([]);
@@ -51,18 +51,19 @@ export default function Overview() {
         fetchRuns();
         fetchSettings();
         fetchMultiRunOverview();
+        fetchAnomalies();
         fetch('/api/health')
-            .then(res => res.json())
+            .then(res => { if (!res.ok) throw new Error(`${res.status}`); return res.json(); })
             .then(setHealth)
             .catch(() => setHealth(null));
         fetch('/api/aggregate/kem-family')
-            .then(res => res.json())
+            .then(res => { if (!res.ok) throw new Error(`${res.status}`); return res.json(); })
             .then(payload => {
                 if (payload?.warning) { setAggWarning(payload.warning); setKemFamilyData([]); }
                 else { setAggWarning(null); setKemFamilyData(payload?.data ?? []); }
             })
             .catch(() => { setAggWarning('Aggregation unavailable'); setKemFamilyData([]); });
-    }, [fetchSuites, fetchRuns, clearFilters, fetchMultiRunOverview, fetchSettings]);
+    }, [fetchSuites, fetchRuns, clearFilters, fetchMultiRunOverview, fetchSettings, fetchAnomalies]);
 
     // ── Computed stats ──────────────────────────────────────────────────────
     const stats = useMemo(() => {
@@ -135,8 +136,8 @@ export default function Overview() {
     const criticalAnomalies = anomalies.filter(a => a.severity === 'critical').length;
     const warningAnomalies = anomalies.filter(a => a.severity === 'warning').length;
 
-    // Scenario status from settings
-    const scenarioStatus = settings?.scenario_status as Record<string, { available: boolean; run_count: number; suite_count: number }> | undefined;
+    // Scenario status from settings (typed via DashboardSettings → ScenarioStatus)
+    const scenarioStatus = settings?.scenario_status;
 
     // Distribution pie data
     const nistPieData = stats ? Object.entries(stats.nistDist).map(([name, value]) => ({
@@ -183,16 +184,16 @@ export default function Overview() {
             {scenarioStatus && (
                 <div className="grid grid-cols-3 gap-4">
                     {Object.entries(scenarioStatus).map(([scenario, info]) => {
-                        const label = scenario === 'no_ddos' ? '🛡️ No DDoS' : scenario === 'ddos_xgboost' ? '🤖 DDoS + XGBoost' : '📝 DDoS + TXT';
-                        const color = scenario === 'no_ddos' ? '#10b981' : scenario === 'ddos_xgboost' ? '#f59e0b' : '#ef4444';
+                        const label = scenario === 'no-ddos' ? '🛡️ No DDoS' : scenario === 'ddos-xgboost' ? '🤖 DDoS + XGBoost' : '📝 DDoS + TXT';
+                        const color = scenario === 'no-ddos' ? '#10b981' : scenario === 'ddos-xgboost' ? '#f59e0b' : '#ef4444';
                         return (
                             <div key={scenario} className="card flex items-center gap-3" style={{ borderLeft: `4px solid ${color}` }}>
-                                <div className={`w-3 h-3 rounded-full ${info.available ? 'animate-pulse' : ''}`}
-                                     style={{ backgroundColor: info.available ? color : '#374151' }} />
+                                <div className={`w-3 h-3 rounded-full ${info.folder_exists ? 'animate-pulse' : ''}`}
+                                     style={{ backgroundColor: info.folder_exists ? color : '#374151' }} />
                                 <div>
                                     <div className="text-sm font-medium text-white">{label}</div>
                                     <div className="text-xs text-gray-400">
-                                        {info.available
+                                        {info.folder_exists
                                             ? `${info.run_count} run${info.run_count !== 1 ? 's' : ''} • ${info.suite_count} suites`
                                             : 'No data yet'}
                                     </div>

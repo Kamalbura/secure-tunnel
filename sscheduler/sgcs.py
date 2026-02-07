@@ -49,7 +49,7 @@ TCP_CTRL_PORT = CONFIG.get("TCP_HANDSHAKE_PORT")
 # ============================================================
 
 # Bind control server to 0.0.0.0 so Drone can connect in diverse networks
-GCS_CONTROL_HOST = str(CONFIG.get("GCS_CONTROL_BIND_HOST", "0.0.0.0"))
+GCS_CONTROL_HOST = str(CONFIG.get("GCS_CONTROL_HOST", "0.0.0.0"))
 # Use configured GCS control port (default 48080)
 GCS_CONTROL_PORT = int(CONFIG.get("GCS_CONTROL_PORT", 48080))
 
@@ -111,7 +111,7 @@ def log(msg: str):
 # MAVProxy (GCS GUI)
 # ============================================================
 
-def start_mavproxy_gui() -> subprocess.Popen | None:
+def start_mavproxy_gui() -> Optional[subprocess.Popen]:
     """Start MAVProxy with map+console on the GCS.
 
     This is for operator visibility (monitor/map), not for traffic generation.
@@ -119,7 +119,7 @@ def start_mavproxy_gui() -> subprocess.Popen | None:
     arrives via the tunnel.
     """
     try:
-        bind_host = str(CONFIG.get("GCS_PLAINTEXT_BIND", "0.0.0.0"))
+        bind_host = str(CONFIG.get("GCS_PLAINTEXT_HOST", "127.0.0.1"))
         listen_port = int(CONFIG.get("GCS_PLAINTEXT_RX", GCS_PLAIN_RX_PORT))
         qgc_port = int(CONFIG.get("QGC_PORT", 14550))
         sniff_port = int(CONFIG.get("GCS_TELEMETRY_SNIFF_PORT", 14552))

@@ -124,6 +124,7 @@ def log(msg: str, level: str = "INFO"):
 
 def send_gcs_command(cmd: str, **params) -> dict:
     """Send command to GCS control server."""
+    sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # GCS start_proxy waits for handshake completion (up to REKEY_HANDSHAKE_TIMEOUT)
@@ -144,10 +145,15 @@ def send_gcs_command(cmd: str, **params) -> dict:
             if b"\n" in response:
                 break
         
-        sock.close()
         return json.loads(response.decode().strip())
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 def wait_for_gcs(timeout: float = 30.0) -> bool:
     """Wait for GCS control server to be ready."""
@@ -170,6 +176,7 @@ class DroneProxyManager:
         self.managed_proc = None
         self.current_suite = None
         self.last_log_path = None
+        self._log_handle = None  # BUG-06 fix: track log file handle
     
     def start(self, suite_name: str) -> bool:
         """Start drone proxy with given suite."""
@@ -198,7 +205,7 @@ class DroneProxyManager:
 
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         log_path = LOGS_DIR / f"drone_{suite_name}_{timestamp}.log"
-        log_handle = open(log_path, "w", encoding="utf-8")
+        self._log_handle = open(log_path, "w", encoding="utf-8")  # BUG-06 fix: store handle
         
         # Ensure subprocess can find 'core' package
         env = os.environ.copy()
@@ -211,7 +218,7 @@ class DroneProxyManager:
         self.managed_proc = ManagedProcess(
             cmd=cmd,
             name=f"proxy-{suite_name}",
-            stdout=log_handle,
+            stdout=self._log_handle,
             stderr=subprocess.STDOUT,
             env=env
         )
@@ -232,6 +239,13 @@ class DroneProxyManager:
             self.managed_proc.stop()
             self.managed_proc = None
             self.current_suite = None
+        # BUG-06 fix: close log file handle to prevent FD leak
+        if self._log_handle is not None:
+            try:
+                self._log_handle.close()
+            except Exception:
+                pass
+            self._log_handle = None
     
     def is_running(self) -> bool:
         return self.managed_proc is not None and self.managed_proc.is_running()
@@ -340,6 +354,8 @@ def start_mavproxy(mav_master: str) -> Optional[ManagedProcess]:
         stderr=subprocess.STDOUT,
         new_console=False
     )
+    # BUG-07 fix: attach log handle to proc so _cleanup can close it
+    proc._mavproxy_log_handle = fh
     
     if proc.start():
         time.sleep(1.0)
@@ -473,7 +489,10 @@ class BenchmarkScheduler:
         
         # Start benchmark
         try:
-            start_time = self.clock_sync.synced_time() if self.clock_sync.is_synced() else time.monotonic()
+            # Always use monotonic clock for policy timing to avoid
+            # time-domain mixing (synced_time returns wall-clock ~1.7e9
+            # which would make elapsed_on_suite permanently negative).
+            start_time = time.monotonic()
             first_suite = self.policy.start_benchmark(start_time_mono=start_time)
             log(f"Starting benchmark with {first_suite}")
             
@@ -503,11 +522,13 @@ class BenchmarkScheduler:
             # Activate current suite
             if not self._activate_suite(current_suite):
                 log(f"Failed to activate {current_suite}, marking as failed", "WARN")
-                self.policy.finalize_suite_metrics(success=False, error_message="activation_failed")
+                # Note: finalize_suite_metrics is called inside _finalize_metrics
             
             # Wait for policy to switch
             while True:
-                now = self.clock_sync.synced_time() if self.clock_sync.is_synced() else time.monotonic()
+                # C3 fix: Always use monotonic for policy timing to avoid
+                # time-domain mixing if clock sync state changes mid-run.
+                now = time.monotonic()
                 output = self.policy.evaluate(now)
                 
                 if output.action == BenchmarkAction.COMPLETE:
@@ -515,6 +536,8 @@ class BenchmarkScheduler:
                         log("Metrics not ready; extending suite before completion")
                         time.sleep(1.0)
                         continue
+                    # Commit the state change now that we've accepted the proposal
+                    self.policy.confirm_advance(now)
                     log("Benchmark complete!")
                     if self.metrics_aggregator:
                         self.metrics_aggregator.record_control_plane_metrics(
@@ -541,6 +564,8 @@ class BenchmarkScheduler:
                         log("Metrics not ready; extending suite before advancing")
                         time.sleep(1.0)
                         continue
+                    # Commit the state change now that we've accepted the proposal
+                    self.policy.confirm_advance(now)
                     progress = output.progress_pct
                     log(f"[{progress:.1f}%] Switching to {output.target_suite}")
 
@@ -574,8 +599,10 @@ class BenchmarkScheduler:
                     current_suite = output.target_suite
                     break
                 
-                # HOLD - wait a bit
-                time.sleep(1.0)
+                # HOLD — BUG-26 fix: sleep only the remaining interval fraction
+                # instead of a fixed 1s to avoid overshooting the suite interval.
+                remaining = self.args.interval - (time.monotonic() - self.policy.last_switch_mono)
+                time.sleep(max(0.1, min(remaining, 1.0)))
     
     def _activate_suite(self, suite_name: str) -> bool:
         """Activate a suite on both drone and GCS."""
@@ -791,6 +818,9 @@ class BenchmarkScheduler:
     
     def _finalize_metrics(self, success: bool, error: str = "", gcs_metrics: Dict = None):
         """Finalize and save comprehensive metrics for current suite."""
+        # Record result in the policy's collected_metrics list
+        self.policy.finalize_suite_metrics(success=success, error_message=error)
+        
         # Read data plane metrics from proxy status file (allow a brief window for the status writer to run)
         status_file = LOGS_DIR / "drone_status.json"
         counters: Dict[str, Any] = {}
@@ -974,17 +1004,27 @@ class BenchmarkScheduler:
     
     def _cleanup(self):
         """Cleanup resources."""
+        # BUG-02 fix: re-entrancy guard inside _cleanup itself
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
         log("Cleaning up...")
         self._stop_traffic()
         if self.proxy:
             self.proxy.stop()
         if self.mavproxy_proc:
+            # BUG-07 fix: close mavproxy log handle
+            fh = getattr(self.mavproxy_proc, '_mavproxy_log_handle', None)
             self.mavproxy_proc.stop()
+            if fh is not None and fh is not subprocess.DEVNULL:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
         # Stop robust logger (flushes all buffered data)
         if self.robust_logger:
             self.robust_logger.log_event("benchmark_cleanup", {"reason": self._shutdown_reason})
             self.robust_logger.stop()
-        self._cleanup_done = True
 
     def _shutdown(self, reason: str, *, error: bool) -> None:
         if self._cleanup_done:
@@ -1023,11 +1063,28 @@ class BenchmarkScheduler:
 # =============================================================================
 
 def cleanup_environment(aggressive: bool = False, mode: Optional[str] = None):
-    """Kill stale processes if aggressive, otherwise just MAVProxy."""
-    # MAVProxy-only mode forbids name-based global process killing.
+    """Kill stale processes.
+    
+    BUG-01 fix: In MAVPROXY mode, still kill managed processes via the
+    global _SCHEDULER reference.  Pattern-based pkill is only used in
+    SYNTHETIC mode where MAVProxy is launched by the scheduler itself.
+    """
     mode = mode or resolve_benchmark_mode(None, default_mode="MAVPROXY")
+
+    # Always try to clean up via the scheduler object (safe in all modes)
+    global _SCHEDULER
+    if _SCHEDULER is not None:
+        try:
+            _SCHEDULER._cleanup()
+        except Exception:
+            pass
+
     if mode == "MAVPROXY":
+        # In MAVPROXY mode, only kill managed processes (done above).
+        # Do NOT pkill by name — real MAVProxy might be user-owned.
         return
+
+    # SYNTHETIC mode: safe to pkill by pattern
     patterns = ["mavproxy.py"]
     if aggressive:
         patterns.append("core.run_proxy")
@@ -1062,7 +1119,7 @@ def main():
     global LOGS_DIR
     parser = argparse.ArgumentParser(description="Benchmark Drone Scheduler")
     parser.add_argument("--mav-master", 
-                       default=str(CONFIG.get("MAV_MASTER", "/dev/ttyACM0")),
+                       default=str(CONFIG.get("MAV_FC_DEVICE", "/dev/ttyACM0")),
                        help="MAVLink master (e.g., /dev/ttyACM0)")
     parser.add_argument("--interval", type=float, default=110.0,
                        help="Seconds per suite (default: 110)")
@@ -1095,7 +1152,7 @@ def main():
     # Setup signal handler
     def sigint_handler(sig, frame):
         log("Interrupted")
-        cleanup_environment(aggressive=True)  # Full cleanup on interrupt
+        cleanup_environment(aggressive=True, mode=args.mode_resolved)  # BUG-01 fix: pass mode
         sys.exit(0)
     
     signal.signal(signal.SIGINT, sigint_handler)

@@ -13,7 +13,7 @@ from sklearn.preprocessing import StandardScaler
 
 # --- Add tstplus module to path ---
 # This allows us to import the model architecture
-from tstplus import TSTPlus
+from tstplus import TSTPlus, _TSTBackbone, _TSTEncoder, _TSTEncoderLayer
 
 # --- Scapy for Packet Sniffing ---
 # Scapy is a powerful packet manipulation tool.

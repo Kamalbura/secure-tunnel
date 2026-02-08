@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler
 
 # Import the TST model definition from the copied file
 # This assumes tstplus.py is in the same directory
-from tstplus import TSTPlus
+from tstplus import TSTPlus, _TSTBackbone, _TSTEncoder, _TSTEncoderLayer
 
 # --- Configuration ---
 MODEL_FILE = "tst_model.pth"

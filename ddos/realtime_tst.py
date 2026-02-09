@@ -132,15 +132,17 @@ def detect_ddos_with_tst(detection_queue):
         # 3. Make Prediction
         with torch.no_grad():
             output_logits = model(x_tensor)
-            probabilities = torch.nn.functional.softmax(output_logits, dim=1)
-            predicted_index = torch.argmax(probabilities, dim=1).item()
+            # c_out=1 → single logit, use sigmoid (NOT softmax)
+            logit = output_logits.item()
+            prob_attack = 1.0 / (1.0 + np.exp(-logit))
+            predicted_class = 1 if prob_attack > 0.5 else 0
 
         end_time = time.time()
         prediction_time_ms = (end_time - start_time) * 1000
 
         # 4. Display Result
-        prediction_status = "ATTACK" if predicted_index == 1 else "NORMAL"
-        confidence = probabilities.max().item() * 100
+        prediction_status = "ATTACK" if predicted_class == 1 else "NORMAL"
+        confidence = (prob_attack if predicted_class == 1 else 1.0 - prob_attack) * 100
 
         print(f"--- PREDICTION RESULT ---")
         if prediction_status == "ATTACK":

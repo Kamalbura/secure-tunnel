@@ -132,10 +132,13 @@ def detector_thread(config, config_lock, buffer, buffer_lock):
 
             # Predict
             with torch.no_grad():
-                pred_idx = torch.argmax(tst_model(x_tensor), dim=1).item()
+                logit = tst_model(x_tensor).item()
+                # c_out=1 → single logit, use sigmoid (NOT softmax/argmax)
+                prob_attack = 1.0 / (1.0 + np.exp(-logit))
+                pred_class = 1 if prob_attack > 0.5 else 0
             
-            status = "ATTACK" if pred_idx == 1 else "NORMAL"
-            print(f"[TST ACTIVE] -> Prediction: {status}")
+            status = "ATTACK" if pred_class == 1 else "NORMAL"
+            print(f"[TST ACTIVE] -> Prediction: {status}  (P(attack)={prob_attack:.4f})")
 
 # --- Main Execution ---
 if __name__ == "__main__":

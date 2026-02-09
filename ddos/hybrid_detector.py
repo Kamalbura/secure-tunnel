@@ -129,12 +129,14 @@ def tst_confirmer_thread(tst_queue):
         # Make Prediction
         with torch.no_grad():
             output_logits = model(x_tensor)
-            probabilities = torch.nn.functional.softmax(output_logits, dim=1)
-            predicted_index = torch.argmax(probabilities, dim=1).item()
+            # c_out=1 → single logit, use sigmoid (NOT softmax)
+            logit = output_logits.item()
+            prob_attack = 1.0 / (1.0 + np.exp(-logit))
+            predicted_class = 1 if prob_attack > 0.5 else 0
 
         # Display Final Result
-        prediction_status = "CONFIRMED ATTACK" if predicted_index == 1 else "FALSE ALARM"
-        confidence = probabilities.max().item() * 100
+        prediction_status = "CONFIRMED ATTACK" if predicted_class == 1 else "FALSE ALARM"
+        confidence = (prob_attack if predicted_class == 1 else 1.0 - prob_attack) * 100
 
         print("--- TST CONFIRMATION ---")
         if prediction_status == "CONFIRMED ATTACK":

@@ -1,74 +1,116 @@
+"""
+Standalone XGBoost DDoS Detector — Verification Script
+=======================================================
+Loads the trained XGBoost model and runs it against real data from the
+training CSV.  No simulated / hardcoded values — every input comes from
+actual recorded MAVLink packet counts on the Raspberry Pi drone.
+
+Label semantics (from training data):
+  Status 0 = NORMAL  → ~32 MAVLink packets per 0.6 s window
+  Status 1 = ATTACK  → ~14 packets (DDoS floods the network, starving MAVLink)
+
+Usage (on Raspberry Pi):
+    ~/nenv/bin/python run_xgboost.py
+"""
+
+import time
+import os
+import sys
 
 import xgboost as xgb
 import numpy as np
-import os
+import pandas as pd
 
 # --- Configuration ---
 MODEL_FILE = "xgboost_model.bin"
-# The model expects input with this many features (timesteps).
-# This must match the 'lookback' parameter the model was trained with.
-EXPECTED_FEATURES = 5
+TRAIN_DATA_FILE = "train_ddos_data_0.1.csv"
+LOOKBACK = 5  # Model was trained with a lookback window of 5 time-steps
 
-# --- Model Loading ---
-print(f"Attempting to load XGBoost model from '{MODEL_FILE}'...")
+# --- File Checks ---
+for f in [MODEL_FILE, TRAIN_DATA_FILE]:
+    if not os.path.exists(f):
+        print(f"Error: Required file '{f}' not found.")
+        sys.exit(1)
 
-# Check if the model file exists
-if not os.path.exists(MODEL_FILE):
-    print(f"\n--- ERROR ---")
-    print(f"Model file not found: '{MODEL_FILE}'")
-    print("Please make sure the model file is in the same directory as this script.")
-    exit()
-
-# Load the XGBoost model
+# --- Load Model ---
+print(f"Loading XGBoost model from '{MODEL_FILE}'...")
 model = xgb.XGBClassifier()
 model.load_model(MODEL_FILE)
+print("  Model loaded.\n")
 
-print("✅ XGBoost model loaded successfully.")
+# --- Load Real Data ---
+print(f"Loading real recorded data from '{TRAIN_DATA_FILE}'...")
+data = pd.read_csv(TRAIN_DATA_FILE)
+normal_rows = data[data["Status"] == 0]["Mavlink_Count"].values
+attack_rows = data[data["Status"] == 1]["Mavlink_Count"].values
+print(f"  Normal samples: {len(normal_rows)}  (mean={normal_rows.mean():.1f} pkts/window)")
+print(f"  Attack samples: {len(attack_rows)}  (mean={attack_rows.mean():.1f} pkts/window)\n")
 
-# --- Prediction ---
-print("\n--- Running Prediction Example ---")
+# --- Helper ---
+def predict_and_print(label, sequence):
+    arr = np.array(sequence).reshape(1, -1)
+    pred = model.predict(arr)[0]
+    proba = model.predict_proba(arr)[0]
+    status = "ATTACK" if pred == 1 else "NORMAL"
+    conf = proba[pred] * 100
+    icon = "\U0001f6a8" if pred == 1 else "\u2705"
+    print(f"  {icon} [{label}] input={sequence}  ->  {status}  (confidence {conf:.2f}%)")
+    return pred
 
-# Create a sample data point representing a sequence of packet counts.
-# This simulates the input the model would receive.
-# Shape: (1, EXPECTED_FEATURES)
-sample_data_normal = np.array([10, 15, 12, 18, 14]).reshape(1, -1)
-sample_data_attack = np.array([150, 200, 180, 220, 190]).reshape(1, -1)
+# --- Predictions on Real Data ---
+print("--- Predictions (real recorded data) ---\n")
 
-print(f"\n1. Simulating NORMAL traffic with data: {sample_data_normal.flatten()}")
+# Pick 5 consecutive normal samples from the dataset
+normal_input = normal_rows[100:100 + LOOKBACK].tolist()
+predict_and_print("Real NORMAL window", normal_input)
 
-# Make a prediction
-try:
-    prediction_normal = model.predict(sample_data_normal)[0]
-    prediction_proba_normal = model.predict_proba(sample_data_normal)[0]
+# Pick 5 consecutive attack samples from the dataset
+attack_input = attack_rows[100:100 + LOOKBACK].tolist()
+predict_and_print("Real ATTACK window", attack_input)
 
-    # --- Display Results ---
-    if prediction_normal == 1:
-        confidence = prediction_proba_normal[1] * 100
-        print(f"   🚨 Result: ATTACK DETECTED (Confidence: {confidence:.2f}%)")
-    else:
-        confidence = prediction_proba_normal[0] * 100
-        print(f"   ✅ Result: NORMAL traffic (Confidence: {confidence:.2f}%)")
+print()
 
-except Exception as e:
-    print(f"   ❌ Error during prediction: {e}")
+# Run across multiple windows to show consistency
+print("--- Sliding-window scan (10 normal + 10 attack windows) ---\n")
+correct = 0
+total = 0
+for i in range(0, 50, LOOKBACK):
+    if i + LOOKBACK <= len(normal_rows):
+        seq = normal_rows[i:i + LOOKBACK].tolist()
+        p = predict_and_print(f"Normal #{i//LOOKBACK}", seq)
+        correct += (p == 0)
+        total += 1
+for i in range(0, 50, LOOKBACK):
+    if i + LOOKBACK <= len(attack_rows):
+        seq = attack_rows[i:i + LOOKBACK].tolist()
+        p = predict_and_print(f"Attack #{i//LOOKBACK}", seq)
+        correct += (p == 1)
+        total += 1
+print(f"\n  Accuracy on sampled windows: {correct}/{total} ({correct/total*100:.0f}%)")
 
+# --- Timing Benchmark ---
+print("\n--- Inference Timing (on this hardware) ---\n")
+sample = np.array(normal_input).reshape(1, -1)
 
-print(f"\n2. Simulating ATTACK traffic with data: {sample_data_attack.flatten()}")
+# Warm-up
+for _ in range(10):
+    model.predict(sample)
 
-# Make a prediction
-try:
-    prediction_attack = model.predict(sample_data_attack)[0]
-    prediction_proba_attack = model.predict_proba(sample_data_attack)[0]
+N = 1000
+t0 = time.perf_counter()
+for _ in range(N):
+    model.predict(sample)
+t1 = time.perf_counter()
 
-    # --- Display Results ---
-    if prediction_attack == 1:
-        confidence = prediction_proba_attack[1] * 100
-        print(f"   🚨 Result: ATTACK DETECTED (Confidence: {confidence:.2f}%)")
-    else:
-        confidence = prediction_proba_attack[0] * 100
-        print(f"   ✅ Result: NORMAL traffic (Confidence: {confidence:.2f}%)")
+per_pred_us = (t1 - t0) / N * 1e6
+print(f"  Single prediction : {per_pred_us:.0f} us")
+print(f"  Throughput        : {N / (t1 - t0):.0f} predictions/sec")
 
-except Exception as e:
-    print(f"   ❌ Error during prediction: {e}")
+# Data collection time = LOOKBACK windows * WINDOW_SIZE (0.6 s each)
+collect_time = LOOKBACK * 0.6
+print(f"\n  Time to first detection:")
+print(f"    Data collection : {collect_time:.1f} s  ({LOOKBACK} windows x 0.6 s)")
+print(f"    Model inference : {per_pred_us:.0f} us")
+print(f"    Total           : ~{collect_time:.1f} s")
 
-print("\n--- Script Finished ---")
+print("\n--- Done ---")

@@ -80,9 +80,10 @@ XGB_SCRIPT = DDOS_DIR / "xgb.py"
 TST_SCRIPT = DDOS_DIR / "tst.py"
 PYTHON = sys.executable
 # Detectors need torch/scapy from nenv; fall back to current interpreter
+# Use absolute path – expanduser("~") returns /root under sudo
 DETECTOR_PYTHON = os.environ.get(
     "DETECTOR_PYTHON",
-    os.path.expanduser("~/nenv/bin/python"),
+    "/home/dev/nenv/bin/python",
 )
 if not os.path.isfile(DETECTOR_PYTHON):
     DETECTOR_PYTHON = PYTHON
@@ -293,17 +294,26 @@ def start_detector(script: Path, label: str) -> subprocess.Popen:
     """Start a detector script as a background subprocess."""
     print(f"  Starting {label} ({script.name}) via {DETECTOR_PYTHON}...",
           end="", flush=True)
+    err_path = Path(f"/tmp/detector_{label.lower().replace(' ','_')}.err")
+    err_fh = open(err_path, "w")
     proc = subprocess.Popen(
         [DETECTOR_PYTHON, "-u", str(script)],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=err_fh,
         preexec_fn=os.setpgrp if hasattr(os, "setpgrp") else None,
     )
     time.sleep(2)
+    err_fh.flush()
     if proc.poll() is not None:
+        err_fh.close()
+        err_text = err_path.read_text().strip()
         print(f" FAILED (exit code {proc.returncode})")
+        if err_text:
+            for line in err_text.splitlines()[-5:]:
+                print(f"    {line}")
         return None
     print(f" PID {proc.pid}")
+    # keep err_fh open – will be closed when process terminates
     return proc
 
 

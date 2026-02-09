@@ -43,6 +43,15 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 # ── OQS imports (same compat as benchmark_pqc.py) ────────────────────
+# liboqs-python may be installed in a non-standard location.  Add it to
+# sys.path BEFORE importing anything that needs oqs.
+_LIBOQS_PYTHON_DIR = os.environ.get(
+    "LIBOQS_PYTHON_DIR",
+    os.path.expanduser("~/quantum-safe/liboqs-python"),
+)
+if os.path.isdir(_LIBOQS_PYTHON_DIR) and _LIBOQS_PYTHON_DIR not in sys.path:
+    sys.path.insert(0, _LIBOQS_PYTHON_DIR)
+
 def _init_oqs():
     """Return (KeyEncapsulation, Signature) classes."""
     for style in ["oqs.oqs", "oqs"]:
@@ -51,7 +60,7 @@ def _init_oqs():
             return mod.KeyEncapsulation, mod.Signature
         except (ImportError, AttributeError):
             continue
-    raise ImportError("oqs-python not available")
+    raise ImportError("oqs-python not available – set LIBOQS_PYTHON_DIR")
 
 KeyEncapsulation, Signature = _init_oqs()
 
@@ -70,6 +79,13 @@ DDOS_DIR = ROOT / "ddos"
 XGB_SCRIPT = DDOS_DIR / "xgb.py"
 TST_SCRIPT = DDOS_DIR / "tst.py"
 PYTHON = sys.executable
+# Detectors need torch/scapy from nenv; fall back to current interpreter
+DETECTOR_PYTHON = os.environ.get(
+    "DETECTOR_PYTHON",
+    os.path.expanduser("~/nenv/bin/python"),
+)
+if not os.path.isfile(DETECTOR_PYTHON):
+    DETECTOR_PYTHON = PYTHON
 TST_WARMUP_S = 300  # 5 minutes
 DEFAULT_DURATION = 10  # seconds per suite
 
@@ -275,9 +291,10 @@ def run_phase(phase_name: str, suites: List[str], duration: float,
 
 def start_detector(script: Path, label: str) -> subprocess.Popen:
     """Start a detector script as a background subprocess."""
-    print(f"  Starting {label} ({script.name})...", end="", flush=True)
+    print(f"  Starting {label} ({script.name}) via {DETECTOR_PYTHON}...",
+          end="", flush=True)
     proc = subprocess.Popen(
-        [PYTHON, "-u", str(script)],
+        [DETECTOR_PYTHON, "-u", str(script)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         preexec_fn=os.setpgrp if hasattr(os, "setpgrp") else None,

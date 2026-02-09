@@ -71,6 +71,11 @@ predict_and_print("Real ATTACK window", attack_input)
 print()
 
 # Run across multiple windows to show consistency
+# NOTE: attack_rows[0:~85] have normal-looking values (~32 pkts) because
+#   they are from the TRANSITION period before DDoS fully starved MAVLink.
+#   Real attack data (low pkt counts) starts at approximately index 100.
+ATTACK_OFFSET = 100  # skip transitional rows
+
 print("--- Sliding-window scan (10 normal + 10 attack windows) ---\n")
 correct = 0
 total = 0
@@ -81,8 +86,9 @@ for i in range(0, 50, LOOKBACK):
         correct += (p == 0)
         total += 1
 for i in range(0, 50, LOOKBACK):
-    if i + LOOKBACK <= len(attack_rows):
-        seq = attack_rows[i:i + LOOKBACK].tolist()
+    idx = ATTACK_OFFSET + i
+    if idx + LOOKBACK <= len(attack_rows):
+        seq = attack_rows[idx:idx + LOOKBACK].tolist()
         p = predict_and_print(f"Attack #{i//LOOKBACK}", seq)
         correct += (p == 1)
         total += 1

@@ -103,6 +103,13 @@ def main():
                       f"packets={pkt_count}")
                 continue
 
+            # No-traffic guard: all-zero windows → tunnel not active
+            if sum(history) == 0:
+                print(f"  [#{window_num}]  pkts={pkt_count:3d}  "
+                      f"window={list(history)}  "
+                      f"\033[93mNO TRAFFIC\033[0m")
+                continue
+
             # Predict
             x = np.array(list(history)).reshape(1, -1)
             pred = model.predict(x)[0]

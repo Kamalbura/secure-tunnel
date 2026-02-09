@@ -129,6 +129,13 @@ def main():
                           f"last_pkts={pkt_count}")
                 continue
 
+            # ── No-traffic guard ──────────────────────────────────
+            if sum(history) == 0:
+                prediction_num += 1
+                print(f"  [Pred #{prediction_num}]  avg_pkts=  0.0  "
+                      f"\033[93mNO TRAFFIC\033[0m")
+                continue
+
             # ── Predict ──────────────────────────────────────────────
             t0 = time.perf_counter()
 

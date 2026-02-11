@@ -77,8 +77,8 @@ from core.config import CONFIG
 
 # ── Constants ─────────────────────────────────────────────────────────
 DDOS_DIR = ROOT / "ddos"
-XGB_SCRIPT = DDOS_DIR / "xgb.py"
-TST_SCRIPT = DDOS_DIR / "tst.py"
+XGB_SCRIPT = DDOS_DIR / "xgb_old.py"
+TST_SCRIPT = DDOS_DIR / "tst_old.py"
 PYTHON = sys.executable
 DETECTOR_PYTHON = os.environ.get(
     "DETECTOR_PYTHON", "/home/dev/nenv/bin/python")

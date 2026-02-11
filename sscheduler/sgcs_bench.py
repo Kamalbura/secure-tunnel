@@ -214,7 +214,8 @@ class GcsMavProxyManager:
             cmd.extend(["--map", "--console"])
             log("[MAVPROXY] Starting with GUI (map + console)")
         else:
-            log("[MAVPROXY] Starting headless")
+            cmd.append("--daemon")
+            log("[MAVPROXY] Starting headless (--daemon)")
         
         try:
             # Log file for MAVProxy output (only used in headless mode)
@@ -228,15 +229,18 @@ class GcsMavProxyManager:
                 except Exception:
                     self._log_handle = subprocess.DEVNULL
             
-            # Start MAVProxy - don't redirect stdout when GUI enabled
-            # (prompt_toolkit requires a real Windows console)
-            # Start MAVProxy using ManagedProcess
+            # Start MAVProxy - always use new_console on Windows
+            # because prompt_toolkit requires a Windows console buffer.
+            # CRITICAL: stdout/stderr MUST be None when new_console=True,
+            # otherwise the file handles override the console screen buffer
+            # and prompt_toolkit still fails with NoConsoleScreenBufferError.
+            # The --daemon flag suppresses interactive prompts in headless mode.
             self.process = ManagedProcess(
                 cmd=cmd,
                 name="mavproxy-gcs",
-                stdout=None if self.enable_gui else self._log_handle,
-                stderr=None if self.enable_gui else subprocess.STDOUT,
-                new_console=self.enable_gui  # GUI needs new console
+                stdout=None,
+                stderr=None,
+                new_console=True  # Always needed on Windows for prompt_toolkit
             )
             
             if self.process.start():

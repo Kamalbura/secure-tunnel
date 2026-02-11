@@ -207,13 +207,20 @@ class DroneProxyManager:
         log_path = LOGS_DIR / f"drone_{suite_name}_{timestamp}.log"
         self._log_handle = open(log_path, "w", encoding="utf-8")  # BUG-06 fix: store handle
         
-        # Ensure subprocess can find 'core' package
+        # Ensure subprocess can find 'core' package AND oqs-python
         env = os.environ.copy()
         project_root = str(Path(__file__).parent.parent.absolute())
+        sep = ";" if sys.platform.startswith("win") else ":"
+        paths_to_add = [project_root]
+        # Include LIBOQS_PYTHON_DIR so the proxy subprocess can import oqs
+        liboqs_dir = env.get("LIBOQS_PYTHON_DIR", "")
+        if liboqs_dir and os.path.isdir(liboqs_dir):
+            paths_to_add.append(liboqs_dir)
         existing_pp = env.get("PYTHONPATH", "")
-        if project_root not in existing_pp:
-            sep = ";" if sys.platform.startswith("win") else ":"
-            env["PYTHONPATH"] = f"{project_root}{sep}{existing_pp}" if existing_pp else project_root
+        for p in paths_to_add:
+            if p not in existing_pp:
+                existing_pp = f"{p}{sep}{existing_pp}" if existing_pp else p
+        env["PYTHONPATH"] = existing_pp
 
         self.managed_proc = ManagedProcess(
             cmd=cmd,
@@ -398,7 +405,9 @@ class BenchmarkScheduler:
         )
         
         # Set up LOGS_DIR with consistent run_id (drone is the master)
-        LOGS_DIR = _LOGS_DIR_BASE / f"live_run_{self.policy.run_id}"
+        # Respect --log-dir override if it was set before scheduler init
+        if LOGS_DIR is None:
+            LOGS_DIR = _LOGS_DIR_BASE / f"live_run_{self.policy.run_id}"
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
         
         # Limit suites if requested

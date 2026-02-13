@@ -654,6 +654,130 @@ export default function BucketComparison() {
                     No suites in this bucket. Select a different group.
                 </div>
             )}
+
+            {/* ── Cross-Run Bucket Comparison ── */}
+            <CrossRunBucketPanel
+                selectedType={selectedType}
+                selectedBucket={selectedBucket}
+                settings={settings}
+            />
+        </div>
+    );
+}
+
+/**
+ * Cross-Run Bucket Panel — Shows same bucket across 3 runs side by side.
+ */
+interface CrossRunBucketPanelProps {
+    selectedType: BucketType;
+    selectedBucket: string;
+    settings: {
+        active_runs?: string[];
+        run_labels?: Record<string, { label?: string; type?: RunType }>;
+    } | null;
+}
+
+interface ChartRow {
+    run_type: RunType;
+    label: string;
+    count: number;
+    avgHs: number;
+    avgPw: number;
+    avgEn: number;
+}
+
+function CrossRunBucketPanel({ selectedType, selectedBucket, settings }: CrossRunBucketPanelProps) {
+    const [crossData, setCrossData] = useState<Record<string, Buckets> | null>(null);
+    const [loading, setLoading] = useState(false);
+    const activeRuns: string[] = settings?.active_runs || [];
+    const runLabels = settings?.run_labels || {};
+
+    useEffect(() => {
+        if (activeRuns.length < 2) return;
+        let cancelled = false;
+        setLoading(true);
+        Promise.all(activeRuns.map((rid: string) =>
+            fetch(`/api/buckets?run_id=${encodeURIComponent(rid)}`).then(r => r.json()).then(data => ({ rid, data }))
+        )).then((results: { rid: string; data: Buckets }[]) => {
+            if (cancelled) return;
+            const map: Record<string, Buckets> = {};
+            results.forEach(r => { map[r.rid] = r.data; });
+            setCrossData(map);
+        }).catch(() => {}).finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeRuns.join(',')]);
+
+    const chartRows: ChartRow[] = useMemo(() => {
+        if (!crossData || !selectedBucket) return [];
+        return activeRuns.map((rid: string) => {
+            const rl = runLabels[rid];
+            const rt: RunType = rl?.type ?? 'no_ddos';
+            const bucketData = (crossData[rid]?.[selectedType] || {})[selectedBucket] || [];
+            const hs = bucketData.map(s => s.handshake_ms).filter((v): v is number => v != null);
+            const pw = bucketData.map(s => s.power_w).filter((v): v is number => v != null);
+            const en = bucketData.map(s => s.energy_j).filter((v): v is number => v != null);
+            return {
+                run_type: rt,
+                label: rl?.label || rid,
+                count: bucketData.length,
+                avgHs: hs.length ? hs.reduce((a, b) => a + b, 0) / hs.length : 0,
+                avgPw: pw.length ? pw.reduce((a, b) => a + b, 0) / pw.length : 0,
+                avgEn: en.length ? en.reduce((a, b) => a + b, 0) / en.length : 0,
+            };
+        });
+    }, [crossData, selectedType, selectedBucket, activeRuns, runLabels]);
+
+    if (activeRuns.length < 2) return null;
+    if (loading) return <div className="card text-gray-400 text-sm">Loading cross-run comparison…</div>;
+    if (!crossData || chartRows.length === 0) return null;
+
+    const barData = [
+        { metric: 'Handshake (ms)', ...Object.fromEntries(chartRows.map((r: ChartRow) => [r.run_type, +r.avgHs.toFixed(2)])) },
+        { metric: 'Power (W)', ...Object.fromEntries(chartRows.map((r: ChartRow) => [r.run_type, +r.avgPw.toFixed(3)])) },
+        { metric: 'Energy (J)', ...Object.fromEntries(chartRows.map((r: ChartRow) => [r.run_type, +r.avgEn.toFixed(2)])) },
+    ];
+
+    const runTypes: RunType[] = chartRows.map((r: ChartRow) => r.run_type);
+
+    return (
+        <div className="card border border-purple-500/30">
+            <h3 className="text-lg font-semibold text-purple-300 mb-2">
+                🔄 Cross-Run Comparison — {selectedBucket}
+            </h3>
+            <p className="text-xs text-gray-400 mb-4">
+                Same bucket ({BUCKET_LABELS[selectedType]}: {selectedBucket}) compared across {chartRows.length} scenario runs.
+            </p>
+            <div className="grid grid-cols-3 gap-4 mb-4">
+                {chartRows.map((r: ChartRow) => (
+                    <div key={r.run_type} className="p-3 rounded-lg border"
+                        style={{ borderColor: RUN_TYPE_COLORS[r.run_type] + '44' }}>
+                        <div className="flex items-center gap-2 mb-2">
+                            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: RUN_TYPE_COLORS[r.run_type] }} />
+                            <span className="text-white text-sm font-medium">{r.label}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1 text-xs">
+                            <span className="text-gray-400">Avg HS:</span><span className="font-mono text-white">{r.avgHs.toFixed(2)} ms</span>
+                            <span className="text-gray-400">Avg Power:</span><span className="font-mono text-white">{r.avgPw.toFixed(3)} W</span>
+                            <span className="text-gray-400">Avg Energy:</span><span className="font-mono text-white">{r.avgEn.toFixed(2)} J</span>
+                            <span className="text-gray-400">Suites:</span><span className="font-mono text-white">{r.count}</span>
+                        </div>
+                    </div>
+                ))}
+            </div>
+            <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={barData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis dataKey="metric" tick={{ fill: '#d1d5db', fontSize: 11 }} />
+                    <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} />
+                    <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    {runTypes.map((rt: RunType) => (
+                        <Bar key={rt} dataKey={rt} fill={RUN_TYPE_COLORS[rt]}
+                            name={RUN_TYPE_LABELS[rt]} radius={[2, 2, 0, 0]} />
+                    ))}
+                </BarChart>
+            </ResponsiveContainer>
         </div>
     );
 }

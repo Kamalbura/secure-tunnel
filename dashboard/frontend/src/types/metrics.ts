@@ -538,3 +538,72 @@ export const RUN_TYPE_LABELS: Record<RunType, string> = {
     ddos_xgboost: 'DDoS – XGBoost',
     ddos_txt: 'DDoS – TXT',
 };
+
+// =============================================================================
+// CROSS-RUN ANALYSIS TYPES
+// =============================================================================
+
+export interface CrossRunSuiteMetrics {
+    handshake_ms: number | null;
+    protocol_hs_ms: number | null;
+    e2e_hs_ms: number | null;
+    handshake_success: boolean | null;
+    kem_keygen_ms: number | null;
+    kem_encaps_ms: number | null;
+    kem_decaps_ms: number | null;
+    sig_sign_ms: number | null;
+    sig_verify_ms: number | null;
+    total_crypto_ms: number | null;
+    cpu_avg_pct: number | null;
+    cpu_peak_pct: number | null;
+    memory_mb: number | null;
+    temperature_c: number | null;
+    load_avg_1m: number | null;
+    power_avg_w: number | null;
+    power_peak_w: number | null;
+    energy_j: number | null;
+    energy_per_hs_j: number | null;
+    voltage_v: number | null;
+    current_a: number | null;
+    goodput_mbps: number | null;
+    packet_loss: number | null;
+    packets_sent: number | null;
+    packets_dropped: number | null;
+    drop_replay: number | null;
+    drop_auth: number | null;
+    rtt_avg_ms: number | null;
+    rtt_p95_ms: number | null;
+    jitter_avg_ms: number | null;
+    owl_avg_ms: number | null;
+    mavlink_crc_errors: number | null;
+    mavlink_decode_errors: number | null;
+    mavlink_ooo: number | null;
+    mavlink_duplicates: number | null;
+    benchmark_pass: string | null;
+    fc_battery_v: number | null;
+    fc_battery_pct: number | null;
+}
+
+export interface CrossRunSuiteEntry {
+    suite_id: string;
+    kem: string | null;
+    sig: string | null;
+    aead: string | null;
+    nist: string | null;
+    kem_family: string | null;
+    sig_family: string | null;
+    runs: Partial<Record<RunType, CrossRunSuiteMetrics>>;
+}
+
+export interface OverheadMetricDetail {
+    baseline_avg: number | null;
+    target_avg: number | null;
+    delta_pct: number | null;
+    delta_abs: number | null;
+}
+
+export interface CrossRunAnalysisResponse {
+    suites: CrossRunSuiteEntry[];
+    runs: Array<{ run_id: string; label: string; run_type: RunType }>;
+    overhead: Partial<Record<RunType, Record<string, OverheadMetricDetail>>>;
+}

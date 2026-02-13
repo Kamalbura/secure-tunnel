@@ -18,6 +18,7 @@ import Settings from './pages/Settings';
 import MultiRunComparison from './pages/MultiRunComparison';
 import SecurityImpact from './pages/SecurityImpact';
 import LatencyAnalysis from './pages/LatencyAnalysis';
+import CrossRunAnalysis from './pages/CrossRunAnalysis';
 
 // Navigation groups
 const NAV_GROUPS = [
@@ -34,6 +35,7 @@ const NAV_GROUPS = [
             { path: '/buckets', label: 'Bucket Comparison', icon: '🪣' },
             { path: '/compare', label: 'Suite Comparison', icon: '⚖️' },
             { path: '/multi-run', label: 'Multi-Run Compare', icon: '🔀' },
+            { path: '/cross-run', label: 'Cross-Run Analysis', icon: '🔬' },
         ],
     },
     {
@@ -215,6 +217,7 @@ function App() {
                                 <Route path="/buckets" element={<BucketComparison />} />
                                 <Route path="/compare" element={<ComparisonView />} />
                                 <Route path="/multi-run" element={<MultiRunComparison />} />
+                                <Route path="/cross-run" element={<CrossRunAnalysis />} />
                                 <Route path="/power" element={<PowerAnalysis />} />
                                 <Route path="/latency" element={<LatencyAnalysis />} />
                                 <Route path="/security" element={<SecurityImpact />} />

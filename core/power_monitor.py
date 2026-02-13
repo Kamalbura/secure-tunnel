@@ -554,11 +554,13 @@ class Rpi5PowerMonitor:
                 if any(hint in name_value for hint in hints):
                     return entry
             else:
+                # Match RPi5 PMIC or actual power monitors, but NOT rpi_volt
+                # (RPi4 voltage-brownout detector with no power measurement).
+                if "pmic" in name_value:
+                    return entry
                 if "rpi" in name_value and (
                     "power" in name_value
-                    or "pmic" in name_value
                     or "monitor" in name_value
-                    or "volt" in name_value
                 ):
                     return entry
 

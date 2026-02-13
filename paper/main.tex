@@ -107,11 +107,12 @@ SPHINCS\textsuperscript{+}), and three AEADs (AES-256-GCM,
 ChaCha20-Poly1305, Ascon-128a) across NIST security levels~1, 3,
 and~5.
 
-We benchmark every cryptographic primitive in isolation
-(\num{19600}~timed operations) and validate 71 of 72~suites through
+We benchmark every cipher suite through complete live tunnel
+sessions---216~end-to-end runs across three traffic scenarios---and
+validate 71 of 72~suites through
 complete end-to-end tunnel runs on real hardware.  KEM keygen times
-span \emph{four orders of magnitude}---from \SI{0.08}{\milli\second}
-(ML-KEM-512) to \SI{8835}{\milli\second} (Classic~McEliece-8192128)
+span \emph{three orders of magnitude}---from \SI{0.20}{\milli\second}
+(ML-KEM-1024) to \SI{378}{\milli\second} (Classic~McEliece-8192128)
 ---demonstrating that algorithm-family selection, not parameter
 tuning, is the decisive factor for UAV deployability.
 
@@ -120,8 +121,8 @@ telemetry-aware adaptive rekey policy that consumes battery voltage,
 SoC temperature, link quality, and armed state to select, switch, and
 gracefully degrade cipher suites during flight.  We identify three
 Pareto-optimal suites and show that ML-KEM-based tunnels achieve a
-rekey overhead below 0.03\% at 60-second intervals, while
-Classic~McEliece tunnels incur up to 0.85\% overhead---a 29$\times$
+rekey overhead below 0.022\% at 60-second intervals, while
+Classic~McEliece tunnels incur up to 0.84\% overhead---a 39$\times$
 difference that makes runtime suite management essential.
 
 \end{abstract}
@@ -166,8 +167,8 @@ challenges absent from server-side TLS:
 \begin{enumerate}
   \item \textbf{Extreme performance heterogeneity.}
     Across the nine KEM algorithms in our registry, keygen times span
-    from \SI{0.08}{\milli\second} to \SI{8835}{\milli\second}---a
-    ratio exceeding $10^5$.  Choosing the wrong algorithm can cause
+    from \SI{0.20}{\milli\second} to \SI{378}{\milli\second}---a
+    ratio exceeding $10^3$.  Choosing the wrong algorithm can cause
     multi-second link blackouts during which no telemetry flows.
 
   \item \textbf{Resource constraints.}
@@ -198,8 +199,9 @@ We make five contributions:
     distinct KEM families (lattice, code-based, quasi-cyclic code)
     and three signature families (\Cref{sec:system}).
 
-  \item We benchmark \textbf{\num{19600} cryptographic operations}
-    and \textbf{71 end-to-end tunnel handshakes} on a Raspberry~Pi~5,
+  \item We benchmark \textbf{216 live tunnel sessions}
+    (72~suites~$\times$~3~traffic scenarios) and
+    \textbf{71 end-to-end tunnel handshakes} on a Raspberry~Pi~5,
     providing the most comprehensive PQC benchmark dataset for
     ARM~Cortex-A76 drone platforms to date (\Cref{sec:eval}).
 
@@ -845,8 +847,8 @@ $\xrightarrow{\text{stress}}$
 ML-KEM-1024 (L5)
 \end{center}
 
-This reduces handshake time by \textbf{98$\times$} (from
-\SI{1444}{\milli\second} to \SI{15}{\milli\second}) and public-key
+This reduces median handshake time by \textbf{40$\times$} (from
+\SI{678}{\milli\second} to \SI{16.8}{\milli\second}) and public-key
 size by \textbf{867$\times$} (from \SI{1.36}{\mega\byte} to
 \SI{1568}{\byte}) \emph{with no reduction in NIST security level}.
 
@@ -879,9 +881,13 @@ Network & \multicolumn{2}{c}{Ethernet LAN (sub-ms RTT)} \\
 \end{tabular}
 \end{table}
 
-Each cryptographic primitive was benchmarked with $n = 200$ iterations
-(\num{19600}~total operations across 9~KEMs~$\times$~3~ops, 8~SIGs
-~$\times$~3~ops, 3~AEADs~$\times$~2~ops~$\times$~4~payload sizes).
+Each cipher suite was benchmarked through a \emph{live tunnel
+session}: the full handshake (KEM keygen/encaps/decaps,
+SIG sign/verify) and 30~seconds of AEAD-encrypted MAVLink traffic
+were executed end-to-end over the network.  All 72~suites
+(9~KEMs~$\times$~8~SIGs) were tested with each of 3~AEADs and under
+three traffic scenarios (baseline, XGBoost DDoS, text DDoS),
+yielding 216~complete tunnel runs.
 Power was sampled continuously via the INA219 at \SI{1100}{\hertz};
 energy was integrated using the trapezoidal rule:
 $E = \sum_i \tfrac{P_i + P_{i+1}}{2} \Delta t_i$.
@@ -894,24 +900,24 @@ $E = \sum_i \tfrac{P_i + P_{i+1}}{2} \Delta t_i$.
 
 \begin{table}[t]
 \centering
-\caption{KEM operation times on Raspberry Pi 5 (ms, $n\!=\!200$)}
+\caption{KEM operation times on Raspberry Pi 5 (ms, live tunnel)}
 \label{tab:kem-bench}
 \footnotesize
 \begin{tabular}{@{}l r r r r@{}}
 \toprule
 \textbf{Algorithm} & \textbf{Keygen} & \textbf{Encaps} & \textbf{Decaps} & \textbf{PK (B)} \\
 \midrule
-ML-KEM-512 (L1)       & 0.08  & 0.06  & 0.07  & 800 \\
-ML-KEM-768 (L3)       & 0.11  & 0.09  & 0.10  & \num{1184} \\
-ML-KEM-1024 (L5)      & 0.14  & 0.12  & 0.14  & \num{1568} \\
+ML-KEM-512 (L1)       & 0.25  & 0.27  & 0.14  & 800 \\
+ML-KEM-768 (L3)       & 0.30  & 0.32  & 0.13  & \num{1184} \\
+ML-KEM-1024 (L5)      & 0.20  & 0.30  & 0.16  & \num{1568} \\
 \midrule
-HQC-128 (L1)          & 22.1  & 44.7  & 73.0  & \num{2249} \\
-HQC-192 (L3)          & 67.4  & 135.4 & 211.2 & \num{4522} \\
-HQC-256 (L5)          & 123.6 & 248.8 & 392.3 & \num{7245} \\
+HQC-128 (L1)          & 2.77  & 44.9  & 5.42  & \num{2249} \\
+HQC-192 (L3)          & 4.67  & 136.4 & 15.5  & \num{4522} \\
+HQC-256 (L5)          & 8.00  & 249.8 & 25.3  & \num{7245} \\
 \midrule
-McEliece-348864 (L1)  & 333   & 0.27  & 55.4  & \num{261120} \\
-McEliece-460896 (L3)  & \num{1115} & 0.64 & 89.4 & \num{524160} \\
-McEliece-8192128 (L5) & \textbf{\num{8835}} & 1.99 & 209 & \textbf{\num{1357824}} \\
+McEliece-348864 (L1)  & 134   & 0.72  & 18.7  & \num{261120} \\
+McEliece-460896 (L3)  & 180   & 1.40  & 57.7  & \num{524160} \\
+McEliece-8192128 (L5) & \textbf{378}  & 3.17  & 140   & \textbf{\num{1357824}} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -921,54 +927,62 @@ McEliece-8192128 (L5) & \textbf{\num{8835}} & 1.99 & 209 & \textbf{\num{1357824}
   \includegraphics[width=\columnwidth]{figures/kem_keygen_boxplot.pdf}
   \caption{KEM keygen time distribution (log scale).  ML-KEM
     algorithms complete in sub-millisecond time, while
-    Classic~McEliece-8192128 keygen takes up to \SI{36.6}{\second}
-    (worst case), spanning over four orders of magnitude.}
+    Classic~McEliece-8192128 keygen takes up to \SI{378}{\milli\second}
+    (median), spanning over three orders of magnitude.}
   \label{fig:kem-keygen}
 \end{figure}
 
 \noindent\textbf{Key finding 1:}
-ML-KEM operations complete in $< \SI{0.15}{\milli\second}$ (medians:
-\SI{0.08}{\milli\second}--\SI{0.14}{\milli\second}), three orders of
-magnitude faster than HQC (\SI{22}{\milli\second}--\SI{392}{\milli\second})
-and five orders faster than McEliece keygen
-(\SI{333}{\milli\second}--\SI{8835}{\milli\second}).
+ML-KEM operations complete in $< \SI{0.30}{\milli\second}$ (medians:
+\SI{0.20}{\milli\second}--\SI{0.30}{\milli\second}), two orders of
+magnitude faster than HQC keygen (\SI{2.8}{\milli\second}--\SI{8.0}{\milli\second})
+and three orders faster than McEliece keygen
+(\SI{134}{\milli\second}--\SI{378}{\milli\second}).  HQC decapsulation
+(\SI{5.4}{\milli\second}--\SI{25.3}{\milli\second}) and McEliece
+decapsulation (\SI{18.7}{\milli\second}--\SI{140}{\milli\second})
+are the true contributors to handshake latency.
 
 \noindent\textbf{Key finding 2:}
-McEliece keygen exhibits extreme variance: the standard deviation for
-McEliece-8192128 is \SI{857}{\milli\second}---reflecting the
-high variance of probabilistic key generation.  This unpredictability
-makes it especially unsuitable for time-bounded rekey operations.
+McEliece keygen is measured on the GCS side (which generates the
+ephemeral KEM key pair), while the drone performs encapsulation.
+The keygen times exhibit moderate variance; however, the combined
+weight of McEliece keygen plus decapsulation
+(\SI{134}{\milli\second} + \SI{18.7}{\milli\second} for
+McEliece-348864, up to
+\SI{378}{\milli\second} + \SI{140}{\milli\second} for
+McEliece-8192128) still makes McEliece the slowest KEM family
+by a wide margin.
 
 % --------------------------------------------------------------------
 \subsection{Signature Primitive Performance}
 
 \begin{table}[t]
 \centering
-\caption{SIG operation times on Raspberry Pi 5 (ms, $n\!=\!200$)}
+\caption{SIG operation times on Raspberry Pi 5 (ms, live tunnel)}
 \label{tab:sig-bench}
 \footnotesize
-\begin{tabular}{@{}l r r r r@{}}
+\begin{tabular}{@{}l r r r@{}}
 \toprule
-\textbf{Algorithm} & \textbf{Keygen} & \textbf{Sign} & \textbf{Verify} & \textbf{Sig (B)} \\
+\textbf{Algorithm} & \textbf{Sign} & \textbf{Verify} & \textbf{Sig (B)} \\
 \midrule
-Falcon-512 (L1)       & 18.9  & 0.65  & 0.11  & 655 \\
-Falcon-1024 (L5)      & 51.0  & 1.31  & 0.20  & \num{1273} \\
+Falcon-512 (L1)       & 0.62  & 0.60  & 654 \\
+Falcon-1024 (L5)      & 0.79  & 0.71  & \num{1271} \\
 \midrule
-ML-DSA-44 (L1)        & 0.26  & 1.03  & 0.25  & \num{2420} \\
-ML-DSA-65 (L3)        & 0.42  & 1.59  & 0.38  & \num{3293} \\
-ML-DSA-87 (L5)        & 0.61  & 1.77  & 0.61  & \num{4595} \\
+ML-DSA-44 (L1)        & 0.54  & 0.76  & \num{2420} \\
+ML-DSA-65 (L3)        & 0.74  & 0.88  & \num{3309} \\
+ML-DSA-87 (L5)        & 1.38  & 1.17  & \num{4627} \\
 \midrule
-SPHINCS\textsuperscript{+}-128s (L1) & 193  & \textbf{\num{1461}} & 1.49 & \num{7856} \\
-SPHINCS\textsuperscript{+}-192s (L3) & 281  & \textbf{\num{2611}} & 2.20 & \num{16224} \\
-SPHINCS\textsuperscript{+}-256s (L5) & 186  & \textbf{\num{2308}} & 3.12 & \num{29792} \\
+SPHINCS\textsuperscript{+}-128s (L1) & \textbf{642}  & 1.98 & \num{7856} \\
+SPHINCS\textsuperscript{+}-192s (L3) & \textbf{\num{1342}} & 2.80 & \num{16224} \\
+SPHINCS\textsuperscript{+}-256s (L5) & \textbf{\num{1136}} & 3.83 & \num{29792} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 For signature operations, Falcon provides the fastest sign/verify
-combination (\SI{0.65}{\milli\second}/\SI{0.11}{\milli\second} for
+combination (\SI{0.62}{\milli\second}/\SI{0.60}{\milli\second} for
 Falcon-512), followed by ML-DSA.
-SPHINCS\textsuperscript{+} signing exceeds \SI{1}{\second} at all
+SPHINCS\textsuperscript{+} signing exceeds \SI{640}{\milli\second} at all
 levels, dominating the handshake time for any suite that includes it.
 Since SIG keygen is performed offline (pre-distributed keys), only
 sign and verify contribute to handshake latency.
@@ -988,33 +1002,35 @@ sign and verify contribute to handshake latency.
 
 \begin{table}[t]
 \centering
-\caption{AEAD performance for 64-byte MAVLink payloads (median, $n\!=\!200$)}
+\caption{AEAD per-packet performance in live tunnel (median)}
 \label{tab:aead-bench}
 \footnotesize
 \begin{tabular}{@{}l r r r@{}}
 \toprule
 \textbf{Algorithm} & \textbf{Encrypt} & \textbf{Decrypt} & \textbf{Rel.} \\
 \midrule
-AES-256-GCM       & \SI{7.3}{\micro\second}  & \SI{7.7}{\micro\second}  & 1.00$\times$ \\
-ChaCha20-Poly1305 & \SI{6.7}{\micro\second}  & \SI{7.1}{\micro\second}  & 0.93$\times$ \\
-Ascon-128a         & \SI{4.1}{\micro\second}  & \SI{4.2}{\micro\second}  & \textbf{0.56}$\times$ \\
+AES-256-GCM       & \SI{228}{\micro\second}  & \SI{219}{\micro\second}  & 4.95$\times$ \\
+ChaCha20-Poly1305 & \SI{214}{\micro\second}  & \SI{206}{\micro\second}  & 4.63$\times$ \\
+Ascon-128a         & \SI{46}{\micro\second}   & \SI{60}{\micro\second}   & \textbf{1.00}$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Ascon-128a is 44\% faster than AES-256-GCM on the ARM~Cortex-A76,
-which lacks AES-NI but benefits from efficient bitsliced Ascon
-implementations.  At \SI{320}{\hertz} MAVLink rate, per-packet AEAD
-overhead is $< \SI{8}{\micro\second}$---negligible relative to the
-\SI{3.125}{\milli\second} inter-packet interval (0.25\% of packet
-budget).
+Ascon-128a is 4--5$\times$ faster than AES-256-GCM and
+ChaCha20-Poly1305 in the live tunnel, which includes full AEAD
+framing overhead (header construction, AAD binding, nonce
+reconstruction).  At \SI{320}{\hertz} MAVLink rate, the per-packet
+AEAD cost ranges from \SI{46}{\micro\second} (Ascon) to
+\SI{228}{\micro\second} (AES-256-GCM)---well below the
+\SI{3.125}{\milli\second} inter-packet interval.
 
 \noindent\textbf{Key finding 3:}
 AEAD algorithm choice has negligible impact on system performance.
 The maximum difference between algorithms is
-\SI{3.5}{\micro\second}/packet, translating to
-\SI{1.12}{\milli\second\per\second} at \SI{320}{\hertz}---invisible
-in practice.  The rekey decision should therefore be driven entirely
+\SI{182}{\micro\second}/packet, translating to
+\SI{58}{\milli\second\per\second} at \SI{320}{\hertz}---a
+0.006\% CPU overhead that is invisible in practice.
+The rekey decision should therefore be driven entirely
 by the KEM and SIG components.
 
 % --------------------------------------------------------------------
@@ -1037,9 +1053,9 @@ signing.
 \textbf{Level} & $n$ & \textbf{Mean} & \textbf{Median} & \textbf{P95} & \textbf{Max} \\
  & & \textbf{(ms)} & \textbf{(ms)} & \textbf{(ms)} & \textbf{(ms)} \\
 \midrule
-L1 & 27 & 290   & 123    & 835   & 891 \\
-L3 & 17 & 749 & 416 & \num{1583}  & \num{1583} \\
-L5 & 27 & 855 & 870 & \num{2364} & \num{3273} \\
+L1 & 27 & 320   & 176    & 910   & \num{1080} \\
+L3 & 18 & \num{3444} & 907 & \num{8963}  & \num{48186} \\
+L5 & 27 & 702 & 507 & \num{2008} & \num{2269} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1055,10 +1071,12 @@ L5 & 27 & 855 & 870 & \num{2364} & \num{3273} \\
 \end{figure}
 
 \noindent\textbf{Key finding 4:}
-The mean handshake time increases 2.9$\times$ from L1 to L5, but
-this is dominated by the McEliece and SPHINCS\textsuperscript{+}
-components.  ML-KEM suites (without SPHINCS\textsuperscript{+}) at
-all three levels complete in $< \SI{22}{\milli\second}$.
+The mean handshake time increases from L1 (\SI{320}{\milli\second})
+to L5 (\SI{702}{\milli\second}), but L3 shows the highest mean
+(\SI{3444}{\milli\second}) due to a single McEliece-460896 +
+SPHINCS\textsuperscript{+}-192s outlier that took \SI{48.2}{\second}.
+ML-KEM suites (without SPHINCS\textsuperscript{+}) at
+all three levels complete in $< \SI{19}{\milli\second}$.
 
 \noindent\textbf{Regression model} (from 71 end-to-end measurements):
 \begin{equation}
@@ -1085,9 +1103,9 @@ handshake latency:
 \toprule
 \textbf{Suite (KEM + SIG)} & \textbf{NIST} & $\Ths$ \textbf{(ms)} & \textbf{PK (B)} \\
 \midrule
-ML-KEM-512 + Falcon-512    & L1 & 9.1  & 800 \\
-ML-KEM-768 + ML-DSA-65     & L3 & 17.7  & \num{1184} \\
-ML-KEM-1024 + Falcon-1024  & L5 & 10.1  & \num{1568} \\
+ML-KEM-512 + Falcon-512    & L1 & 12.8  & 800 \\
+ML-KEM-768 + ML-DSA-65     & L3 & 12.7  & \num{1184} \\
+ML-KEM-1024 + Falcon-1024  & L5 & 8.8   & \num{1568} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1095,7 +1113,7 @@ ML-KEM-1024 + Falcon-1024  & L5 & 10.1  & \num{1568} \\
 All three Pareto-optimal suites use ML-KEM.  No HQC or McEliece
 suite appears on the frontier because their KEM operations dominate
 the handshake time by orders of magnitude.  Within ML-KEM, the
-handshake is so fast (9--22\,ms) that the SIG choice (Falcon vs.\ ML-DSA)
+handshake is so fast (9--19\,ms) that the SIG choice (Falcon vs.\ ML-DSA)
 becomes the differentiator.
 
 % --------------------------------------------------------------------
@@ -1117,18 +1135,18 @@ the tunnel is unavailable due to rekeying at interval~$R$:
 \toprule
 \textbf{Suite (KEM)} & $\Ths$ & $R$=60\,s & $R$=300\,s & $R$=3600\,s \\
 \midrule
-ML-KEM-768       & \SI{17.7}{\milli\second}  & 0.029\% & 0.006\% & ${<}0.001\%$ \\
+ML-KEM-768       & \SI{12.7}{\milli\second}  & 0.021\% & 0.004\% & ${<}0.001\%$ \\
 HQC-256          & \SI{272}{\milli\second}   & 0.45\%  & 0.091\% & 0.008\% \\
-McE-348864       & \SI{120}{\milli\second}  & 0.20\%  & 0.040\% & 0.003\% \\
-McE-8192128      & \SI{517}{\milli\second}        & \textbf{0.85\%} & \textbf{0.17\%} & 0.014\% \\
+McE-348864       & \SI{206}{\milli\second}  & 0.34\%  & 0.069\% & 0.006\% \\
+McE-8192128      & \SI{505}{\milli\second}        & \textbf{0.84\%} & \textbf{0.17\%} & 0.014\% \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \noindent\textbf{Key finding 5:}
 At a 60-second rekey interval, ML-KEM has negligible overhead
-($\PhiR < 0.03\%$), while McEliece-8192128 consumes 0.85\% of the
-cycle in handshake---a \textbf{29$\times$} difference.  Combined with
+($\PhiR < 0.022\%$), while McEliece-8192128 consumes 0.84\% of the
+cycle in handshake---a \textbf{39$\times$} difference.  Combined with
 SPHINCS\textsuperscript{+} signatures, heavy suites can exceed
 multi-second handshakes, making runtime cipher-suite management not a
 luxury but a \emph{necessity}: operating the heaviest suites with
@@ -1157,11 +1175,9 @@ aggressive rekey intervals would degrade MAVLink availability.
 \textbf{Metric} & \textbf{ML-KEM suite} & \textbf{McEliece suite} \\
 \midrule
 MAVLink rx rate     & \SI{320.3}{\hertz} & \SI{320.3}{\hertz} \\
-Drone CPU (avg)     & 25.0\%             & 24.8\% \\
-Drone CPU (peak)    & 45.7\%             & 41.1\% \\
-SoC temperature     & \SI{63.8}{\degreeCelsius} & \SI{62.8}{\degreeCelsius} \\
-Power (avg)         & \SI{3.990}{\watt}  & \SI{3.974}{\watt} \\
-Power (peak)        & \SI{5.102}{\watt}  & \SI{4.712}{\watt} \\
+Drone CPU (avg)     & 14.7\%             & 15.5\% \\
+Drone CPU (peak)    & 36.5\%             & 39.6\% \\
+SoC temperature     & \SI{60.4}{\degreeCelsius} & \SI{61.8}{\degreeCelsius} \\
 Packet loss         & 0.0\%              & 0.0\% \\
 \bottomrule
 \end{tabular}
@@ -1180,9 +1196,9 @@ on handshake cost as the sole discriminating factor.
 
 For a 30-minute flight (\SI{7182}{\joule} total at
 \SI{3.99}{\watt}), ML-KEM rekeys at $R = \SI{60}{\second}$
-(30~rekeys) consume \SI{2.1}{\joule}---\textbf{0.03\%} of the
+(30~rekeys) consume \SI{1.5}{\joule}---\textbf{0.021\%} of the
 flight energy budget.  McEliece-8192128 rekeys consume
-\SI{62}{\joule}---\textbf{0.86\%}.  The 29$\times$ difference
+\SI{60}{\joule}---\textbf{0.84\%}.  The 40$\times$ difference
 confirms ML-KEM as the most energetically viable option for frequent
 rekeying on battery-powered platforms.
 
@@ -1198,11 +1214,11 @@ rekeying on battery-powered platforms.
 Our most striking finding is that the choice of KEM
 \emph{family}---not the parameter set or NIST level within a
 family---determines whether a cipher suite is deployable on a drone.
-ML-KEM-1024 (L5) completes a handshake in \SI{15}{\milli\second};
+ML-KEM-1024 (L5) completes a median handshake in \SI{16.8}{\milli\second};
 McEliece-348864 (L1, a \emph{lower} security level) takes
-\SI{120}{\milli\second}---11$\times$ longer.  Parameter tuning within
+\SI{276}{\milli\second}---16$\times$ longer.  Parameter tuning within
 ML-KEM yields at most 2$\times$ improvement; switching from
-McEliece to ML-KEM at the same level yields 98$\times$.
+McEliece to ML-KEM at the same level yields 40$\times$.
 
 \noindent\textbf{Cross-family degradation is free.}\enspace
 The policy's most powerful degradation step replaces McEliece with
@@ -1213,11 +1229,11 @@ diversity---both rely on lattice assumptions---which is an acceptable
 trade-off under operational stress.
 
 \noindent\textbf{AEAD is a non-factor.}\enspace
-The maximum AEAD timing difference is \SI{3.5}{\micro\second}/packet.
-At \SI{320}{\hertz}, this is \SI{1.12}{\milli\second\per\second}
----below measurement noise.  AEAD selection should be driven by
-implementation availability and side-channel resistance, not
-performance.
+The maximum AEAD timing difference is \SI{182}{\micro\second}/packet.
+At \SI{320}{\hertz}, this is \SI{58}{\milli\second\per\second}
+---well below the handshake-time differences that dominate suite
+selection.  AEAD selection should be driven by implementation
+availability and side-channel resistance, not performance.
 
 \subsection{Recommendations for Deployment}
 
@@ -1226,20 +1242,20 @@ Based on our evaluation, we recommend:
 \begin{enumerate}
   \item \textbf{Default suite:} ML-KEM-768 + ML-DSA-65 + AES-256-GCM
     (NIST L3).  Balances security and performance; handshake completes
-    in $< \SI{22}{\milli\second}$.
+    in $< \SI{19}{\milli\second}$.
 
   \item \textbf{Degradation target:} ML-KEM-512 + Falcon-512 +
     AES-256-GCM (NIST L1).  Lightest viable suite for stress
     conditions.
 
   \item \textbf{Rekey interval:} $R = \SI{60}{\second}$ for ML-KEM
-    suites ($\PhiR < 0.03\%$).  Increase to $R \geq \SI{300}{\second}$
+    suites ($\PhiR < 0.022\%$).  Increase to $R \geq \SI{300}{\second}$
     for HQC; avoid periodic rekey entirely for McEliece.
 
   \item \textbf{Avoid in flight:} SPHINCS\textsuperscript{+} (signing
-    $> \SI{1}{\second}$) and McEliece-8192128 (keygen
-    $> \SI{8}{\second}$).  Keep in registry for ground testing and
-    algorithm-diversity auditing.
+    $> \SI{640}{\milli\second}$) and McEliece-8192128 (keygen
+    $\approx \SI{378}{\milli\second}$).  Keep in registry for ground
+    testing and algorithm-diversity auditing.
 \end{enumerate}
 
 \subsection{Limitations}
@@ -1317,14 +1333,14 @@ cipher-suite management based on real-time telemetry.
 \label{sec:conclusion}
 
 We presented \sysname, a complete post-quantum cryptographic tunnel
-for UAV--GCS communication, backed by \num{19600}~benchmarked
-cryptographic operations and 71~successful end-to-end tunnel runs on
-a Raspberry~Pi~5.
+for UAV--GCS communication, backed by 216~live tunnel sessions
+(72~cipher suites~$\times$~3~traffic scenarios) and
+71~successful end-to-end handshakes on a Raspberry~Pi~5.
 
 Our evaluation reveals that the PQC landscape for constrained
 platforms is starkly divided: ML-KEM suites achieve
-sub-\SI{22}{\milli\second} handshakes (excluding SPHINCS\textsuperscript{+})
-with negligible rekey overhead ($\PhiR < 0.03\%$), while McEliece
+sub-\SI{19}{\milli\second} handshakes (excluding SPHINCS\textsuperscript{+})
+with negligible rekey overhead ($\PhiR < 0.022\%$), while McEliece
 and HQC suites incur multi-hundred-millisecond handshakes that
 escalate to multi-second latencies when paired with
 SPHINCS\textsuperscript{+} signatures.  This spread across algorithm

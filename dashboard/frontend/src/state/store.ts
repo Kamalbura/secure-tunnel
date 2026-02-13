@@ -16,6 +16,7 @@ import type {
     AnomalyItem,
     AnomalyThresholds,
     RunType,
+    CrossRunAnalysisResponse,
 } from '../types/metrics';
 
 // =============================================================================
@@ -62,6 +63,7 @@ interface DashboardState {
     multiRunCompare: MultiRunCompareResult | null;
     anomalies: AnomalyItem[];
     buckets: Record<string, unknown> | null;
+    crossRunAnalysis: CrossRunAnalysisResponse | null;
 
     // UI State
     isLoading: boolean;
@@ -92,6 +94,7 @@ interface DashboardState {
     fetchMultiRunCompare: (suiteId: string) => Promise<void>;
     fetchAnomalies: (runId?: string) => Promise<void>;
     fetchBuckets: (runId?: string) => Promise<void>;
+    fetchCrossRunAnalysis: () => Promise<void>;
     setFilter: (key: keyof Pick<DashboardState, 'selectedKemFamily' | 'selectedSigFamily' | 'selectedAead' | 'selectedNistLevel' | 'selectedRunId'>, value: string | null) => void;
     clearFilters: () => void;
     setBaseline: (suiteKey: string | null) => void;
@@ -118,6 +121,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     multiRunCompare: null,
     anomalies: [],
     buckets: null,
+    crossRunAnalysis: null,
 
     // Initial UI State
     isLoading: false,
@@ -282,6 +286,16 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
             set({ buckets: data });
         } catch (err) {
             console.error('Failed to fetch buckets:', err);
+        }
+    },
+
+    fetchCrossRunAnalysis: async () => {
+        set({ isLoading: true, error: null });
+        try {
+            const data = await fetchJson<CrossRunAnalysisResponse>(`${API_BASE}/multi-run/all-suites-compare`);
+            set({ crossRunAnalysis: data, isLoading: false });
+        } catch (err) {
+            set({ error: err instanceof Error ? err.message : 'Failed to fetch cross-run analysis', isLoading: false });
         }
     },
 

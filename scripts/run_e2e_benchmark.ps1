@@ -34,7 +34,8 @@ param(
     [switch]$SkipXgb,
     [switch]$SkipTst,
     [string]$DroneSsh = "dev@100.101.93.23",
-    [string]$CondaEnv = "oqs-dev"
+    [string]$CondaEnv = "oqs-dev",
+    [string]$RunTag = $(Get-Date -Format "yyyyMMdd")
 )
 
 $ErrorActionPreference = 'Continue'
@@ -43,15 +44,15 @@ $ErrorActionPreference = 'Continue'
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $RepoRoot
 
-$RunsDir = Join-Path $RepoRoot "logs\benchmarks\runs"
-$DateTag = Get-Date -Format "yyyyMMdd"
+$DateTag = $RunTag
+$RunsDir = Join-Path $RepoRoot "logs\benchmarks\runs\$DateTag"
 $Scenarios = @("no-ddos", "ddos-xgboost", "ddos-txt")
 
 # Detector paths on the Pi
 $XgbDetector = "~/secure-tunnel/ddos/xgb_old.py"
 $TstDetector = "~/secure-tunnel/ddos/tst_old.py"
 $DetectorPython = "/home/dev/nenv/bin/python"
-$DronePython = "/home/dev/nenv/bin/python"
+$DronePython = "/home/dev/cenv/bin/python"
 $DroneRepo = "~/secure-tunnel"
 
 Write-Host ""
@@ -248,7 +249,8 @@ function Run-DroneBench([string]$OutputDir, [string]$Label) {
     Start-Sleep -Seconds 5
     
     # Verify it started
-    $dronePid = (ssh -o ConnectTimeout=10 $DroneSsh "pgrep -f 'sdrone_bench.*phase_${Label}' | head -1" 2>&1) | Out-String
+    # NOTE: avoid matching the polling command itself by filtering out pgrep lines.
+    $dronePid = (ssh -o ConnectTimeout=10 $DroneSsh "pgrep -af 'sscheduler.sdrone_bench.*--log-dir $remoteLogDir' | grep -v 'pgrep -af' | head -1 | cut -d' ' -f1" 2>&1) | Out-String
     $dronePid = $dronePid.Trim()
     if (!$dronePid -or $dronePid.Length -eq 0) {
         Write-Host "  ERROR: Drone benchmark failed to start" -ForegroundColor Red
@@ -266,7 +268,7 @@ function Run-DroneBench([string]$OutputDir, [string]$Label) {
         $elapsed += $pollInterval
         
         # Check if process still running
-        $running = (ssh -o ConnectTimeout=10 $DroneSsh "pgrep -f 'sdrone_bench.*phase_${Label}' | head -1" 2>&1) | Out-String
+        $running = (ssh -o ConnectTimeout=10 $DroneSsh "pgrep -af 'sscheduler.sdrone_bench.*--log-dir $remoteLogDir' | grep -v 'pgrep -af' | head -1 | cut -d' ' -f1" 2>&1) | Out-String
         $running = $running.Trim()
         
         # Show latest progress from log
@@ -288,7 +290,7 @@ function Run-DroneBench([string]$OutputDir, [string]$Label) {
     
     if ($elapsed -ge $maxWait) {
         Write-Host "  WARNING: Drone benchmark timed out after ${maxWait}s" -ForegroundColor Red
-        ssh -o ConnectTimeout=10 $DroneSsh "sudo pkill -f 'sdrone_bench.*phase_${Label}' 2>/dev/null" 2>&1 | Out-Null
+        ssh -o ConnectTimeout=10 $DroneSsh "sudo pkill -f 'sscheduler.sdrone_bench.*--log-dir $remoteLogDir' 2>/dev/null" 2>&1 | Out-Null
     }
     
     # Show final summary

@@ -10,7 +10,7 @@
 
 # ── Network Addresses ────────────────────────────────────────────────────────
 # LAN IP for data/control/telemetry planes (wlan0 or eth0)
-DRONE_HOST_LAN=192.168.0.100
+DRONE_HOST_LAN=192.168.0.103
 # Tailscale IP — SSH/Git maintenance ONLY (never for runtime traffic)
 DRONE_HOST_TAILSCALE=100.101.93.23
 

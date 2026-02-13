@@ -271,6 +271,140 @@ def detect_anomalies(run_id: Optional[str] = None):
     return {"anomalies": anomalies, "total": len(anomalies), "thresholds": thresholds}
 
 
+@app.get("/api/multi-run/all-suites-compare")
+def multi_run_all_suites_compare():
+    """
+    Compare ALL suites across all active runs.
+    Returns per-suite metrics for each run type, plus overhead calculations.
+    This powers the CrossRunAnalysis "understand everything" page.
+    """
+    ss = get_settings_store()
+    store = get_store()
+    active = ss.get_active_runs()
+    labels = ss.get_all().get("run_labels", {})
+    if not active:
+        active = [r.run_id for r in store.list_runs()]
+
+    # Build per-suite data
+    suite_map: Dict[str, dict] = {}
+
+    run_info_list = []
+    for run_id in active:
+        run_type = store.get_run_type(run_id)
+        label_info = labels.get(run_id, {})
+        rt = label_info.get("type", run_type)
+        run_label = label_info.get("label", run_id)
+        run_info_list.append({"run_id": run_id, "label": run_label, "run_type": rt})
+
+        for key, suite in store._suites.items():
+            if not key.startswith(run_id + ":"):
+                continue
+            sid = suite.run_context.suite_id
+            if sid not in suite_map:
+                suite_map[sid] = {
+                    "suite_id": sid,
+                    "kem": suite.crypto_identity.kem_algorithm,
+                    "sig": suite.crypto_identity.sig_algorithm,
+                    "aead": suite.crypto_identity.aead_algorithm,
+                    "nist": suite.crypto_identity.suite_security_level,
+                    "kem_family": suite.crypto_identity.kem_family,
+                    "sig_family": suite.crypto_identity.sig_family,
+                    "runs": {},
+                }
+            hs = suite.handshake
+            cp = suite.crypto_primitives
+            sd = suite.system_drone
+            pe = suite.power_energy
+            dp = suite.data_plane
+            lj = suite.latency_jitter
+            mi = suite.mavlink_integrity
+            fc = suite.fc_telemetry
+            suite_map[sid]["runs"][rt] = {
+                "handshake_ms": hs.handshake_total_duration_ms,
+                "protocol_hs_ms": hs.protocol_handshake_duration_ms,
+                "e2e_hs_ms": hs.end_to_end_handshake_duration_ms,
+                "handshake_success": hs.handshake_success,
+                "kem_keygen_ms": cp.kem_keygen_time_ms,
+                "kem_encaps_ms": cp.kem_encapsulation_time_ms,
+                "kem_decaps_ms": cp.kem_decapsulation_time_ms,
+                "sig_sign_ms": cp.signature_sign_time_ms,
+                "sig_verify_ms": cp.signature_verify_time_ms,
+                "total_crypto_ms": cp.total_crypto_time_ms,
+                "cpu_avg_pct": sd.cpu_usage_avg_percent,
+                "cpu_peak_pct": sd.cpu_usage_peak_percent,
+                "memory_mb": sd.memory_rss_mb,
+                "temperature_c": sd.temperature_c,
+                "load_avg_1m": sd.load_avg_1m,
+                "power_avg_w": pe.power_avg_w,
+                "power_peak_w": pe.power_peak_w,
+                "energy_j": pe.energy_total_j,
+                "energy_per_hs_j": pe.energy_per_handshake_j,
+                "voltage_v": pe.voltage_avg_v,
+                "current_a": pe.current_avg_a,
+                "goodput_mbps": dp.goodput_mbps,
+                "packet_loss": dp.packet_loss_ratio,
+                "packets_sent": dp.packets_sent,
+                "packets_dropped": dp.packets_dropped,
+                "drop_replay": dp.drop_replay,
+                "drop_auth": dp.drop_auth,
+                "rtt_avg_ms": lj.rtt_avg_ms,
+                "rtt_p95_ms": lj.rtt_p95_ms,
+                "jitter_avg_ms": lj.jitter_avg_ms,
+                "owl_avg_ms": lj.one_way_latency_avg_ms,
+                "mavlink_crc_errors": mi.mavlink_packet_crc_error_count,
+                "mavlink_decode_errors": mi.mavlink_decode_error_count,
+                "mavlink_ooo": mi.mavlink_out_of_order_count,
+                "mavlink_duplicates": mi.mavlink_duplicate_count,
+                "benchmark_pass": suite.validation.benchmark_pass_fail,
+                "fc_battery_v": fc.fc_battery_voltage_v,
+                "fc_battery_pct": fc.fc_battery_remaining_percent,
+            }
+
+    suites_list = sorted(suite_map.values(), key=lambda x: x["suite_id"])
+
+    # Compute overhead summary (ddos vs baseline)
+    def _avg(vals):
+        valid = [v for v in vals if v is not None]
+        return sum(valid) / len(valid) if valid else None
+
+    def _overhead_pct(baseline, target):
+        if baseline is None or target is None or baseline == 0:
+            return None
+        return round((target - baseline) / baseline * 100, 1)
+
+    overhead = {}
+    for rt in ["ddos_xgboost", "ddos_txt"]:
+        baseline_vals = {}
+        target_vals = {}
+        for s in suites_list:
+            base = s["runs"].get("no_ddos", {})
+            tgt = s["runs"].get(rt, {})
+            for metric in ["cpu_avg_pct", "cpu_peak_pct", "temperature_c", "memory_mb",
+                           "power_avg_w", "energy_j", "handshake_ms", "goodput_mbps",
+                           "rtt_avg_ms", "jitter_avg_ms", "packet_loss"]:
+                if metric not in baseline_vals:
+                    baseline_vals[metric] = []
+                    target_vals[metric] = []
+                bv = base.get(metric)
+                tv = tgt.get(metric)
+                if bv is not None and tv is not None:
+                    baseline_vals[metric].append(bv)
+                    target_vals[metric].append(tv)
+        oh = {}
+        for metric in baseline_vals:
+            b = _avg(baseline_vals[metric])
+            t = _avg(target_vals[metric])
+            oh[metric] = {
+                "baseline_avg": round(b, 4) if b is not None else None,
+                "target_avg": round(t, 4) if t is not None else None,
+                "delta_pct": _overhead_pct(b, t),
+                "delta_abs": round(t - b, 4) if b is not None and t is not None else None,
+            }
+        overhead[rt] = oh
+
+    return {"suites": suites_list, "runs": run_info_list, "overhead": overhead}
+
+
 @app.get("/api/latency-summary")
 def latency_summary(run_id: Optional[str] = None):
     """

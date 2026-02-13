@@ -36,13 +36,37 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
-# Optional INA219 dependency
+# smbus2 for direct INA219 register access (fixes adafruit library bug with 9-bit ADC)
 try:
-    from ina219 import INA219  # type: ignore
-    HAS_INA219 = True
+    import smbus2
+    HAS_SMBUS2 = True
 except ImportError:
-    INA219 = None  # type: ignore
-    HAS_INA219 = False
+    HAS_SMBUS2 = False
+
+# Optional INA219 dependency – prefer adafruit_ina219 (CircuitPython) over
+# the legacy pi-ina219 package.  The two libraries have incompatible APIs:
+#   adafruit:   INA219(i2c)  -> .bus_voltage, .current (mA), .power (mW)
+#   pi-ina219:  INA219(shunt_ohms, address, busnum) -> .voltage(), .current() (mA), .power() (mW)
+_INA219_BACKEND = None  # "adafruit" | "pi" | None
+HAS_INA219 = False
+INA219 = None  # type: ignore
+
+try:
+    import adafruit_ina219 as _adafruit_ina219_mod  # type: ignore
+    import board as _board_mod  # type: ignore
+    HAS_INA219 = True
+    _INA219_BACKEND = "adafruit"
+except ImportError:
+    _adafruit_ina219_mod = None  # type: ignore
+    _board_mod = None  # type: ignore
+
+if not HAS_INA219:
+    try:
+        from ina219 import INA219  # type: ignore
+        HAS_INA219 = True
+        _INA219_BACKEND = "pi"
+    except ImportError:
+        INA219 = None  # type: ignore
 
 # =============================================================================
 # BASE COLLECTOR
@@ -382,80 +406,153 @@ class PowerCollector(BaseCollector):
         if platform.system() != "Linux":
             return "none"
         
-        # Check for INA219
+        # Check for INA219 (adafruit or pi-ina219)
         try:
             if not HAS_INA219:
                 raise ImportError("ina219 not available")
-            # Raspberry Pi stacks vary; explicitly probe common bus numbers.
-            bus_candidates = []
-            env_bus = os.environ.get("INA219_BUSNUM")
-            if env_bus:
+            
+            if _INA219_BACKEND == "adafruit":
+                # Adafruit CircuitPython INA219 – uses board.I2C()
                 try:
-                    bus_candidates.append(int(env_bus))
+                    i2c = _board_mod.I2C()
+                    sensor = _adafruit_ina219_mod.INA219(i2c)
+                    # Probe read to confirm sensor is responsive
+                    _ = sensor.bus_voltage
+                    self._ina219 = sensor
+                    return "ina219"
                 except Exception:
                     pass
-            bus_candidates.extend([1, 0, 20, 21])
-
-            env_addr = os.environ.get("INA219_ADDRESS")
-            addr_candidates = []
-            if env_addr:
-                try:
-                    addr_candidates.append(int(env_addr, 0))
-                except Exception:
-                    pass
-            addr_candidates.extend([0x40])
-
-            for busnum in bus_candidates:
-                for addr in addr_candidates:
+            elif _INA219_BACKEND == "pi":
+                # Legacy pi-ina219 library
+                bus_candidates = []
+                env_bus = os.environ.get("INA219_BUSNUM")
+                if env_bus:
                     try:
-                        ina = INA219(shunt_ohms=0.1, address=addr, busnum=busnum)  # type: ignore[misc]
-                        ina.configure()
-                        self._ina_busnum = busnum
-                        self._ina_address = addr
-                        return "ina219"
+                        bus_candidates.append(int(env_bus))
                     except Exception:
-                        continue
+                        pass
+                bus_candidates.extend([1, 0, 20, 21])
+
+                env_addr = os.environ.get("INA219_ADDRESS")
+                addr_candidates = []
+                if env_addr:
+                    try:
+                        addr_candidates.append(int(env_addr, 0))
+                    except Exception:
+                        pass
+                addr_candidates.extend([0x40])
+
+                for busnum in bus_candidates:
+                    for addr in addr_candidates:
+                        try:
+                            ina = INA219(shunt_ohms=0.1, address=addr, busnum=busnum)  # type: ignore[misc]
+                            ina.configure()
+                            self._ina_busnum = busnum
+                            self._ina_address = addr
+                            return "ina219"
+                        except Exception:
+                            continue
         except Exception:
             pass
         
-        # Check for RPi5 PMIC
+        # Check for RPi5 PMIC – only match if actual voltage/current files exist
+        # (rpi_volt on RPi4 only has in0_lcrit_alarm, no power measurement)
         if Path("/sys/class/hwmon").exists():
             for hwmon in Path("/sys/class/hwmon").iterdir():
                 name_file = hwmon / "name"
                 if name_file.exists():
                     try:
                         name = name_file.read_text().strip()
-                        if "rpi" in name.lower() or "pmic" in name.lower():
+                        if "pmic" in name.lower():
                             return "rpi5_hwmon"
+                        if "rpi" in name.lower():
+                            # Verify actual power-measurement sysfs files exist
+                            has_voltage = any((hwmon / f).exists() for f in
+                                              ("in1_input", "in0_input", "voltage0_input"))
+                            has_current = any((hwmon / f).exists() for f in
+                                              ("curr1_input", "curr0_input", "current0_input"))
+                            if has_voltage and has_current:
+                                return "rpi5_hwmon"
                     except Exception:
                         pass
         
         return "none"
     
     def _init_ina219(self):
-        """Initialize INA219 sensor."""
+        """Initialize INA219 sensor.
+        
+        Supports two backends:
+        - adafruit_ina219 (CircuitPython) – already initialised during detect
+        - pi-ina219 (legacy) – needs explicit configure() call
+        """
+        # If adafruit backend already created the sensor during detection, done.
+        if _INA219_BACKEND == "adafruit" and self._ina219 is not None:
+            try:
+                # Apply 32V/2A calibration for 0-2A range on 0-32V bus
+                self._ina219.set_calibration_32V_2A()
+                # Set 9-bit ADC for both bus and shunt channels.
+                # 9-bit conversion takes 84µs (vs 532µs at 12-bit default),
+                # enabling reliable 1kHz sampling without register aliasing.
+                # Matches the highspeed profile used by core/power_monitor.py.
+                self._ina219.bus_adc_resolution = _adafruit_ina219_mod.ADCResolution.ADCRES_9BIT_1S
+                self._ina219.shunt_adc_resolution = _adafruit_ina219_mod.ADCResolution.ADCRES_9BIT_1S
+            except Exception:
+                pass
+            return
+        
+        # Legacy pi-ina219 path
+        if _INA219_BACKEND == "pi":
+            try:
+                from ina219 import INA219, DeviceRangeError
+                busnum = self._ina_busnum
+                if busnum is None:
+                    busnum = 1
+                addr = self._ina_address or 0x40
+                self._ina219 = INA219(
+                    shunt_ohms=0.1,
+                    max_expected_amps=3.0,
+                    address=addr,
+                    busnum=busnum,
+                )
+                self._ina219.configure(
+                    voltage_range=self._ina219.RANGE_16V,
+                    gain=self._ina219.GAIN_AUTO,
+                    bus_adc=self._ina219.ADC_128SAMP,
+                    shunt_adc=self._ina219.ADC_128SAMP
+                )
+            except Exception as e:
+                self._ina219 = None
+                self.backend = "none"
+            return
+        
+        # No backend available
+        self._ina219 = None
+        self.backend = "none"
+    
+    def _read_ina219_bus_voltage_direct(self) -> Optional[float]:
+        """Read INA219 bus voltage directly from register (workaround for adafruit bug).
+        
+        The adafruit_ina219 library has a bug where the bus_voltage property returns
+        incorrect values (~3.9V instead of ~5.0V) when 9-bit ADC resolution is set.
+        This method reads the register directly via smbus2 to get the correct value.
+        
+        Returns:
+            Bus voltage in volts, or None if smbus2 is not available or read fails.
+        """
+        if not HAS_SMBUS2 or self._ina_address is None:
+            return None
+        
         try:
-            from ina219 import INA219, DeviceRangeError
-            busnum = self._ina_busnum
-            if busnum is None:
-                # Fallback to common Pi bus if detection didn't run or failed.
-                busnum = 1
-            addr = self._ina_address or 0x40
-            self._ina219 = INA219(
-                shunt_ohms=0.1,
-                max_expected_amps=3.0,
-                address=addr,
-                busnum=busnum,
-            )
-            self._ina219.configure(
-                voltage_range=self._ina219.RANGE_16V,
-                gain=self._ina219.GAIN_AUTO,
-                bus_adc=self._ina219.ADC_128SAMP,
-                shunt_adc=self._ina219.ADC_128SAMP
-            )
-        except Exception as e:
-            self._ina219 = None
-            self.backend = "none"
+            bus = smbus2.SMBus(self._ina_busnum if self._ina_busnum is not None else 1)
+            # Read bus voltage register (0x02)
+            hi, lo = bus.read_i2c_block_data(self._ina_address, 0x02, 2)
+            bus.close()
+            # Bus voltage is in bits [15:3], each bit is 4mV
+            raw = (hi << 8) | lo
+            voltage = ((raw >> 3) & 0x1FFF) * 0.004
+            return voltage
+        except Exception:
+            return None
     
     def collect(self) -> Dict[str, Any]:
         """Collect single power reading."""
@@ -469,9 +566,21 @@ class PowerCollector(BaseCollector):
         
         if self.backend == "ina219" and self._ina219:
             try:
-                metrics["voltage_v"] = self._ina219.voltage()
-                metrics["current_a"] = self._ina219.current() / 1000.0  # mA to A
-                metrics["power_w"] = self._ina219.power() / 1000.0  # mW to W
+                if _INA219_BACKEND == "adafruit":
+                    # adafruit_ina219: Try direct register read first (workaround for 9-bit ADC bug)
+                    # If smbus2 is available, use it; otherwise fall back to property
+                    voltage_v = self._read_ina219_bus_voltage_direct()
+                    if voltage_v is None:
+                        voltage_v = self._ina219.bus_voltage
+                    
+                    metrics["voltage_v"] = voltage_v
+                    metrics["current_a"] = abs(self._ina219.current) / 1000.0  # mA -> A
+                    metrics["power_w"] = metrics["voltage_v"] * metrics["current_a"]  # V*A = W
+                else:
+                    # pi-ina219: methods return V, mA, mW
+                    metrics["voltage_v"] = self._ina219.voltage()
+                    metrics["current_a"] = self._ina219.current() / 1000.0  # mA -> A
+                    metrics["power_w"] = self._ina219.power() / 1000.0  # mW -> W
             except Exception as e:
                 metrics["error"] = str(e)
         
@@ -509,7 +618,12 @@ class PowerCollector(BaseCollector):
         return result
     
     def start_sampling(self, rate_hz: float = 100.0):
-        """Start continuous power sampling in background thread."""
+        """Start continuous power sampling in background thread.
+        
+        Uses perf_counter-based tick scheduling (same approach as
+        core/power_monitor.py Ina219PowerMonitor) for accurate timing
+        at high sample rates (e.g. 1kHz).
+        """
         if self._sampling:
             return
         
@@ -520,11 +634,15 @@ class PowerCollector(BaseCollector):
         interval = 1.0 / rate_hz
         
         def sample_loop():
+            next_tick = time.perf_counter()
             while not self._stop_event.is_set():
                 sample = self.collect()
                 sample["mono_time"] = time.monotonic()
                 self._samples.append(sample)
-                time.sleep(interval)
+                next_tick += interval
+                sleep_for = next_tick - time.perf_counter()
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
         
         self._sample_thread = threading.Thread(target=sample_loop, daemon=True)
         self._sample_thread.start()
